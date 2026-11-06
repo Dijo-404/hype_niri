@@ -85,6 +85,8 @@ Sleep takes priority over this mode: after lid-close suspend or another system s
 
 These bindings support the common `Super+Shift+F23` Copilot sequence and `Super+XF86Assistant` keyboards. Some Copilot keys send Super themselves, so Copilot alone can also activate these shortcuts.
 
+With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even though Super+Shift produces `XF86Assistant`. Niri matches the base symbol and held modifiers, so `Super+Shift+XF86TouchpadOff` is also bound to the same handler. This keeps Copilot working after the keyboard-map update without binding the standalone touchpad-disable key.
+
 ## Audio & Brightness
 
 | Keybinding | Action | Description |
