@@ -689,7 +689,7 @@ setup_gtk() {
 [Settings]
 gtk-theme-name=Adwaita-dark
 gtk-icon-theme-name=Papirus-Dark
-gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-name=Bibata-Modern-Ice
 gtk-cursor-theme-size=24
 gtk-font-name=JetBrains Mono 10
 gtk-application-prefer-dark-theme=true
@@ -726,7 +726,7 @@ EOF
         if dconf write /org/gnome/desktop/interface/color-scheme "'prefer-dark'" 2>/dev/null &&
            dconf write /org/gnome/desktop/interface/gtk-theme "'Adwaita-dark'" 2>/dev/null &&
            dconf write /org/gnome/desktop/interface/icon-theme "'Papirus-Dark'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/cursor-theme "'Adwaita'" 2>/dev/null &&
+           dconf write /org/gnome/desktop/interface/cursor-theme "'Bibata-Modern-Ice'" 2>/dev/null &&
            dconf write /org/gnome/desktop/interface/cursor-size "24" 2>/dev/null &&
            dconf write /org/gnome/desktop/interface/font-name "'JetBrains Mono 10'" 2>/dev/null &&
            dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10'" 2>/dev/null &&
@@ -740,7 +740,7 @@ EOF
         if gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null &&
            gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark' 2>/dev/null &&
            gsettings set org.gnome.desktop.interface icon-theme 'Papirus-Dark' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface cursor-theme 'Adwaita' 2>/dev/null &&
+           gsettings set org.gnome.desktop.interface cursor-theme 'Bibata-Modern-Ice' 2>/dev/null &&
            gsettings set org.gnome.desktop.interface cursor-size 24 2>/dev/null &&
            gsettings set org.gnome.desktop.interface font-name 'JetBrains Mono 10' 2>/dev/null &&
            gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 10' 2>/dev/null &&

@@ -2,9 +2,13 @@
 include "outputs.kdl"
 
 environment {
-    XCURSOR_THEME "Adwaita"
-    XCURSOR_SIZE "24"
     XDG_SESSION_TYPE "wayland"
+}
+
+cursor {
+    xcursor-theme "Bibata-Modern-Ice"
+    xcursor-size 24
+    hide-when-typing
 }
 
 input {

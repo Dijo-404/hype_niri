@@ -99,7 +99,7 @@ cat > ~/.config/gtk-3.0/settings.ini << 'EOF'
 [Settings]
 gtk-theme-name=Adwaita-dark
 gtk-icon-theme-name=Papirus-Dark
-gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-name=Bibata-Modern-Ice
 gtk-cursor-theme-size=24
 gtk-font-name=JetBrains Mono 10
 gtk-application-prefer-dark-theme=true
@@ -110,7 +110,7 @@ cp ~/.config/gtk-3.0/settings.ini ~/.config/gtk-4.0/settings.ini
 dconf write /org/gnome/desktop/interface/color-scheme   "'prefer-dark'"
 dconf write /org/gnome/desktop/interface/gtk-theme      "'Adwaita-dark'"
 dconf write /org/gnome/desktop/interface/icon-theme     "'Papirus-Dark'"
-dconf write /org/gnome/desktop/interface/cursor-theme   "'Adwaita'"
+dconf write /org/gnome/desktop/interface/cursor-theme   "'Bibata-Modern-Ice'"
 dconf write /org/gnome/desktop/interface/cursor-size    "24"
 dconf write /org/gnome/desktop/interface/font-name      "'JetBrains Mono 10'"
 dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10'"
