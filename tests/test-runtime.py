@@ -3,7 +3,6 @@
 
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import signal
@@ -12,7 +11,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -58,6 +57,7 @@ class RuntimeTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=8,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
@@ -66,7 +66,10 @@ class RuntimeTests(unittest.TestCase):
         fifo = self.root / f"{command}-hold"
         os.mkfifo(fifo)
         self.environment["RUNTIME_TEST_HOLD"] = str(fifo)
-        self.mock(command, 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"\nread -r _ < "$RUNTIME_TEST_HOLD"')
+        self.mock(
+            command,
+            'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"\nread -r _ < "$RUNTIME_TEST_HOLD"',
+        )
 
     def start_script(self, name):
         process = subprocess.Popen(
@@ -79,7 +82,10 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(self.stop_process, process)
         deadline = time.monotonic() + 3
         while not self.log.exists():
-            self.assertIsNone(process.poll(), process.stderr.read() if process.poll() is not None else "")
+            self.assertIsNone(
+                process.poll(),
+                process.stderr.read() if process.poll() is not None else "",
+            )
             self.assertLess(time.monotonic(), deadline, "mock did not start")
             time.sleep(0.01)
         return process
@@ -106,7 +112,10 @@ class RuntimeTests(unittest.TestCase):
         config = self.user_home / ".config/waybar/config.jsonc"
         config.parent.mkdir()
         config.write_text('{"modules-left":["clock"]}')
-        self.mock("niri", "printf '%s\\n' '{\"eDP-1\":{\"name\":\"eDP-1\",\"current_mode\":0},\"DP-1\":{\"name\":\"DP-1\",\"current_mode\":0}}'")
+        self.mock(
+            "niri",
+            'printf \'%s\\n\' \'{"eDP-1":{"name":"eDP-1","current_mode":0},"DP-1":{"name":"DP-1","current_mode":0}}\'',
+        )
         return config
 
     def sensor_fixture(self, temperature="45000", label="Package id 0"):
@@ -115,15 +124,20 @@ class RuntimeTests(unittest.TestCase):
         (hwmon / "name").write_text("coretemp\n")
         (hwmon / "temp1_input").write_text(temperature + "\n")
         (hwmon / "temp1_label").write_text(label + "\n")
-        self.environment.update(HWMON_ROOT=str(hwmon.parent), THERMAL_ROOT=str(self.root / "thermal"))
+        self.environment.update(
+            HWMON_ROOT=str(hwmon.parent), THERMAL_ROOT=str(self.root / "thermal")
+        )
         return hwmon / "temp1_input"
 
     def copilot_fixture(self):
         self.environment["XDG_SESSION_ID"] = "mock-copilot"
         self.mock("code", 'printf "code\\n" >> "$RUNTIME_TEST_LOG"')
-        self.mock("loginctl", '''
+        self.mock(
+            "loginctl",
+            '''
 [[ "${RUNTIME_TEST_LOGINCTL_FAIL:-0}" != 1 ]] || exit 1
-printf "%s\\n" "${RUNTIME_TEST_LOCKED:-no}"''')
+printf "%s\\n" "${RUNTIME_TEST_LOCKED:-no}"''',
+        )
         (self.scripts / "copilot-display.sh").write_text(
             '#!/usr/bin/env bash\nprintf "copilot-display %s\\n" "$*" >> "$RUNTIME_TEST_LOG"\n'
         )
@@ -134,18 +148,24 @@ printf "%s\\n" "${RUNTIME_TEST_LOCKED:-no}"''')
         self.environment["XDG_SESSION_ID"] = "mock-copilot"
         ready = self.root / "session-locked"
         outputs = self.root / "outputs.json"
-        outputs.write_text(json.dumps({
-            "eDP-1": {"name": "eDP-1", "current_mode": 0},
-            "DP-1": {"name": "DP-1", "current_mode": 1},
-            "HDMI-A-1": {"name": "HDMI-A-1", "current_mode": None},
-        }))
+        outputs.write_text(
+            json.dumps(
+                {
+                    "eDP-1": {"name": "eDP-1", "current_mode": 0},
+                    "DP-1": {"name": "DP-1", "current_mode": 1},
+                    "HDMI-A-1": {"name": "HDMI-A-1", "current_mode": None},
+                }
+            )
+        )
         self.environment.update(
             RUNTIME_TEST_LOCK_READY=str(ready),
             RUNTIME_TEST_OUTPUTS=str(outputs),
         )
         self.mock("sleep", 'printf "sleep %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
         self.mock("pgrep", '[[ "${!#}" == hyprlock && -f "$RUNTIME_TEST_LOCK_READY" ]]')
-        self.mock("loginctl", '''
+        self.mock(
+            "loginctl",
+            '''
 [[ "${1:-}" == show-session && "${2:-}" == mock-copilot ]] || exit 90
 [[ "${RUNTIME_TEST_LOGINCTL_FAIL:-0}" != 1 ]] || exit 1
 if [[ -n "${RUNTIME_TEST_LOGINCTL_VALUE:-}" ]]; then
@@ -156,8 +176,11 @@ else
     value=no
 fi
 printf 'loginctl %s\\n' "$value" >> "$RUNTIME_TEST_LOG"
-printf '%s\\n' "$value"''')
-        self.mock("niri", '''
+printf '%s\\n' "$value"''',
+        )
+        self.mock(
+            "niri",
+            """
 printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
 case "$*" in
     'msg --json outputs') cat "$RUNTIME_TEST_OUTPUTS" ;;
@@ -182,15 +205,16 @@ PY
     'msg action power-on-monitors')
         [[ "${RUNTIME_TEST_POWER_ON_FAIL:-0}" != 1 ]] ;;
     *) exit 91 ;;
-esac''')
-        (self.scripts / "lock.sh").write_text('''#!/usr/bin/env bash
+esac""",
+        )
+        (self.scripts / "lock.sh").write_text("""#!/usr/bin/env bash
 set -eu
 printf 'lock %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
 [[ "${RUNTIME_TEST_LOCK_FAIL:-0}" != 1 ]] || exit 1
 if [[ "${RUNTIME_TEST_LOCK_NEVER_READY:-0}" != 1 ]]; then
     touch "$RUNTIME_TEST_LOCK_READY"
 fi
-''')
+""")
         return self.runtime / "hype-copilot-displays.state", ready
 
     def set_copilot_output_modes(self, enabled):
@@ -208,11 +232,14 @@ fi
             capture_output=True,
             text=True,
             timeout=8,
+            check=False,
         )
         if succeeds:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         else:
-            self.assertNotEqual(result.returncode, 0, "unsafe request unexpectedly succeeded")
+            self.assertNotEqual(
+                result.returncode, 0, "unsafe request unexpectedly succeeded"
+            )
         return self.log.read_text().splitlines() if self.log.exists() else []
 
     def copilot_press(self):
@@ -237,7 +264,9 @@ fi
                 fields = []
             if len(fields) == 2 and fields[1] == phase:
                 return
-            self.assertLess(time.monotonic(), deadline, f"Copilot did not enter {phase} phase")
+            self.assertLess(
+                time.monotonic(), deadline, f"Copilot did not enter {phase} phase"
+            )
             time.sleep(0.005)
 
     def finish_copilot_press(self, process):
@@ -249,7 +278,10 @@ fi
         process = self.copilot_press()
         self.wait_copilot_phase("single")
         time.sleep(0.08)
-        self.assertFalse(self.log.exists(), "single press launched before the double press window closed")
+        self.assertFalse(
+            self.log.exists(),
+            "single press launched before the double press window closed",
+        )
         self.finish_copilot_press(process)
         self.assertEqual(self.log.read_text().splitlines(), ["code"])
 
@@ -260,7 +292,10 @@ fi
         second = self.copilot_press()
         self.wait_copilot_phase("double")
         time.sleep(0.08)
-        self.assertFalse(self.log.exists(), "display power command ran before key release could settle")
+        self.assertFalse(
+            self.log.exists(),
+            "display power command ran before key release could settle",
+        )
         self.finish_copilot_press(first)
         self.finish_copilot_press(second)
         self.assertEqual(self.log.read_text().splitlines(), ["copilot-display toggle"])
@@ -285,15 +320,22 @@ fi
     def test_copilot_concurrent_presses_do_not_race_into_code_launches(self):
         self.copilot_fixture()
         with ThreadPoolExecutor(max_workers=2) as executor:
-            list(executor.map(lambda _: self.run_script("copilot-shortcut.sh"), range(2)))
+            list(
+                executor.map(lambda _: self.run_script("copilot-shortcut.sh"), range(2))
+            )
         self.assertEqual(self.log.read_text().splitlines(), ["copilot-display toggle"])
 
     def test_copilot_stale_or_malformed_state_recovers_as_single_press(self):
         state = self.copilot_fixture()
         future = time.time_ns() // 1000 + 60_000_000
         for previous in (
-            "0 single\n", "0 double\n", "broken state\n", "12345 unknown\n",
-            "000000008 single\n", f"{future} single\n", "\n",
+            "0 single\n",
+            "0 double\n",
+            "broken state\n",
+            "12345 unknown\n",
+            "000000008 single\n",
+            f"{future} single\n",
+            "\n",
         ):
             with self.subTest(previous=previous):
                 state.write_text(previous)
@@ -317,22 +359,29 @@ fi
                 else:
                     self.environment["RUNTIME_TEST_LOCKED"] = "unknown"
                 self.run_script("copilot-shortcut.sh")
-                self.assertFalse(self.log.exists(), "unconfirmed unlocked session launched an application")
+                self.assertFalse(
+                    self.log.exists(),
+                    "unconfirmed unlocked session launched an application",
+                )
 
     def test_copilot_display_verifies_blackout_then_delays_locker_one_second(self):
         state, _ = self.copilot_display_fixture()
         commands = self.run_copilot_display()
         self.assertEqual(set(state.read_text().splitlines()), {"eDP-1", "DP-1"})
         disabled = [command for command in commands if command.endswith(" off")]
-        self.assertEqual(set(disabled), {"niri msg output eDP-1 off", "niri msg output DP-1 off"})
+        self.assertEqual(
+            set(disabled), {"niri msg output eDP-1 off", "niri msg output DP-1 off"}
+        )
         last_off = max(commands.index(command) for command in disabled)
         delay_index = commands.index("sleep 1")
-        self.assertIn("niri msg --json outputs", commands[last_off + 1:delay_index])
+        self.assertIn("niri msg --json outputs", commands[last_off + 1 : delay_index])
         self.assertLess(last_off, delay_index)
         self.assertLess(delay_index, commands.index("lock sleep"))
         self.assertLess(commands.index("lock sleep"), commands.index("loginctl yes"))
         outputs = json.loads(Path(self.environment["RUNTIME_TEST_OUTPUTS"]).read_text())
-        self.assertTrue(all(outputs[name]["current_mode"] is None for name in ("eDP-1", "DP-1")))
+        self.assertTrue(
+            all(outputs[name]["current_mode"] is None for name in ("eDP-1", "DP-1"))
+        )
 
     def test_copilot_display_restore_leaves_native_password_lock_active(self):
         state, ready = self.copilot_display_fixture()
@@ -341,10 +390,19 @@ fi
         self.set_copilot_output_modes(enabled=False)
         commands = self.run_copilot_display()
         restored = [command for command in commands if command.endswith(" on")]
-        self.assertEqual(set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"})
-        self.assertTrue(all(commands.index("loginctl yes") < commands.index(command) for command in restored))
+        self.assertEqual(
+            set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"}
+        )
+        self.assertTrue(
+            all(
+                commands.index("loginctl yes") < commands.index(command)
+                for command in restored
+            )
+        )
         power_index = commands.index("niri msg action power-on-monitors")
-        self.assertTrue(all(commands.index(command) < power_index for command in restored))
+        self.assertTrue(
+            all(commands.index(command) < power_index for command in restored)
+        )
         self.assertFalse(state.exists())
         self.assertTrue(ready.exists(), "restoring displays bypassed the password lock")
         self.assertFalse(any(command.startswith("lock ") for command in commands))
@@ -357,13 +415,19 @@ fi
         locked_index = commands.index("loginctl yes")
         self.assertLess(commands.index("lock sleep"), locked_index)
         restored = [command for command in commands if command.endswith(" on")]
-        self.assertEqual(set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"})
-        self.assertTrue(all(locked_index < commands.index(command) for command in restored))
+        self.assertEqual(
+            set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"}
+        )
+        self.assertTrue(
+            all(locked_index < commands.index(command) for command in restored)
+        )
         self.assertNotIn("sleep 1", commands)
         self.assertTrue(ready.exists())
         self.assertFalse(state.exists())
 
-    def test_copilot_display_resume_restores_saved_outputs_after_confirming_password_lock(self):
+    def test_copilot_display_resume_restores_saved_outputs_after_confirming_password_lock(
+        self,
+    ):
         state, ready = self.copilot_display_fixture()
         state.write_text("eDP-1\nDP-1\n")
         self.set_copilot_output_modes(enabled=False)
@@ -371,15 +435,21 @@ fi
         locked_index = commands.index("loginctl yes")
         self.assertLess(commands.index("lock sleep"), locked_index)
         restored = [command for command in commands if command.endswith(" on")]
-        self.assertEqual(set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"})
-        self.assertTrue(all(locked_index < commands.index(command) for command in restored))
+        self.assertEqual(
+            set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"}
+        )
+        self.assertTrue(
+            all(locked_index < commands.index(command) for command in restored)
+        )
         self.assertIn("niri msg action power-on-monitors", commands)
         self.assertFalse(any(command.endswith(" off") for command in commands))
         self.assertNotIn("sleep 1", commands)
         self.assertTrue(ready.exists())
         self.assertFalse(state.exists())
 
-    def test_copilot_display_resume_without_snapshot_repeatedly_wakes_only_after_lock(self):
+    def test_copilot_display_resume_without_snapshot_repeatedly_wakes_only_after_lock(
+        self,
+    ):
         state, ready = self.copilot_display_fixture()
         for resume_number in range(2):
             with self.subTest(resume_number=resume_number):
@@ -390,10 +460,15 @@ fi
                 if resume_number == 0:
                     self.assertLess(commands.index("lock sleep"), power_index)
                 self.assertEqual(commands.count("niri msg action power-on-monitors"), 1)
-                self.assertFalse(any(command.startswith("niri msg output ") for command in commands))
+                self.assertFalse(
+                    any(command.startswith("niri msg output ") for command in commands)
+                )
                 self.assertNotIn("sleep 1", commands)
                 self.assertTrue(ready.exists())
-                self.assertFalse(state.exists(), "resume accidentally entered the display-off toggle mode")
+                self.assertFalse(
+                    state.exists(),
+                    "resume accidentally entered the display-off toggle mode",
+                )
 
     def test_copilot_display_resume_failures_preserve_recovery_state(self):
         state, ready = self.copilot_display_fixture()
@@ -405,13 +480,21 @@ fi
                 if failure != "lock-without-snapshot":
                     state.write_text("eDP-1\nDP-1\n")
                 self.set_copilot_output_modes(enabled=False)
-                self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "1" if failure.startswith("lock") else "0"
-                self.environment["RUNTIME_TEST_IGNORE_APPLY"] = "on" if failure == "apply" else ""
-                self.environment["RUNTIME_TEST_POWER_ON_FAIL"] = "1" if failure == "power" else "0"
+                self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = (
+                    "1" if failure.startswith("lock") else "0"
+                )
+                self.environment["RUNTIME_TEST_IGNORE_APPLY"] = (
+                    "on" if failure == "apply" else ""
+                )
+                self.environment["RUNTIME_TEST_POWER_ON_FAIL"] = (
+                    "1" if failure == "power" else "0"
+                )
                 commands = self.run_copilot_display(succeeds=False, mode="resume")
                 self.assertFalse(any(command.endswith(" off") for command in commands))
                 if failure.startswith("lock"):
-                    self.assertFalse(any(command.endswith(" on") for command in commands))
+                    self.assertFalse(
+                        any(command.endswith(" on") for command in commands)
+                    )
                     self.assertNotIn("niri msg action power-on-monitors", commands)
                 else:
                     self.assertIn("niri msg output eDP-1 on", commands)
@@ -420,13 +503,17 @@ fi
                 else:
                     self.assertEqual(state.read_text(), "eDP-1\nDP-1\n")
 
-    def test_copilot_display_resume_cancels_queued_gesture_and_accepts_fresh_gesture(self):
+    def test_copilot_display_resume_cancels_queued_gesture_and_accepts_fresh_gesture(
+        self,
+    ):
         state, _ = self.copilot_display_fixture()
         pending = self.runtime / "hype-copilot.state"
         stale_token = str(time.time_ns() // 1000)
         pending.write_text(f"{stale_token} double\n")
         self.run_copilot_display(mode="resume")
-        self.assertFalse(pending.exists(), "resume left a queued display-off gesture active")
+        self.assertFalse(
+            pending.exists(), "resume left a queued display-off gesture active"
+        )
         self.log.unlink(missing_ok=True)
         self.environment["HYPE_COPILOT_TOKEN"] = stale_token
         commands = self.run_copilot_display()
@@ -446,9 +533,16 @@ fi
             key, separator, value = line.partition("=")
             if separator and key.strip() in hooks:
                 hooks[key.strip()].append(value.strip())
-        self.assertEqual(hooks["after_sleep_cmd"], ["~/.config/scripts/copilot-display.sh resume"])
+        self.assertEqual(
+            hooks["after_sleep_cmd"], ["~/.config/scripts/copilot-display.sh resume"]
+        )
         self.assertTrue(hooks["on-resume"])
-        self.assertTrue(all(command == "niri msg action power-on-monitors" for command in hooks["on-resume"]))
+        self.assertTrue(
+            all(
+                command == "niri msg action power-on-monitors"
+                for command in hooks["on-resume"]
+            )
+        )
 
     def test_copilot_display_already_locked_does_not_restart_locker(self):
         state, ready = self.copilot_display_fixture()
@@ -467,14 +561,18 @@ fi
                 state.unlink(missing_ok=True)
                 self.log.unlink(missing_ok=True)
                 self.set_copilot_output_modes(enabled=True)
-                self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "0" if locker_recovers else "1"
+                self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = (
+                    "0" if locker_recovers else "1"
+                )
                 commands = self.run_copilot_display(succeeds=locker_recovers)
                 self.assertIn("lock sleep", commands)
                 self.assertTrue(any(command.endswith(" off") for command in commands))
                 self.assertFalse(any(command.endswith(" on") for command in commands))
                 self.assertTrue(state.exists())
 
-    def test_copilot_display_failed_delayed_lock_keeps_displays_off_and_retry_state(self):
+    def test_copilot_display_failed_delayed_lock_keeps_displays_off_and_retry_state(
+        self,
+    ):
         state, _ = self.copilot_display_fixture()
         self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "1"
         commands = self.run_copilot_display(succeeds=False)
@@ -485,9 +583,13 @@ fi
         self.assertNotIn("niri msg action power-on-monitors", commands)
         self.assertEqual(set(state.read_text().splitlines()), {"eDP-1", "DP-1"})
         outputs = json.loads(Path(self.environment["RUNTIME_TEST_OUTPUTS"]).read_text())
-        self.assertTrue(all(outputs[name]["current_mode"] is None for name in ("eDP-1", "DP-1")))
+        self.assertTrue(
+            all(outputs[name]["current_mode"] is None for name in ("eDP-1", "DP-1"))
+        )
 
-    def test_copilot_display_partial_blackout_cannot_restore_without_password_lock(self):
+    def test_copilot_display_partial_blackout_cannot_restore_without_password_lock(
+        self,
+    ):
         state, _ = self.copilot_display_fixture()
         self.environment["RUNTIME_TEST_OFF_FAIL"] = "DP-1"
         self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "1"
@@ -515,7 +617,9 @@ fi
         self.assertIn("niri msg output eDP-1 off", commands)
         self.assertIn("niri msg output eDP-1 on", commands)
         self.assertIn("niri msg output DP-1 on", commands)
-        self.assertFalse(state.exists(), "successful rollback retained disabled-display state")
+        self.assertFalse(
+            state.exists(), "successful rollback retained disabled-display state"
+        )
 
     def test_copilot_display_restore_acknowledgement_requires_visible_output(self):
         state, ready = self.copilot_display_fixture()
@@ -568,20 +672,28 @@ fi
             with self.subTest(failure=failure):
                 state.write_text("eDP-1\nDP-1\n")
                 self.set_copilot_output_modes(enabled=False)
-                self.environment["RUNTIME_TEST_ON_FAIL"] = "eDP-1" if failure == "output" else ""
-                self.environment["RUNTIME_TEST_POWER_ON_FAIL"] = "1" if failure == "power" else "0"
+                self.environment["RUNTIME_TEST_ON_FAIL"] = (
+                    "eDP-1" if failure == "output" else ""
+                )
+                self.environment["RUNTIME_TEST_POWER_ON_FAIL"] = (
+                    "1" if failure == "power" else "0"
+                )
                 self.run_copilot_display(succeeds=False)
                 self.assertEqual(state.read_text(), "eDP-1\nDP-1\n")
                 self.assertTrue(ready.exists())
 
-    def test_copilot_display_disable_failure_restores_outputs_and_keeps_retry_state_if_needed(self):
+    def test_copilot_display_disable_failure_restores_outputs_and_keeps_retry_state_if_needed(
+        self,
+    ):
         state, ready = self.copilot_display_fixture()
         ready.touch()
         self.environment["RUNTIME_TEST_OFF_FAIL"] = "DP-1"
         for rollback_fails in (False, True):
             with self.subTest(rollback_fails=rollback_fails):
                 self.log.unlink(missing_ok=True)
-                self.environment["RUNTIME_TEST_ON_FAIL"] = "eDP-1" if rollback_fails else ""
+                self.environment["RUNTIME_TEST_ON_FAIL"] = (
+                    "eDP-1" if rollback_fails else ""
+                )
                 commands = self.run_copilot_display(succeeds=False)
                 self.assertIn("niri msg output eDP-1 on", commands)
                 self.assertIn("niri msg output DP-1 on", commands)
@@ -593,26 +705,43 @@ fi
         niri_dir.mkdir(parents=True, exist_ok=True)
         (niri_dir / "outputs.kdl").write_text(outputs_kdl)
         (niri_dir / "config.kdl").write_text('include "outputs.kdl"\n')
-        mode = lambda width, height, refresh, preferred=False: {
-            "width": width, "height": height, "refresh_rate": refresh, "is_preferred": preferred,
-        }
+
+        def mode(width, height, refresh, preferred=False):
+            return {
+                "width": width,
+                "height": height,
+                "refresh_rate": refresh,
+                "is_preferred": preferred,
+            }
+
         outputs = {
             "eDP-1": {
-                "name": "eDP-1", "make": "Samsung Display Corp.", "model": "0x419F", "serial": None,
-                "current_mode": 0, "modes": [mode(2880, 1800, 120000, True)],
+                "name": "eDP-1",
+                "make": "Samsung Display Corp.",
+                "model": "0x419F",
+                "serial": None,
+                "current_mode": 0,
+                "modes": [mode(2880, 1800, 120000, True)],
             },
             "DP-2": {
-                "name": "DP-2", "make": "Dell Inc.", "model": "DELL U2723QE", "serial": "ABC123",
-                "current_mode": 1, "modes": [mode(2560, 1440, 165000), mode(2560, 1440, 59951, True)],
+                "name": "DP-2",
+                "make": "Dell Inc.",
+                "model": "DELL U2723QE",
+                "serial": "ABC123",
+                "current_mode": 1,
+                "modes": [mode(2560, 1440, 165000), mode(2560, 1440, 59951, True)],
             },
         }
         (self.root / "outputs.json").write_text(json.dumps(outputs))
         self.environment["RUNTIME_TEST_OUTPUTS"] = str(self.root / "outputs.json")
-        self.mock("niri", f"""
+        self.mock(
+            "niri",
+            f"""
 if [[ $1 == validate ]]; then exec {shlex.quote(shutil.which("niri"))} "$@" >/dev/null 2>&1; fi
 if [[ $* == "msg --json outputs" ]]; then cat "$RUNTIME_TEST_OUTPUTS"; exit 0; fi
 printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
-""")
+""",
+        )
         return niri_dir
 
     def test_display_scale_keeps_saved_modes_and_adopts_stable_names(self):
@@ -629,7 +758,9 @@ printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
         self.assertIn("niri msg action load-config-file", self.log.read_text())
 
     def test_display_scale_adds_only_new_outputs(self):
-        niri_dir = self.outputs_fixture('output "Samsung Display Corp. 0x419F Unknown" {\n    scale 1.5\n}\n')
+        niri_dir = self.outputs_fixture(
+            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 1.5\n}\n'
+        )
         self.run_script("display-scale.sh")
         self.assertEqual(
             (niri_dir / "outputs.kdl").read_text(),
@@ -646,21 +777,77 @@ printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
         )
         self.environment["RUNTIME_TEST_CHOICES"] = str(self.root / "choices")
         (self.root / "choices").write_text("DP-2\n2560x1440@165\n")
-        self.mock("fuzzel", """
+        self.mock(
+            "fuzzel",
+            """
 cat >/dev/null
 choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
 sed -i 1d "$RUNTIME_TEST_CHOICES"
 printf '%s\\n' "$choice"
-""")
+""",
+        )
         self.run_script("monitor-refresh.sh")
         self.assertEqual(
             (niri_dir / "outputs.kdl").read_text(),
             'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n'
             'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n'
-            '    position x=0 y=0\n}\n',
+            "    position x=0 y=0\n}\n",
         )
-        self.assertEqual((niri_dir / "config.kdl").read_text(), 'include "outputs.kdl"\n')
+        self.assertEqual(
+            (niri_dir / "config.kdl").read_text(), 'include "outputs.kdl"\n'
+        )
         self.assertIn("niri msg output DP-2 mode 2560x1440@165", self.log.read_text())
+
+    def test_monitor_refresh_rejects_compact_output_before_live_changes(self):
+        original = 'output "DP-2" { mode "2560x1440@59.951"; scale 1.0; }\n'
+        niri_dir = self.outputs_fixture(original)
+        choices = self.root / "choices"
+        choices.write_text("DP-2\n2560x1440@165\n")
+        self.environment["RUNTIME_TEST_CHOICES"] = str(choices)
+        self.mock(
+            "fuzzel",
+            """
+cat >/dev/null
+choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
+sed -i 1d "$RUNTIME_TEST_CHOICES"
+printf '%s\\n' "$choice"
+""",
+        )
+        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        result = subprocess.run(
+            ["bash", str(self.scripts / "monitor-refresh.sh")],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        self.assertNotEqual(
+            result.returncode, 0, "Unsupported output syntax was reported saved"
+        )
+        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+        commands = self.log.read_text()
+        self.assertNotIn(
+            "niri msg output ", commands, "Rejected config still changed a live output"
+        )
+        self.assertNotIn("Monitor refresh saved", commands)
+
+    def test_display_scale_rejects_compact_output_without_adding_duplicate(self):
+        original = 'output "DP-2" { scale 1.5; }\n'
+        niri_dir = self.outputs_fixture(original)
+        result = subprocess.run(
+            ["bash", str(self.scripts / "display-scale.sh")],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        self.assertNotEqual(
+            result.returncode, 0, "Unsupported output syntax was silently duplicated"
+        )
+        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+        self.assertFalse(self.log.exists(), "Rejected config was reloaded")
 
     def test_waybar_keeps_single_instance_with_hotplug_capable_config(self):
         config = self.waybar_fixture()
@@ -674,18 +861,23 @@ printf '%s\\n' "$choice"
         self.mock("pgrep", "exit 0")
         self.mock("pkill", 'printf "pkill %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
         self.run_script("fullscreen-toggle.sh")
-        self.assertEqual(self.log.read_text().splitlines(), ["niri msg action fullscreen-window"])
+        self.assertEqual(
+            self.log.read_text().splitlines(), ["niri msg action fullscreen-window"]
+        )
 
     def test_brightness_changes_succeed_and_notify_in_both_directions(self):
         value = self.root / "brightness"
         self.environment["RUNTIME_TEST_BRIGHTNESS"] = str(value)
-        self.mock("brightnessctl", '''
+        self.mock(
+            "brightnessctl",
+            """
 case "$*" in
     get) cat "$RUNTIME_TEST_BRIGHTNESS" ;;
     max) printf '1000\\n' ;;
     '-q set '*) printf '%s\\n' "$3" > "$RUNTIME_TEST_BRIGHTNESS" ;;
     *) exit 90 ;;
-esac''')
+esac""",
+        )
         self.mock("notify-send", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
         for action, expected, percent in (("up", 510, 51), ("down", 490, 49)):
             with self.subTest(action=action):
@@ -697,17 +889,26 @@ esac''')
 
     def test_drive_links_decode_source_and_target_before_opening_nautilus(self):
         self.environment["USER"] = "runtime-test"
-        self.mock("findmnt", r"printf '%s\n' '/dev/mapper/My\x20Drive /run/media/runtime-test/My\x20Drive'")
-        self.mock("lsblk", '''
+        self.mock(
+            "findmnt",
+            r"printf '%s\n' '/dev/mapper/My\x20Drive /run/media/runtime-test/My\x20Drive'",
+        )
+        self.mock(
+            "lsblk",
+            """
 if [[ "$*" == '-no LABEL /dev/mapper/My Drive' ]]; then
     printf 'My Drive\\n'
-fi''')
+fi""",
+        )
         self.mock("udisksctl", "exit 90")
         self.mock("udevadm", "exit 0")
         self.mock("fuzzel", "exit 1")
-        self.mock("nautilus", '''
+        self.mock(
+            "nautilus",
+            '''
 [[ -L "$1/My Drive" ]] || exit 91
-printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''')
+printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''',
+        )
         self.run_script("open-drives.sh")
         link = self.user_home / "drives/My Drive"
         self.assertTrue(link.is_symlink(), "decoded drive shortcut was not created")
@@ -716,22 +917,39 @@ printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''')
         self.assertEqual(self.log.read_text().splitlines(), [f"nautilus {link.parent}"])
 
     def test_drives_open_nautilus_when_mount_tools_are_unavailable(self):
-        self.mock("nautilus", '''
+        self.mock(
+            "nautilus",
+            '''
 [[ -d "$1" ]] || exit 91
-printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''')
+printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''',
+        )
         result = subprocess.run(
-            ["bash", "-c", '''
+            [
+                "bash",
+                "-c",
+                """
 command() {
     [[ "$*" != '-v udisksctl' ]] || return 1
     builtin command "$@"
 }
 source "$1"
-''', "bash", str(self.scripts / "open-drives.sh")],
-            env=self.environment, capture_output=True, text=True, timeout=8,
+""",
+                "bash",
+                str(self.scripts / "open-drives.sh"),
+            ],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.log.exists(), "Nautilus was not launched without mounting tools")
-        self.assertEqual(self.log.read_text().splitlines(), [f"nautilus {self.user_home / 'drives'}"])
+        self.assertTrue(
+            self.log.exists(), "Nautilus was not launched without mounting tools"
+        )
+        self.assertEqual(
+            self.log.read_text().splitlines(), [f"nautilus {self.user_home / 'drives'}"]
+        )
 
     def test_waybar_passes_jsonc_config_through_without_parsing(self):
         config = self.waybar_fixture()
@@ -743,14 +961,20 @@ source "$1"
     def test_concurrent_sensor_scans_publish_complete_cache(self):
         sensor = self.sensor_fixture(label='Package\t"CPU"')
         with ThreadPoolExecutor(max_workers=8) as executor:
-            results = list(executor.map(lambda _: self.run_script("temperature-control.sh"), range(8)))
+            results = list(
+                executor.map(
+                    lambda _: self.run_script("temperature-control.sh"), range(8)
+                )
+            )
         for result in results:
             self.assertEqual(json.loads(result.stdout)["text"], "45°")
         cache = (self.runtime / "hype-niri-temp-sensor").read_text()
         self.assertEqual(cache.split("\t", 1)[0], str(sensor))
         self.assertFalse(list(self.runtime.glob(".hype-temp-sensor.*")))
         self.mock("mktemp", "exit 99")
-        self.assertEqual(json.loads(self.run_script("temperature-control.sh").stdout)["text"], "45°")
+        self.assertEqual(
+            json.loads(self.run_script("temperature-control.sh").stdout)["text"], "45°"
+        )
 
     def test_sensor_cache_does_not_escape_configured_sensor_roots(self):
         self.sensor_fixture("075000")
@@ -761,6 +985,41 @@ source "$1"
         self.assertEqual(result["text"], "75°")
         self.assertEqual(result["class"], "warning")
 
+    def test_sensor_cache_rescans_when_cached_sensor_identity_changes(self):
+        sensor = self.sensor_fixture("45000")
+        self.run_script("temperature-control.sh")
+        (sensor.parent / "name").write_text("amdgpu\n")
+        (sensor.parent / "temp1_label").write_text("edge\n")
+        sensor.write_text("50000\n")
+        cpu = sensor.parent.parent / "hwmon1"
+        cpu.mkdir()
+        (cpu / "name").write_text("coretemp\n")
+        (cpu / "temp1_label").write_text("Package id 0\n")
+        (cpu / "temp1_input").write_text("85000\n")
+        result = json.loads(self.run_script("temperature-control.sh").stdout)
+        self.assertEqual(result["text"], "85°")
+        self.assertEqual(result["class"], "critical")
+        self.assertIn("coretemp / Package id 0", result["tooltip"])
+
+    def test_sensor_cache_rescans_when_hwmon_symlink_changes_device(self):
+        sensor = self.sensor_fixture("45000")
+        hwmon = sensor.parent
+        first_device = self.root / "first-device"
+        hwmon.rename(first_device)
+        hwmon.symlink_to(first_device, target_is_directory=True)
+        self.run_script("temperature-control.sh")
+        replacement = self.root / "replacement-device"
+        shutil.copytree(first_device, replacement)
+        (replacement / "temp1_input").write_text("50000\n")
+        hwmon.unlink()
+        hwmon.symlink_to(replacement, target_is_directory=True)
+        cpu = hwmon.parent / "hwmon1"
+        shutil.copytree(first_device, cpu)
+        (cpu / "temp1_input").write_text("85000\n")
+        result = json.loads(self.run_script("temperature-control.sh").stdout)
+        self.assertEqual(result["text"], "85°")
+        self.assertEqual(result["class"], "critical")
+
     def test_wallpaper_ensure_handles_newlines_without_launching_daemon(self):
         wallpapers = self.user_home / "pictures/wallpapers"
         wallpapers.mkdir(parents=True)
@@ -769,7 +1028,11 @@ source "$1"
         self.mock("awww", 'printf "unexpected image\\n" >> "$RUNTIME_TEST_LOG"')
         self.mock("awww-daemon", 'printf "unexpected daemon\\n" >> "$RUNTIME_TEST_LOG"')
         with ThreadPoolExecutor(max_workers=6) as executor:
-            list(executor.map(lambda _: self.run_script("wallpaper.sh", "ensure"), range(6)))
+            list(
+                executor.map(
+                    lambda _: self.run_script("wallpaper.sh", "ensure"), range(6)
+                )
+            )
         current = self.user_home / ".local/state/niri/current_wallpaper"
         self.assertEqual(current.resolve(), image)
         self.assertFalse(self.log.exists())
@@ -782,14 +1045,102 @@ source "$1"
             list(executor.map(lambda _: self.run_script("lock.sh"), range(6)))
         self.assertEqual(len(self.log.read_text().splitlines()), 1)
 
+    def test_lock_dim_cancels_timer_on_unlock_and_restarts_for_next_lock(self):
+        marker = self.root / "lock-dim"
+        marker.mkdir()
+        self.environment["RUNTIME_TEST_DIM"] = str(marker)
+        self.mock(
+            "hyprlock",
+            """
+printf '%s\\n' "$$" > "$RUNTIME_TEST_DIM/locker"
+while [[ ! -f "$RUNTIME_TEST_DIM/unlock" ]]; do /usr/bin/sleep 0.01; done
+""",
+        )
+        self.mock(
+            "sleep",
+            """
+[[ "$*" == 30 ]] || exit 90
+printf '%s\\n' "$$" >> "$RUNTIME_TEST_DIM/timers"
+while [[ ! -f "$RUNTIME_TEST_DIM/dim" ]]; do /usr/bin/sleep 0.01; done
+""",
+        )
+        self.mock(
+            "pgrep",
+            '[[ "${!#}" == hyprlock && -f "$RUNTIME_TEST_DIM/locker" && ! -f "$RUNTIME_TEST_DIM/unlock" ]]',
+        )
+        self.mock(
+            "niri",
+            """
+[[ "$*" == 'msg action power-off-monitors' ]] || exit 90
+printf 'power off\\n' >> "$RUNTIME_TEST_LOG"
+""",
+        )
+
+        def start_lock(expected_timers):
+            process = subprocess.Popen(
+                ["bash", str(self.scripts / "lock-dim.sh")],
+                env=self.environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            self.addCleanup(self.stop_process_group, process)
+            deadline = time.monotonic() + 3
+            while (
+                not (marker / "locker").exists()
+                or not (marker / "timers").exists()
+                or len((marker / "timers").read_text().splitlines()) < expected_timers
+            ):
+                self.assertIsNone(
+                    process.poll(), "lock exited before starting its timer"
+                )
+                self.assertLess(
+                    time.monotonic(), deadline, "lock or timer did not start"
+                )
+                time.sleep(0.01)
+            return process
+
+        first = start_lock(1)
+        first_timer = int((marker / "timers").read_text())
+        self.run_script("lock-dim.sh")
+        self.assertEqual(len((marker / "timers").read_text().splitlines()), 1)
+        (marker / "unlock").touch()
+        _, stderr = first.communicate(timeout=3)
+        self.assertEqual(first.returncode, 0, stderr)
+        self.assertFalse(
+            self.pid_running(first_timer), "Unlocked session left its dim timer running"
+        )
+        self.assertFalse(self.log.exists(), "Unlocking powered off the monitors")
+
+        (marker / "unlock").unlink()
+        (marker / "locker").unlink()
+        second = start_lock(2)
+        self.assertIsNone(second.poll())
+        (marker / "dim").touch()
+        deadline = time.monotonic() + 3
+        while not self.log.exists():
+            self.assertLess(
+                time.monotonic(), deadline, "new lock did not dim after its own timer"
+            )
+            time.sleep(0.01)
+        self.assertEqual(self.log.read_text().splitlines(), ["power off"])
+        self.assertIsNone(second.poll(), "Dimming stopped the password locker")
+        (marker / "unlock").touch()
+        _, stderr = second.communicate(timeout=3)
+        self.assertEqual(second.returncode, 0, stderr)
+
     def test_tray_launcher_keeps_single_instance_without_process_discovery(self):
         self.hold_mock("nm-applet")
         pid_file = self.root / "applet-pid"
         self.environment["RUNTIME_TEST_APPLET_PID"] = str(pid_file)
-        self.mock("nm-applet", '''
+        self.mock(
+            "nm-applet",
+            '''
 printf '%s' "$$" > "$RUNTIME_TEST_APPLET_PID"
 printf 'nm-applet\\n' >> "$RUNTIME_TEST_LOG"
-read -r _ < "$RUNTIME_TEST_HOLD"''')
+read -r _ < "$RUNTIME_TEST_HOLD"''',
+        )
         self.mock("blueman-applet", "exit 0")
         self.run_script("start-tray-applets.sh")
         deadline = time.monotonic() + 3
@@ -798,7 +1149,11 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
             time.sleep(0.01)
         self.addCleanup(self.terminate_pid, int(pid_file.read_text()))
         with ThreadPoolExecutor(max_workers=6) as executor:
-            list(executor.map(lambda _: self.run_script("start-tray-applets.sh"), range(6)))
+            list(
+                executor.map(
+                    lambda _: self.run_script("start-tray-applets.sh"), range(6)
+                )
+            )
         self.assertEqual(self.log.read_text().splitlines(), ["nm-applet"])
 
     def test_volume_parser_preserves_percentage_and_mute_notifications(self):
@@ -820,7 +1175,9 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
         self.mock("pgrep", '[[ "${!#}" == awww-daemon ]]')
         self.mock("awww", "exit 0")
         self.run_script("wallpaper.sh", "select")
-        self.assertEqual((self.user_home / ".local/state/niri/current_wallpaper").resolve(), image)
+        self.assertEqual(
+            (self.user_home / ".local/state/niri/current_wallpaper").resolve(), image
+        )
 
     def test_caffeine_stop_terminates_owned_sleep_child(self):
         pid_file = self.root / "sleep-pid"
@@ -834,12 +1191,17 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
             "open(os.environ['RUNTIME_TEST_CHILD_PID'],'w').write(str(child.pid)); "
             "child.wait()"
         )
-        self.mock("systemd-inhibit", f"exec -a systemd-inhibit {shlex.quote(shutil.which('python3'))} -c {shlex.quote(program)} \"$@\"")
+        self.mock(
+            "systemd-inhibit",
+            f'exec -a systemd-inhibit {shlex.quote(shutil.which("python3"))} -c {shlex.quote(program)} "$@"',
+        )
         result = json.loads(self.run_script("caffeine-control.sh", "toggle").stdout)
         self.assertEqual(result["class"], "activated")
         deadline = time.monotonic() + 3
         while not pid_file.exists() or not pid_file.read_text().strip():
-            self.assertLess(time.monotonic(), deadline, "inhibitor child did not become ready")
+            self.assertLess(
+                time.monotonic(), deadline, "inhibitor child did not become ready"
+            )
             time.sleep(0.01)
         child_pid = int(pid_file.read_text())
         self.run_script("caffeine-control.sh", "stop")
@@ -847,7 +1209,9 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
         self.assertFalse((self.runtime / "caffeine_state").exists())
         deadline = time.monotonic() + 3
         while self.pid_running(child_pid):
-            self.assertLess(time.monotonic(), deadline, "orphaned sleep process survived")
+            self.assertLess(
+                time.monotonic(), deadline, "orphaned sleep process survived"
+            )
             time.sleep(0.01)
 
     @staticmethod
@@ -891,16 +1255,21 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
         device = self.root / "mock-device"
         marker = self.root / "key-file"
         device.touch()
-        self.environment.update(RUNTIME_TEST_DEVICE=str(device), RUNTIME_TEST_KEY=str(marker))
-        self.mock("lsblk", '''
+        self.environment.update(
+            RUNTIME_TEST_DEVICE=str(device), RUNTIME_TEST_KEY=str(marker)
+        )
+        self.mock(
+            "lsblk",
+            """
 case "$*" in
     '-prno NAME,FSTYPE') printf '%s crypto_LUKS\\n' "$RUNTIME_TEST_DEVICE" ;;
     '-nrpo NAME '*) printf '%s\\n' "$RUNTIME_TEST_DEVICE" ;;
     '-dno PARTLABEL '*) printf 'Drive\\n' ;;
-esac''')
+esac""",
+        )
         self.mock("findmnt", "exit 1")
         self.mock("fuzzel", "printf 'test-only-passphrase'")
-        program = '''
+        program = """
 import os
 from pathlib import Path
 import signal
@@ -910,16 +1279,25 @@ temporary = marker.with_suffix(".tmp")
 temporary.write_text(sys.argv[-1])
 temporary.replace(marker)
 signal.pause()
-'''
-        self.mock("udisksctl", f"exec {shlex.quote(shutil.which('python3'))} -c {shlex.quote(program)} \"$@\"")
-        preamble = '''
+"""
+        self.mock(
+            "udisksctl",
+            f'exec {shlex.quote(shutil.which("python3"))} -c {shlex.quote(program)} "$@"',
+        )
+        preamble = """
 function [ {
     if [[ ${1:-} == -b && ${2:-} == "$RUNTIME_TEST_DEVICE" ]]; then return 0; fi
     builtin [ "$@"
 }
-'''
+"""
         process = subprocess.Popen(
-            ["bash", "-c", preamble + "source " + shlex.quote(str(self.scripts / "open-drives.sh"))],
+            [
+                "bash",
+                "-c",
+                preamble
+                + "source "
+                + shlex.quote(str(self.scripts / "open-drives.sh")),
+            ],
             env=self.environment,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -929,7 +1307,10 @@ function [ {
         self.addCleanup(self.stop_process_group, process)
         deadline = time.monotonic() + 3
         while not marker.exists():
-            self.assertIsNone(process.poll(), process.stderr.read() if process.poll() is not None else "")
+            self.assertIsNone(
+                process.poll(),
+                process.stderr.read() if process.poll() is not None else "",
+            )
             self.assertLess(time.monotonic(), deadline, "unlock did not start")
             time.sleep(0.01)
         key_file = Path(marker.read_text())
@@ -942,21 +1323,30 @@ function [ {
     def test_runtime_fallback_rejects_symlink(self):
         helper = self.scripts / "runtime-dir.sh"
         fallback = self.root / "fallback"
-        helper.write_text(helper.read_text().replace('/tmp/hype-niri-$UID', str(fallback)))
+        helper.write_text(
+            helper.read_text().replace("/tmp/hype-niri-$UID", str(fallback))
+        )
         fallback.symlink_to(self.runtime, target_is_directory=True)
         result = subprocess.run(
             ["bash", str(helper)],
             env=self.environment | {"XDG_RUNTIME_DIR": str(self.root / "missing")},
             capture_output=True,
             timeout=3,
+            check=False,
         )
         self.assertNotEqual(result.returncode, 0)
 
     def test_runtime_fallback_is_private(self):
         helper = self.scripts / "runtime-dir.sh"
         fallback = self.root / "fallback"
-        helper.write_text(helper.read_text().replace('/tmp/hype-niri-$UID', str(fallback)))
-        self.run_script("runtime-dir.sh", environment=self.environment | {"XDG_RUNTIME_DIR": str(self.root / "missing")})
+        helper.write_text(
+            helper.read_text().replace("/tmp/hype-niri-$UID", str(fallback))
+        )
+        self.run_script(
+            "runtime-dir.sh",
+            environment=self.environment
+            | {"XDG_RUNTIME_DIR": str(self.root / "missing")},
+        )
         self.assertEqual(fallback.stat().st_mode & 0o777, 0o700)
 
 

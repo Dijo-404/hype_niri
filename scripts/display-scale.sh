@@ -13,17 +13,23 @@ command -v niri >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
 mkdir -p "$(dirname "$OUTPUTS_KDL")"
-[ -e "$OUTPUTS_KDL" ] || : > "$OUTPUTS_KDL"
+[ -e "$OUTPUTS_KDL" ] || : >"$OUTPUTS_KDL"
 
 scale_for_resolution() {
     local width="$1" height="$2" short
 
-    [[ "$width" =~ ^[0-9]+$ ]] && [[ "$height" =~ ^[0-9]+$ ]] || { printf '1.0'; return; }
+    [[ "$width" =~ ^[0-9]+$ ]] && [[ "$height" =~ ^[0-9]+$ ]] || {
+        printf '1.0'
+        return
+    }
     if [ "$width" -lt "$height" ]; then short="$width"; else short="$height"; fi
 
-    if [ "$short" -ge 1800 ]; then printf '2.0'
-    elif [ "$short" -ge 1600 ]; then printf '1.5'
-    else printf '1.0'
+    if [ "$short" -ge 1800 ]; then
+        printf '2.0'
+    elif [ "$short" -ge 1600 ]; then
+        printf '1.5'
+    else
+        printf '1.0'
     fi
 }
 
@@ -36,10 +42,11 @@ cp -- "$OUTPUTS_KDL" "$tmp"
 
 while IFS=$'\t' read -r id connector width height; do
     [ -n "$id" ] || continue
+    check_output_block_format "$tmp" "$id" "$connector"
     if ! has_output_block "$tmp" "$id" "$connector"; then
-        upsert_output_block "$tmp" "$id" "$connector" "scale $(scale_for_resolution "$width" "$height")" > "$next"
+        upsert_output_block "$tmp" "$id" "$connector" "scale $(scale_for_resolution "$width" "$height")" >"$next"
     elif [ "$id" != "$connector" ] && has_output_block "$tmp" "$connector" "$connector"; then
-        upsert_output_block "$tmp" "$id" "$connector" > "$next"
+        upsert_output_block "$tmp" "$id" "$connector" >"$next"
     else
         continue
     fi

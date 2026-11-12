@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 read -r _ systemd_version _ < <(systemctl --version)
-if [[ ! "$systemd_version" =~ ^[0-9]+$ ]] || (( systemd_version < 257 )); then
+if [[ ! "$systemd_version" =~ ^[0-9]+$ ]] || ((systemd_version < 257)); then
     printf 'OOM protection requires systemd 257 or newer.\n' >&2
     exit 1
 fi
@@ -16,7 +16,7 @@ if [[ ! -r /sys/fs/cgroup/cgroup.controllers || ! -r /proc/pressure/memory ]] ||
 fi
 
 privileged=()
-if (( EUID != 0 )); then
+if ((EUID != 0)); then
     privileged=(sudo)
 fi
 
@@ -36,7 +36,7 @@ if systemctl is-active --quiet "$user_manager"; then
         -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec)"
     for setting in MemoryAccounting=yes ManagedOOMMemoryPressure=kill ManagedOOMSwap=kill \
         ManagedOOMMemoryPressureLimit=1717986918 ManagedOOMMemoryPressureDurationUSec=10s; do
-        if ! grep -qx "$setting" <<< "$oom_policy"; then
+        if ! grep -qx "$setting" <<<"$oom_policy"; then
             printf 'OOM policy not active on %s: expected %s. Check other systemd drop-ins.\n' \
                 "$user_manager" "$setting" >&2
             exit 1

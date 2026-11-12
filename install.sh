@@ -53,7 +53,7 @@ _wrap_text() {
     for word in $text; do
         if [ -z "$line" ]; then
             line="$word"
-        elif [ "$(( ${#line} + 1 + ${#word} ))" -le "$max" ]; then
+        elif [ "$((${#line} + 1 + ${#word}))" -le "$max" ]; then
             line="$line $word"
         else
             printf '%s\n' "$line"
@@ -69,7 +69,7 @@ _box_top() {
 
 _box_top_tag() {
     local tag="$1" fill
-    fill=$(( BOX_W - 3 - ${#tag} ))
+    fill=$((BOX_W - 3 - ${#tag}))
     if [ "$fill" -lt 0 ]; then fill=0; fi
     echo -e "${INDENT}${CYAN}╭─ ${BOLD}${tag}${NC}${CYAN} $(_repeat '─' "$fill")╮${NC}"
 }
@@ -80,23 +80,23 @@ _box_bottom() {
 
 _box_line() {
     local text="$1" color="${2:-}" padlen
-    padlen=$(( BOX_W - 1 - ${#text} ))
+    padlen=$((BOX_W - 1 - ${#text}))
     if [ "$padlen" -lt 0 ]; then padlen=0; fi
     echo -e "${INDENT}${CYAN}│${NC} ${color}${text}${NC}$(_repeat ' ' "$padlen")${CYAN}│${NC}"
 }
 
 _progress_bar() {
     local current="$1" total="$2" barw pct filled empty
-    barw=$(( BOX_W - 6 ))
-    pct=$(( current * 100 / total ))
-    filled=$(( current * barw / total ))
-    empty=$(( barw - filled ))
+    barw=$((BOX_W - 6))
+    pct=$((current * 100 / total))
+    filled=$((current * barw / total))
+    empty=$((barw - filled))
     echo -e "${INDENT}${GREEN}$(_repeat '█' "$filled")${GREY}$(_repeat '░' "$empty")${NC}  ${BOLD}${pct}%${NC}"
 }
 
 print_header() {
     local title="$1" subtitle="${2:-}" line
-    local maxtext=$(( BOX_W - 2 ))
+    local maxtext=$((BOX_W - 2))
     local in_phase=false
     if [ "$PHASE_CURRENT" -gt 0 ] && [ "$PHASE_CURRENT" -le "$PHASE_TOTAL" ]; then
         in_phase=true
@@ -154,8 +154,8 @@ confirm() {
     while true; do
         read -rp "$(echo -e "${INDENT}${YELLOW}?${NC} $1 ${GREY}[y/n]${NC}") " response || return 1
         case "$response" in
-            [yY][eE][sS]|[yY]) return 0 ;;
-            [nN][oO]|[nN]) return 1 ;;
+            [yY][eE][sS] | [yY]) return 0 ;;
+            [nN][oO] | [nN]) return 1 ;;
             *) print_warn "Please answer y or n." ;;
         esac
     done
@@ -179,7 +179,7 @@ save_install_log() {
 
     local persisted
     if persisted="$(mktemp /tmp/hype-niri-install-XXXXXXXX.log)" &&
-       cp -- "$install_log" "$persisted"; then
+        cp -- "$install_log" "$persisted"; then
         print_warn "Full install log saved to: $persisted"
     else
         print_warn "Could not preserve the full installation log"
@@ -223,13 +223,16 @@ refresh_mirrors() {
         fi
     fi
 
-    mirror_tmp="$(mktemp)" || { print_error "Failed to create temp mirrorlist"; exit 1; }
+    mirror_tmp="$(mktemp)" || {
+        print_error "Failed to create temp mirrorlist"
+        exit 1
+    }
     _tmp_resources+=("$mirror_tmp")
 
     if command -v reflector &>/dev/null; then
         print_step "Ranking fresh HTTPS mirrors with reflector..."
         if reflector --protocol https --latest 30 --sort rate --save "$mirror_tmp" &&
-           grep -q '^Server = https://' "$mirror_tmp"; then
+            grep -q '^Server = https://' "$mirror_tmp"; then
             sudo install -m 644 "$mirror_tmp" "$mirrorlist"
             print_done "Mirrorlist refreshed with reflector"
             return 0
@@ -279,7 +282,10 @@ update_system_packages() {
     fi
 
     local update_log
-    update_log="$(mktemp)" || { print_error "Failed to create temp log"; exit 1; }
+    update_log="$(mktemp)" || {
+        print_error "Failed to create temp log"
+        exit 1
+    }
     _tmp_resources+=("$update_log")
 
     print_step "Updating archlinux-keyring first..."
@@ -415,7 +421,10 @@ install_packages() {
         ensure_yay
     fi
 
-    install_log="$(mktemp)" || { print_error "Failed to create temp log"; exit 1; }
+    install_log="$(mktemp)" || {
+        print_error "Failed to create temp log"
+        exit 1
+    }
     _tmp_resources+=("$install_log")
 
     if [ "${#aur_packages[@]}" -gt 0 ]; then
@@ -424,7 +433,7 @@ install_packages() {
             exit 1
         fi
         print_step "Checking missing AUR package metadata..."
-        if ! yay -Si --aur "${aur_packages[@]}" >> "$install_log" 2>&1; then
+        if ! yay -Si --aur "${aur_packages[@]}" >>"$install_log" 2>&1; then
             save_install_log "$install_log" aur
             exit 1
         fi
@@ -447,7 +456,7 @@ install_packages() {
         fi
     fi
 
-    if ! pacman -T "${packages[@]}" >> "$install_log" 2>&1; then
+    if ! pacman -T "${packages[@]}" >>"$install_log" 2>&1; then
         print_error "Required packages remain unsatisfied; installation stopped."
         save_install_log "$install_log" verification
         exit 1
@@ -462,7 +471,7 @@ backup_configs() {
     local targets=(
         .zshrc .p10k.zsh
         .config/gtk-3.0 .config/gtk-4.0 .config/autostart .config/fontconfig
-        .config/systemd/user .config/wireplumber
+        .config/systemd/user .config/wireplumber .config/mimeapps.list
         .local/share/applications/blueman-manager.desktop
         .local/share/icons/Papirus-Dark
         .local/share/stealth .local/share/privacy-shield
@@ -496,7 +505,7 @@ backup_configs() {
     }
     for target in "${existing[@]}"; do
         if ! mkdir -p "$(dirname "$BACKUP_DIR/$target")" ||
-           ! cp -a -- "$HOME/$target" "$BACKUP_DIR/$target"; then
+            ! cp -a -- "$HOME/$target" "$BACKUP_DIR/$target"; then
             print_error "Could not back up $target; existing configs will not be overwritten."
             return 1
         fi
@@ -512,7 +521,7 @@ replace_directory() {
     fi
     if ! mv -T -- "$staged" "$destination"; then
         if [ -e "$previous" ] || [ -L "$previous" ]; then
-            mv -T -- "$previous" "$destination" || \
+            mv -T -- "$previous" "$destination" ||
                 print_error "Previous configuration remains at $previous"
         fi
         print_error "Could not install $destination"
@@ -594,7 +603,7 @@ setup_user_dirs() {
 copy_configs() {
     print_header "Copying Configurations" "niri, waybar, terminal, theming and dotfiles"
 
-    mkdir -p "$HOME/.config"
+    prepare_generated_config_dir "$HOME/.config" || return 1
 
     local config tmp
     for config in "${DESKTOP_CONFIG_DIRS[@]}"; do
@@ -627,7 +636,7 @@ copy_configs() {
         "$HOME/.config/scripts/display-scale.sh" --no-reload >/dev/null 2>&1 || true
     fi
     if [ -d "$HOME/.config/niri" ] && [ ! -e "$HOME/.config/niri/outputs.kdl" ]; then
-        : > "$HOME/.config/niri/outputs.kdl"
+        : >"$HOME/.config/niri/outputs.kdl"
     fi
     print_done "Seeded niri output-scale config"
 
@@ -662,7 +671,7 @@ copy_configs() {
     prepare_generated_config_dir "$HOME/.config/autostart"
     tmp="$(mktemp "$HOME/.config/autostart/.blueman.XXXXXX")"
     _tmp_resources+=("$tmp")
-    cat > "$tmp" << 'EOF'
+    cat >"$tmp" <<'EOF'
 [Desktop Entry]
 Type=Application
 Hidden=true
@@ -678,8 +687,8 @@ setup_shell() {
     local current_shell dotfile tmp
 
     print_step "Checking fzf-tab plugin..."
-    if [ -f /usr/share/zsh/plugins/fzf-tab/fzf-tab.plugin.zsh ] || \
-       [ -f "$HOME/.zsh/fzf-tab/fzf-tab.plugin.zsh" ]; then
+    if [ -f /usr/share/zsh/plugins/fzf-tab/fzf-tab.plugin.zsh ] ||
+        [ -f "$HOME/.zsh/fzf-tab/fzf-tab.plugin.zsh" ]; then
         print_done "fzf-tab available"
     else
         print_warn "fzf-tab not found -- ensure the 'fzf-tab' package installed from pkglist.txt"
@@ -742,7 +751,7 @@ setup_gtk() {
         prepare_generated_config_dir "$HOME/.config/$gtk_dir"
         tmp="$(mktemp "$HOME/.config/$gtk_dir/.settings.XXXXXX")"
         _tmp_resources+=("$tmp")
-        cat > "$tmp" << 'EOF'
+        cat >"$tmp" <<'EOF'
 [Settings]
 gtk-theme-name=Adwaita-dark
 gtk-icon-theme-name=Papirus-Dark
@@ -781,13 +790,13 @@ EOF
     if command -v dconf &>/dev/null; then
         print_step "Applying dark theme via dconf..."
         if dconf write /org/gnome/desktop/interface/color-scheme "'prefer-dark'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/gtk-theme "'Adwaita-dark'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/icon-theme "'Papirus-Dark'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/cursor-theme "'Bibata-Modern-Ice'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/cursor-size "24" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/font-name "'JetBrains Mono 10'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10'" 2>/dev/null &&
-           dconf write /org/gnome/desktop/interface/document-font-name "'JetBrains Mono 10'" 2>/dev/null; then
+            dconf write /org/gnome/desktop/interface/gtk-theme "'Adwaita-dark'" 2>/dev/null &&
+            dconf write /org/gnome/desktop/interface/icon-theme "'Papirus-Dark'" 2>/dev/null &&
+            dconf write /org/gnome/desktop/interface/cursor-theme "'Bibata-Modern-Ice'" 2>/dev/null &&
+            dconf write /org/gnome/desktop/interface/cursor-size "24" 2>/dev/null &&
+            dconf write /org/gnome/desktop/interface/font-name "'JetBrains Mono 10'" 2>/dev/null &&
+            dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10'" 2>/dev/null &&
+            dconf write /org/gnome/desktop/interface/document-font-name "'JetBrains Mono 10'" 2>/dev/null; then
             print_done "Dark theme applied via dconf"
         else
             print_warn "Could not apply all dconf settings; GTK settings.ini files will still apply"
@@ -795,13 +804,13 @@ EOF
     elif command -v gsettings &>/dev/null; then
         print_step "Applying dark theme via gsettings..."
         if gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface icon-theme 'Papirus-Dark' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface cursor-theme 'Bibata-Modern-Ice' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface cursor-size 24 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface font-name 'JetBrains Mono 10' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 10' 2>/dev/null &&
-           gsettings set org.gnome.desktop.interface document-font-name 'JetBrains Mono 10' 2>/dev/null; then
+            gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark' 2>/dev/null &&
+            gsettings set org.gnome.desktop.interface icon-theme 'Papirus-Dark' 2>/dev/null &&
+            gsettings set org.gnome.desktop.interface cursor-theme 'Bibata-Modern-Ice' 2>/dev/null &&
+            gsettings set org.gnome.desktop.interface cursor-size 24 2>/dev/null &&
+            gsettings set org.gnome.desktop.interface font-name 'JetBrains Mono 10' 2>/dev/null &&
+            gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 10' 2>/dev/null &&
+            gsettings set org.gnome.desktop.interface document-font-name 'JetBrains Mono 10' 2>/dev/null; then
             print_done "Dark theme applied via gsettings"
         else
             print_warn "Could not apply all gsettings values; GTK settings.ini files will still apply"
@@ -856,7 +865,7 @@ install_blueman_desktop_entry() {
     prepare_generated_config_dir "$HOME/.local/share/applications" || return 1
     tmp="$(mktemp "${destination}.XXXXXX")"
     _tmp_resources+=("$tmp")
-    sed "s|^Exec=.*|Exec=/usr/bin/python3 \"$HOME/.config/scripts/blueman-manager.py\"|" "$source" > "$tmp"
+    sed "s|^Exec=.*|Exec=/usr/bin/python3 \"$HOME/.config/scripts/blueman-manager.py\"|" "$source" >"$tmp"
     chmod 644 "$tmp"
     mv -fT -- "$tmp" "$destination"
 }
@@ -867,7 +876,11 @@ set_default_browser() {
     prepare_generated_config_dir "$HOME/.config" || return 1
     tmp="$(mktemp "${destination}.XXXXXX")"
     _tmp_resources+=("$tmp")
-    { cat -- "$destination" 2>/dev/null || true; } | awk -v desktop="$desktop" -v types="$types" '
+    {
+        if [ -e "$destination" ] || [ -L "$destination" ]; then
+            cat -- "$destination"
+        fi
+    } | awk -v desktop="$desktop" -v types="$types" '
         BEGIN { n = split(types, list, " "); for (i = 1; i <= n; i++) wanted[list[i]] = 1 }
         function emit() { for (i = 1; i <= n; i++) print list[i] "=" desktop ";"; done = 1 }
         /^[[:space:]]*$/ { blanks = blanks $0 "\n"; next }
@@ -889,7 +902,7 @@ set_default_browser() {
                 emit()
             }
         }
-    ' > "$tmp" || return 1
+    ' >"$tmp" || return 1
     chmod 644 "$tmp"
     mv -fT -- "$tmp" "$destination"
 }
@@ -990,7 +1003,10 @@ configure_docker_socket() {
     if systemctl is-enabled --quiet docker.service; then
         local containers
         if systemctl is-active --quiet docker.service; then
-            if ! containers="$(unset DOCKER_HOST DOCKER_CONTEXT; docker --host unix:///run/docker.sock ps --quiet 2>/dev/null)"; then
+            if ! containers="$(
+                unset DOCKER_HOST DOCKER_CONTEXT
+                docker --host unix:///run/docker.sock ps --quiet 2>/dev/null
+            )"; then
                 print_warn "Could not inspect Docker containers; existing service retained"
                 return 0
             fi
@@ -1038,9 +1054,9 @@ setup_system() {
         local installed_units ly_unit
         installed_units=$(systemctl list-unit-files --type=service --no-legend | awk '{print $1}') || return 1
 
-        if grep -qx 'ly@\.service' <<< "$installed_units"; then
+        if grep -qx 'ly@\.service' <<<"$installed_units"; then
             ly_unit=ly@tty2.service
-        elif grep -qx 'ly\.service' <<< "$installed_units"; then
+        elif grep -qx 'ly\.service' <<<"$installed_units"; then
             ly_unit=ly.service
         else
             print_error "Ly service unit is missing -- install ly before switching display managers"
@@ -1052,7 +1068,7 @@ setup_system() {
             return 1
         fi
         for dm in sddm gdm lightdm greetd; do
-            if grep -qx "${dm}\.service" <<< "$installed_units" && systemctl is-enabled --quiet "$dm.service"; then
+            if grep -qx "${dm}\.service" <<<"$installed_units" && systemctl is-enabled --quiet "$dm.service"; then
                 if ! sudo systemctl disable "$dm.service"; then
                     print_error "Could not disable $dm.service; finish the display manager switch before rebooting"
                     return 1
@@ -1067,7 +1083,10 @@ setup_system() {
     print_step "Installing Polkit rules (NetworkManager)..."
     local rule
     for rule in "$SCRIPT_DIR/polkit/"*.rules; do
-        [ -f "$rule" ] || { print_error "Polkit rules are missing"; return 1; }
+        [ -f "$rule" ] || {
+            print_error "Polkit rules are missing"
+            return 1
+        }
         sudo install -Dm644 "$rule" "/etc/polkit-1/rules.d/${rule##*/}" || return 1
     done
     print_done "Polkit rules applied"
@@ -1132,7 +1151,7 @@ setup_system() {
                 return 1
             fi
         done
-        enable_user_service "hypridle.service" later || \
+        enable_user_service "hypridle.service" later ||
             print_warn "Niri startup will still try to launch hypridle directly as a fallback"
         local power_start=later
         if systemctl --user is-active --quiet graphical-session.target; then
@@ -1158,7 +1177,7 @@ setup_logind() {
     local conf_file="$conf_dir/10-hype-niri-lid.conf"
 
     sudo mkdir -p "$conf_dir" || return 1
-    sudo tee "$conf_file" >/dev/null << 'EOF' || return 1
+    sudo tee "$conf_file" >/dev/null <<'EOF' || return 1
 [Login]
 HandleLidSwitch=suspend
 HandleLidSwitchExternalPower=suspend
@@ -1187,11 +1206,11 @@ setup_firewall() {
     fi
 
     print_step "Setting default policies..."
-    sudo ufw default deny incoming   >/dev/null || return 1
-    sudo ufw default allow outgoing  >/dev/null || return 1
-    sudo ufw default allow routed    >/dev/null || return 1
+    sudo ufw default deny incoming >/dev/null || return 1
+    sudo ufw default allow outgoing >/dev/null || return 1
+    sudo ufw default allow routed >/dev/null || return 1
 
-    sudo ufw allow in on lo  >/dev/null || return 1
+    sudo ufw allow in on lo >/dev/null || return 1
     sudo ufw allow out on lo >/dev/null || return 1
     sudo ufw logging low >/dev/null || return 1
     sudo ufw --force enable >/dev/null || return 1
@@ -1268,8 +1287,11 @@ setup_cloudflare() {
                 return 0
             fi
             ;;
-        3) print_warn "WARP mode and connection preserved"; return 0 ;;
-        1|"")
+        3)
+            print_warn "WARP mode and connection preserved"
+            return 0
+            ;;
+        1 | "")
             if warp_output=$(warp-cli --accept-tos mode doh 2>&1); then
                 print_done "Mode: DoH"
             else
@@ -1277,7 +1299,10 @@ setup_cloudflare() {
                 return 0
             fi
             ;;
-        *) warn_cloudflare_setup "Invalid WARP mode; connection was not changed"; return 0 ;;
+        *)
+            warn_cloudflare_setup "Invalid WARP mode; connection was not changed"
+            return 0
+            ;;
     esac
 
     if warp_output=$(warp-cli --accept-tos connect 2>&1); then
@@ -1520,7 +1545,7 @@ PY
     for unit in NetworkManager.service power-profiles-daemon.service bluetooth.service docker.socket; do
         required=false
         case "$unit" in
-            NetworkManager.service|power-profiles-daemon.service) required=true ;;
+            NetworkManager.service | power-profiles-daemon.service) required=true ;;
         esac
         unit_state="$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null || true)"
         if [ -n "$unit_state" ]; then
@@ -1555,7 +1580,7 @@ PY
         fi
     done
 
-    if systemctl is-enabled --quiet systemd-oomd.service 2>/dev/null && \
+    if systemctl is-enabled --quiet systemd-oomd.service 2>/dev/null &&
         systemctl is-active --quiet systemd-oomd.service 2>/dev/null; then
         print_done "systemd-oomd enabled and running"
     else
@@ -1576,11 +1601,11 @@ PY
         oom_policy="$(systemctl show "$user_manager" \
             -p MemoryAccounting -p ManagedOOMMemoryPressure -p ManagedOOMSwap \
             -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec 2>/dev/null || true)"
-        if grep -qx 'MemoryAccounting=yes' <<< "$oom_policy" && \
-            grep -qx 'ManagedOOMMemoryPressure=kill' <<< "$oom_policy" && \
-            grep -qx 'ManagedOOMSwap=kill' <<< "$oom_policy" && \
-            grep -qx 'ManagedOOMMemoryPressureLimit=1717986918' <<< "$oom_policy" && \
-            grep -qx 'ManagedOOMMemoryPressureDurationUSec=10s' <<< "$oom_policy"; then
+        if grep -qx 'MemoryAccounting=yes' <<<"$oom_policy" &&
+            grep -qx 'ManagedOOMMemoryPressure=kill' <<<"$oom_policy" &&
+            grep -qx 'ManagedOOMSwap=kill' <<<"$oom_policy" &&
+            grep -qx 'ManagedOOMMemoryPressureLimit=1717986918' <<<"$oom_policy" &&
+            grep -qx 'ManagedOOMMemoryPressureDurationUSec=10s' <<<"$oom_policy"; then
             print_done "User memory pressure and swap monitoring enabled"
         else
             print_error "User OOM monitoring policy differs from the required 40% for 10 seconds; check systemd drop-ins"
@@ -1595,7 +1620,7 @@ PY
             required=true
             check_active=true
             [ "$unit" = hypridle.service ] && required=false
-            if [ "$unit" = hype-auto-power-profile.service ] && \
+            if [ "$unit" = hype-auto-power-profile.service ] &&
                 ! systemctl --user is-active --quiet graphical-session.target; then
                 check_active=false
             fi

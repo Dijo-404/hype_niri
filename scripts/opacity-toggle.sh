@@ -8,7 +8,6 @@ OPACITY_FILE="$CONFIG_DIR/opacity.kdl"
 source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
 NOTIFY_ID=2007
 
-
 notify() {
     command -v notify-send >/dev/null 2>&1 || return 0
     notify-send -r "$NOTIFY_ID" "$1" "${2:-}" 2>/dev/null || true

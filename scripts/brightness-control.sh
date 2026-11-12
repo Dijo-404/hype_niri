@@ -47,7 +47,8 @@ case "${1:-}" in
     up)
         current=$(brightnessctl get)
         max=$(brightnessctl max)
-        step=$((max / 100)); [ "$step" -lt 1 ] && step=1
+        step=$((max / 100))
+        [ "$step" -lt 1 ] && step=1
         target=$((current + step))
         [ "$target" -gt "$max" ] && target=$max
         smooth_set "$current" "$target"
@@ -55,8 +56,10 @@ case "${1:-}" in
     down)
         current=$(brightnessctl get)
         max=$(brightnessctl max)
-        min=$((max / 100)); [ "$min" -lt 1 ] && min=1
-        step=$((max / 100)); [ "$step" -lt 1 ] && step=1
+        min=$((max / 100))
+        [ "$min" -lt 1 ] && min=1
+        step=$((max / 100))
+        [ "$step" -lt 1 ] && step=1
         if [ "$current" -le "$min" ]; then
             target=$current
         else

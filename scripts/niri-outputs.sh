@@ -16,6 +16,24 @@ kdl_escape() {
     printf '%s' "$value"
 }
 
+check_output_block_format() {
+    local file="$1" id="$2" connector="$3"
+
+    [ -f "$file" ] || return 0
+    awk -v id="$(kdl_escape "$id")" -v connector="$(kdl_escape "$connector")" '
+        /^[[:space:]]*output[[:space:]]+"/ {
+            name = $0
+            sub(/^[[:space:]]*output[[:space:]]+"/, "", name)
+            sub(/"[[:space:]]*\{.*$/, "", name)
+            if ((name == id || name == connector) && $0 !~ /"[[:space:]]*\{[[:space:]]*$/) {
+                print "Unsupported output block format: keep the output header on its own line and put each setting on a separate line." > "/dev/stderr"
+                invalid = 1
+            }
+        }
+        END { exit invalid }
+    ' "$file"
+}
+
 has_output_block() {
     local file="$1" id="$2" connector="$3"
 
@@ -35,6 +53,7 @@ upsert_output_block() {
     local file="$1" id="$2" connector="$3"
     shift 3
 
+    check_output_block_format "$file" "$id" "$connector" || return 1
     awk -v id="$(kdl_escape "$id")" -v connector="$(kdl_escape "$connector")" \
         -v settings="$(printf '%s\n' "$@")" '
         BEGIN {

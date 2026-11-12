@@ -8,8 +8,11 @@ flock -x 9
 
 mode="${1:-toggle}"
 case "$mode" in
-    toggle|resume) ;;
-    *) echo "Usage: $0 [toggle|resume]" >&2; exit 2 ;;
+    toggle | resume) ;;
+    *)
+        echo "Usage: $0 [toggle|resume]" >&2
+        exit 2
+        ;;
 esac
 
 if [[ "$mode" == resume ]]; then
@@ -20,7 +23,7 @@ if [[ "$mode" == resume ]]; then
 elif [[ -n "${HYPE_COPILOT_TOKEN:-}" ]]; then
     (
         flock -x 8
-        read -r token phase 2>/dev/null < "$RUNTIME_DIR/hype-copilot.state" || exit 1
+        read -r token phase 2>/dev/null <"$RUNTIME_DIR/hype-copilot.state" || exit 1
         [[ "$token" == "$HYPE_COPILOT_TOKEN" && "$phase" == double ]]
     ) 8>"$RUNTIME_DIR/hype-copilot.lock" || exit 0
 fi
@@ -69,7 +72,7 @@ wait_outputs() {
                   or (if $desired == "on" then $outputs[$name].current_mode != null
                       else $outputs[$name].current_mode == null end))
               and (if $desired == "on" then any($outputs[]; .current_mode != null) else true end)
-        ' <<< "$current" >/dev/null; then
+        ' <<<"$current" >/dev/null; then
             return 0
         fi
         sleep 0.1
@@ -82,12 +85,12 @@ restore_outputs() {
     connected="$(niri msg --json outputs)" || return 1
     while IFS= read -r output; do
         [[ -n "$output" ]] || continue
-        jq -e --arg name "$output" 'has($name)' <<< "$connected" >/dev/null || continue
+        jq -e --arg name "$output" 'has($name)' <<<"$connected" >/dev/null || continue
         niri msg output "$output" on || failed=1
-    done < "$state_file"
+    done <"$state_file"
     niri msg action power-on-monitors || failed=1
     wait_outputs on || failed=1
-    (( failed == 0 ))
+    ((failed == 0))
 }
 
 if [[ -f "$state_file" || "$mode" == resume ]]; then
@@ -112,14 +115,14 @@ if ! hint="$(locked_hint)" || [[ "$hint" != yes && "$hint" != no ]]; then
 fi
 
 outputs_json="$(niri msg --json outputs)"
-if ! outputs="$(jq -er '[.[] | select(.current_mode != null) | .name] | if length == 0 then error("No enabled displays") else .[] end' <<< "$outputs_json")"; then
+if ! outputs="$(jq -er '[.[] | select(.current_mode != null) | .name] | if length == 0 then error("No enabled displays") else .[] end' <<<"$outputs_json")"; then
     notify_failure "No enabled displays could be saved."
     exit 1
 fi
 
 tmp_file="$(mktemp "$RUNTIME_DIR/.hype-copilot-displays.XXXXXX")"
 trap 'rm -f -- "$tmp_file"' EXIT
-printf '%s\n' "$outputs" > "$tmp_file"
+printf '%s\n' "$outputs" >"$tmp_file"
 mv -f -- "$tmp_file" "$state_file"
 
 failed=0
@@ -128,8 +131,8 @@ while IFS= read -r output; do
         failed=1
         break
     fi
-done <<< "$outputs"
-if (( failed )) || ! wait_outputs off; then
+done <<<"$outputs"
+if ((failed)) || ! wait_outputs off; then
     if ensure_locked && restore_outputs; then
         rm -f -- "$state_file"
     fi

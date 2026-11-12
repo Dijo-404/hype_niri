@@ -11,7 +11,10 @@ case "${1:-}" in
         exec swayidle -w -C /dev/null before-sleep '"$HOME/.config/scripts/prepare-sleep.sh"'
         ;;
     "") ;;
-    *) echo "Usage: $0 [--watch]" >&2; exit 2 ;;
+    *)
+        echo "Usage: $0 [--watch]" >&2
+        exit 2
+        ;;
 esac
 
 lock_ready() {

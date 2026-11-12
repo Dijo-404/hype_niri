@@ -5,17 +5,16 @@ import fcntl
 import json
 import math
 import os
-from pathlib import Path
 import signal
 import stat
 import sys
+from pathlib import Path
 
 import gi
 
 gi.require_version("Gio", "2.0")
 gi.require_version("GLibUnix", "2.0")
-from gi.repository import Gio, GLib, GLibUnix
-
+from gi.repository import Gio, GLib, GLibUnix  # noqa: E402
 
 UP_NAME = "org.freedesktop.UPower"
 UP_PATH = "/org/freedesktop/UPower"
@@ -51,10 +50,16 @@ def notify_waybar():
             continue
         descriptor = None
         try:
-            if process.stat().st_uid != os.getuid() or (process / "comm").read_text().strip() != "waybar":
+            if (
+                process.stat().st_uid != os.getuid()
+                or (process / "comm").read_text().strip() != "waybar"
+            ):
                 continue
             descriptor = os.pidfd_open(int(process.name))
-            if process.stat().st_uid == os.getuid() and (process / "comm").read_text().strip() == "waybar":
+            if (
+                process.stat().st_uid == os.getuid()
+                and (process / "comm").read_text().strip() == "waybar"
+            ):
                 signal.pidfd_send_signal(descriptor, signal.SIGRTMIN + 16)
         except OSError:
             pass
@@ -113,7 +118,11 @@ class AutoPowerProfile:
         target = None
         if wanted is not None:
             target = next(
-                (name for name in (wanted, "balanced", "power-saver") if name in available),
+                (
+                    name
+                    for name in (wanted, "balanced", "power-saver")
+                    if name in available
+                ),
                 None,
             )
         return {
@@ -138,7 +147,9 @@ class AutoPowerProfile:
             if remote is self.battery
             else {"Profiles"}
         )
-        if relevant.intersection(changed.unpack()) or relevant.intersection(invalidated):
+        if relevant.intersection(changed.unpack()) or relevant.intersection(
+            invalidated
+        ):
             self.queue()
 
     def notify_profile(self):
@@ -190,7 +201,10 @@ class AutoPowerProfile:
             self.pending = True
             self.profiles.call(
                 "org.freedesktop.DBus.Properties.Set",
-                GLib.Variant("(ssv)", (PP_NAME, "ActiveProfile", GLib.Variant("s", state["target"]))),
+                GLib.Variant(
+                    "(ssv)",
+                    (PP_NAME, "ActiveProfile", GLib.Variant("s", state["target"])),
+                ),
                 Gio.DBusCallFlags.NONE,
                 5000,
                 self.cancellable,
@@ -208,12 +222,16 @@ class AutoPowerProfile:
             print(f"Power profile: {target}", flush=True)
         except GLib.Error as error:
             failed = True
-            print(f"Could not set {target}: {error.message}", file=sys.stderr, flush=True)
+            print(
+                f"Could not set {target}: {error.message}", file=sys.stderr, flush=True
+            )
         self.pending = False
         if failed and self.state_key(self.snapshot()) == key:
             self.failures += 1
             if self.failures < 3:
-                self.retry_source = GLib.timeout_add((1000, 3000)[self.failures - 1], self.retry)
+                self.retry_source = GLib.timeout_add(
+                    (1000, 3000)[self.failures - 1], self.retry
+                )
             return
         self.queue()
 
@@ -238,17 +256,29 @@ class AutoPowerProfile:
 def lock_instance():
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
     metadata = runtime.stat(follow_symlinks=False)
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
-        raise OSError("Power profile runtime directory must be a private directory owned by the user")
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise OSError(
+            "Power profile runtime directory must be a private directory owned by the user"
+        )
     descriptor = os.open(
         runtime / "hype-auto-power-profile.lock",
         os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
         0o600,
     )
     metadata = os.fstat(descriptor)
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
         os.close(descriptor)
-        raise OSError("Power profile lock must be a private regular file owned by the user")
+        raise OSError(
+            "Power profile lock must be a private regular file owned by the user"
+        )
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -262,7 +292,9 @@ def lock_instance():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="print power policy without changing it")
+    parser.add_argument(
+        "--check", action="store_true", help="print power policy without changing it"
+    )
     args = parser.parse_args()
     descriptor = None if args.check else lock_instance()
     if not args.check and descriptor is None:

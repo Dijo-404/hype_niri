@@ -81,9 +81,9 @@ else
 
     case "$current" in
         "performance") pct=100 ;;
-        "balanced")    pct=50 ;;
+        "balanced") pct=50 ;;
         "power-saver") pct=0 ;;
-        *)             pct=50 ;;
+        *) pct=50 ;;
     esac
     echo "{\"text\": \"\", \"tooltip\": \"Power Profile: $current\", \"class\": \"$current\", \"percentage\": $pct}"
 fi

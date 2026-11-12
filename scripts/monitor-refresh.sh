@@ -77,8 +77,14 @@ scale_for_resolution() {
     local height="$2"
     local short
 
-    [[ "$width" =~ ^[0-9]+$ ]] || { printf '1.0\n'; return; }
-    [[ "$height" =~ ^[0-9]+$ ]] || { printf '1.0\n'; return; }
+    [[ "$width" =~ ^[0-9]+$ ]] || {
+        printf '1.0\n'
+        return
+    }
+    [[ "$height" =~ ^[0-9]+$ ]] || {
+        printf '1.0\n'
+        return
+    }
 
     if [ "$width" -lt "$height" ]; then
         short="$width"
@@ -217,8 +223,8 @@ choose_line() {
     local choice
 
     choice="$(
-        printf '%s\n' "$options" \
-            | fuzzel --dmenu \
+        printf '%s\n' "$options" |
+            fuzzel --dmenu \
                 --prompt "$prompt: " \
                 --width 58 \
                 --lines 14 \
@@ -226,8 +232,8 @@ choose_line() {
                 --only-match \
                 --with-nth 2 \
                 --accept-nth 1 \
-                --match-nth 2 \
-            || true
+                --match-nth 2 ||
+            true
     )"
     [ -n "$choice" ] || exit 0
 
@@ -264,12 +270,12 @@ save_output_mode() {
     local tmp_file
 
     mkdir -p "$(dirname "$OUTPUTS_KDL")"
-    [ -e "$OUTPUTS_KDL" ] || : > "$OUTPUTS_KDL"
+    [ -e "$OUTPUTS_KDL" ] || : >"$OUTPUTS_KDL"
     tmp_file="$(mktemp "$(dirname "$OUTPUTS_KDL")/.outputs.XXXXXX")"
     trap 'rm -f -- "${tmp_file:-}"' EXIT
 
     upsert_output_block "$OUTPUTS_KDL" "$id" "$connector" \
-        "mode \"$(kdl_escape "$mode")\"" "scale $scale" > "$tmp_file"
+        "mode \"$(kdl_escape "$mode")\"" "scale $scale" >"$tmp_file"
     if ! niri validate -c "$tmp_file" >/dev/null 2>&1; then
         notify "Could not save default refresh rate" "Edited config did not validate: $OUTPUTS_KDL"
         exit 1
@@ -316,6 +322,10 @@ main() {
 
     exec 8>"$RUNTIME_DIR/hype-niri-outputs.lock"
     flock -w 5 8 || exit 0
+    if ! check_output_block_format "$OUTPUTS_KDL" "$output_id" "$output_name"; then
+        notify "Could not save default refresh rate" "Expand the matching output block to one setting per line: $OUTPUTS_KDL"
+        exit 1
+    fi
     apply_mode "$output_name" "$mode"
     apply_scale "$output_name" "$scale"
     save_output_mode "$output_id" "$output_name" "$mode" "$scale"

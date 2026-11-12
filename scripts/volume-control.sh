@@ -22,7 +22,7 @@ case "${1:-}" in
 esac
 
 vol_info=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null) || exit 0
-read -r _ volume _ <<< "$vol_info"
+read -r _ volume _ <<<"$vol_info"
 [[ "$volume" =~ ^([0-9]+)([.]([0-9]+))?$ ]] || exit 0
 fraction="${BASH_REMATCH[3]:-}00"
 vol=$((10#${BASH_REMATCH[1]} * 100 + 10#${fraction:0:2}))

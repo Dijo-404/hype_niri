@@ -25,8 +25,22 @@ read_first_line() {
     local value=""
 
     [ -r "$file" ] || return 1
-    IFS= read -r value < "$file" || return 1
+    IFS= read -r value <"$file" || return 1
     printf '%s' "$value"
+}
+
+sensor_identity() {
+    local input="$1" directory name label resolved
+    directory="${input%/*}"
+    resolved="$(realpath -e -- "$input")" || return 1
+    if [[ "$input" == "$HWMON_ROOT"/hwmon*/temp*_input ]]; then
+        name="$(read_first_line "$directory/name" 2>/dev/null || printf 'hwmon')"
+        label="$(read_first_line "${input%_input}_label" 2>/dev/null || true)"
+    else
+        name="$(read_first_line "$directory/type" 2>/dev/null || printf 'thermal')"
+        label="$name"
+    fi
+    printf '%q %q %q' "$resolved" "$name" "$label"
 }
 
 emit() {
@@ -48,15 +62,15 @@ to_celsius() {
 
     raw=${raw//[[:space:]]/}
     [[ "$raw" =~ ^-?[0-9]+$ ]] || return 1
-    (( ${#raw} <= 10 )) || return 1
+    ((${#raw} <= 10)) || return 1
     if [[ "$raw" == -* ]]; then
         raw=$((-10#${raw#-}))
     else
         raw=$((10#$raw))
     fi
 
-    if (( raw > 1000 || raw < -1000 )); then
-        if (( raw < 0 )); then
+    if ((raw > 1000 || raw < -1000)); then
+        if ((raw < 0)); then
             temperature_celsius=$(((raw - 500) / 1000))
         else
             temperature_celsius=$(((raw + 500) / 1000))
@@ -114,7 +128,7 @@ consider_sensor() {
     to_celsius "$raw" || return 0
     temp="$temperature_celsius"
 
-    if (( temp < -40 || temp > 150 )); then
+    if ((temp < -40 || temp > 150)); then
         return 0
     fi
 
@@ -122,7 +136,7 @@ consider_sensor() {
     source="$name"
     [ -n "$label" ] && source="$source / $label"
 
-    if (( score > best_score )) || { (( score == best_score )) && { [ -z "$best_temp" ] || (( temp > best_temp )); }; }; then
+    if ((score > best_score)) || { ((score == best_score)) && { [ -z "$best_temp" ] || ((temp > best_temp)); }; }; then
         best_score="$score"
         best_temp="$temp"
         best_source="$source"
@@ -167,9 +181,9 @@ emit_temp() {
     local source="$2"
     local temp_class
 
-    if (( temp >= CRITICAL_TEMP )); then
+    if ((temp >= CRITICAL_TEMP)); then
         temp_class="critical"
-    elif (( temp >= WARNING_TEMP )); then
+    elif ((temp >= WARNING_TEMP)); then
         temp_class="warning"
     else
         temp_class="normal"
@@ -179,10 +193,11 @@ emit_temp() {
 }
 
 if [ -r "$CACHE_FILE" ]; then
-    IFS=$'\t' read -r cached_path cached_source < "$CACHE_FILE" || true
-    if [[ "${cached_path:-}" == "$HWMON_ROOT"/hwmon*/temp*_input || "${cached_path:-}" == "$THERMAL_ROOT"/thermal_zone*/temp ]] && [ -r "$cached_path" ]; then
-        IFS= read -r cached_raw < "$cached_path" || cached_raw=""
-        if to_celsius "$cached_raw" && (( temperature_celsius >= -40 && temperature_celsius <= 150 )); then
+    IFS=$'\t' read -r cached_path cached_identity cached_source <"$CACHE_FILE" || true
+    if [[ "${cached_path:-}" == "$HWMON_ROOT"/hwmon*/temp*_input || "${cached_path:-}" == "$THERMAL_ROOT"/thermal_zone*/temp ]] && [ -r "$cached_path" ] &&
+        [[ -n "${cached_identity:-}" && "$cached_identity" == "$(sensor_identity "$cached_path")" ]]; then
+        IFS= read -r cached_raw <"$cached_path" || cached_raw=""
+        if to_celsius "$cached_raw" && ((temperature_celsius >= -40 && temperature_celsius <= 150)); then
             emit_temp "$temperature_celsius" "${cached_source:-cached}"
             exit 0
         fi
@@ -192,15 +207,15 @@ fi
 scan_hwmon
 scan_thermal_zones
 
-if [ -z "$best_temp" ] || (( best_score <= 0 )); then
+if [ -z "$best_temp" ] || ((best_score <= 0)); then
     emit "--°" "Temperature unavailable" "missing"
     exit 0
 fi
 
-if [ -n "$best_input" ]; then
+if [ -n "$best_input" ] && identity="$(sensor_identity "$best_input")"; then
     tmp_cache="$(mktemp "$RUNTIME_DIR/.hype-temp-sensor.XXXXXX")"
     trap 'rm -f -- "$tmp_cache"' EXIT
-    printf '%s\t%s\n' "$best_input" "$best_source" > "$tmp_cache"
+    printf '%s\t%s\t%s\n' "$best_input" "$identity" "$best_source" >"$tmp_cache"
     mv -f -- "$tmp_cache" "$CACHE_FILE"
 fi
 

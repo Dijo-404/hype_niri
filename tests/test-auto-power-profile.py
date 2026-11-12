@@ -4,22 +4,24 @@ import contextlib
 import importlib.util
 import io
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+from typing import ClassVar
 from unittest.mock import Mock, patch
-
 
 REPO = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
-spec = importlib.util.spec_from_file_location("auto_power_profile", REPO / "scripts/auto-power-profile.py")
+spec = importlib.util.spec_from_file_location(
+    "auto_power_profile", REPO / "scripts/auto-power-profile.py"
+)
 power = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(power)
 
 
 class FakeProxy:
-    TYPES = {
+    TYPES: ClassVar[dict[str, str]] = {
         "OnBattery": "b",
         "IsPresent": "b",
         "Type": "u",
@@ -88,7 +90,10 @@ class FakeProxy:
         self.inflight = None
         if error is None:
             self.change(ActiveProfile=target)
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             callback(self, error, attempt)
 
     def call_finish(self, result):
@@ -108,7 +113,8 @@ class PowerProfileTests(unittest.TestCase):
         self.upower = FakeProxy(OnBattery=True)
         self.battery = FakeProxy(IsPresent=True, Type=2, Percentage=70.0)
         self.profiles = FakeProxy(
-            ActiveProfile="performance", Profiles=["power-saver", "balanced", "performance"]
+            ActiveProfile="performance",
+            Profiles=["power-saver", "balanced", "performance"],
         )
         self.app = power.AutoPowerProfile(self.upower, self.battery, self.profiles)
         self.addCleanup(self.app.close)
@@ -148,7 +154,9 @@ class PowerProfileTests(unittest.TestCase):
             (None, 50, None),
         ):
             with self.subTest(on_battery=on_battery, percentage=percentage):
-                self.assertEqual(power.requested_profile(on_battery, percentage), expected)
+                self.assertEqual(
+                    power.requested_profile(on_battery, percentage), expected
+                )
 
     def test_initial_policy_and_plug_unplug(self):
         self.app.queue()
@@ -196,7 +204,9 @@ class PowerProfileTests(unittest.TestCase):
         self.assertEqual(self.profiles.calls, ["balanced", "power-saver"])
 
     def test_unsupported_performance_falls_back_and_recovers(self):
-        self.profiles.change(ActiveProfile="power-saver", Profiles=["balanced", "power-saver"])
+        self.profiles.change(
+            ActiveProfile="power-saver", Profiles=["balanced", "power-saver"]
+        )
         self.upower.change(OnBattery=False)
         self.settle()
         self.assertEqual(self.profiles.calls, ["balanced"])
@@ -346,19 +356,27 @@ class PowerProfileTests(unittest.TestCase):
         own = Mock(name="own_waybar")
         own.name = "101"
         own.stat.return_value.st_uid = os.getuid()
-        own.__truediv__ = Mock(return_value=Mock(read_text=Mock(return_value="waybar\n")))
+        own.__truediv__ = Mock(
+            return_value=Mock(read_text=Mock(return_value="waybar\n"))
+        )
         foreign = Mock(name="foreign_waybar")
         foreign.name = "102"
         foreign.stat.return_value.st_uid = os.getuid() + 1
         unrelated = Mock(name="unrelated")
         unrelated.name = "103"
         unrelated.stat.return_value.st_uid = os.getuid()
-        unrelated.__truediv__ = Mock(return_value=Mock(read_text=Mock(return_value="python\n")))
+        unrelated.__truediv__ = Mock(
+            return_value=Mock(read_text=Mock(return_value="python\n"))
+        )
         root = Mock(iterdir=Mock(return_value=[own, foreign, unrelated]))
-        with patch.object(power, "Path", return_value=root), \
-             patch.object(power.os, "pidfd_open", return_value=42) as opened, \
-             patch.object(power.signal, "pidfd_send_signal", side_effect=ProcessLookupError) as sent, \
-             patch.object(power.os, "close") as closed:
+        with (
+            patch.object(power, "Path", return_value=root),
+            patch.object(power.os, "pidfd_open", return_value=42) as opened,
+            patch.object(
+                power.signal, "pidfd_send_signal", side_effect=ProcessLookupError
+            ) as sent,
+            patch.object(power.os, "close") as closed,
+        ):
             self.original_notifier()
         opened.assert_called_once_with(101)
         sent.assert_called_once_with(42, power.signal.SIGRTMIN + 16)
@@ -373,25 +391,29 @@ class PowerProfileTests(unittest.TestCase):
         self.assertEqual(self.profiles.handlers, {})
 
     def test_instance_lock_is_released_on_close(self):
-        with tempfile.TemporaryDirectory() as runtime:
-            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
-                first = power.lock_instance()
-                self.assertIsNotNone(first)
-                try:
-                    self.assertIsNone(power.lock_instance())
-                finally:
-                    os.close(first)
-                second = power.lock_instance()
-                self.assertIsNotNone(second)
-                os.close(second)
+        with (
+            tempfile.TemporaryDirectory() as runtime,
+            patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}),
+        ):
+            first = power.lock_instance()
+            self.assertIsNotNone(first)
+            try:
+                self.assertIsNone(power.lock_instance())
+            finally:
+                os.close(first)
+            second = power.lock_instance()
+            self.assertIsNotNone(second)
+            os.close(second)
 
     def test_instance_lock_rejects_symlinks_and_shared_runtime(self):
         with tempfile.TemporaryDirectory() as runtime:
             link = Path(runtime) / "link"
             link.symlink_to(runtime, target_is_directory=True)
-            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(link)}):
-                with self.assertRaises(OSError):
-                    power.lock_instance()
+            with (
+                patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(link)}),
+                self.assertRaises(OSError),
+            ):
+                power.lock_instance()
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
                 os.chmod(runtime, 0o755)
                 with self.assertRaises(OSError):

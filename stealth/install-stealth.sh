@@ -2,7 +2,10 @@
 set -Eeuo pipefail
 umask 077
 
-(( EUID == 0 )) || { printf 'Run with sudo.\n' >&2; exit 1; }
+((EUID == 0)) || {
+    printf 'Run with sudo.\n' >&2
+    exit 1
+}
 SOURCE=$(dirname "$(readlink -f "$0")")
 SCRIPT=/usr/local/bin/stealth
 UNIT=/etc/systemd/system/stealth.service
@@ -22,16 +25,28 @@ OLD_LOG=/var/log/privacy-shield.log
 OLD_LOCK=/run/privacy-shield.lock
 
 for command in nft tor systemd-analyze systemctl visudo ip nmcli ss curl jq flock uuidgen od; do
-    command -v "$command" >/dev/null || { printf 'Missing command: %s\n' "$command" >&2; exit 1; }
+    command -v "$command" >/dev/null || {
+        printf 'Missing command: %s\n' "$command" >&2
+        exit 1
+    }
 done
 exec 9>/run/stealth.lock
-flock -n 9 || { printf 'Another Stealth operation is in progress; retry after it finishes.\n' >&2; exit 1; }
+flock -n 9 || {
+    printf 'Another Stealth operation is in progress; retry after it finishes.\n' >&2
+    exit 1
+}
 if [[ -e $OLD_LOCK ]]; then
     exec 8<"$OLD_LOCK"
-    flock -n 8 || { printf 'The previous backend is changing state; retry after it finishes.\n' >&2; exit 1; }
+    flock -n 8 || {
+        printf 'The previous backend is changing state; retry after it finishes.\n' >&2
+        exit 1
+    }
 fi
 
-[[ -f $TORRC ]] || { printf 'Missing Tor configuration: %s\n' "$TORRC" >&2; exit 1; }
+[[ -f $TORRC ]] || {
+    printf 'Missing Tor configuration: %s\n' "$TORRC" >&2
+    exit 1
+}
 for service in stealth.service privacy-shield.service tor.service; do
     if systemctl is-active --quiet "$service"; then
         printf 'Stop %s before installing Stealth.\n' "$service" >&2
@@ -58,8 +73,8 @@ cp "$SOURCE/stealth.nft" "$TMP/stealth.nft"
 cp "$SOURCE/torrc.conf" "$TMP/torrc.conf"
 cp "$SOURCE/stealth.sudoers" "$TMP/stealth.sudoers"
 awk -v new="$INCLUDE_LINE" -v old="$OLD_INCLUDE_LINE" \
-    '$0 != new && $0 != old' "$TORRC" > "$TMP/torrc.preview"
-cat "$TMP/torrc.conf" >> "$TMP/torrc.preview"
+    '$0 != new && $0 != old' "$TORRC" >"$TMP/torrc.preview"
+cat "$TMP/torrc.conf" >>"$TMP/torrc.preview"
 bash -n "$TMP/stealth"
 tor --verify-config -f "$TMP/torrc.preview" >/dev/null
 nft -c -D 'uplink="wlan0"' -f "$TMP/stealth.nft"
@@ -117,7 +132,7 @@ rollback() {
     restore_file "$OLD_TOR_DROPIN" old-tor-dropin
     restore_file "$OLD_LOG" old-log
     systemctl daemon-reload
-    if (( old_unit_enabled )); then
+    if ((old_unit_enabled)); then
         systemctl enable privacy-shield.service
     fi
     printf 'Installation failed; previous files restored from %s\n' "$BACKUP" >&2
@@ -133,15 +148,15 @@ install -m 644 "$TMP/torrc.conf" "$TOR_DROPIN"
 install -d -m 750 /etc/sudoers.d
 install -m 440 "$TMP/stealth.sudoers" "$SUDOERS_DROPIN"
 sudoers_report=$(visudo -c)
-grep -Fq "$SUDOERS_DROPIN:" <<< "$sudoers_report" ||
+grep -Fq "$SUDOERS_DROPIN:" <<<"$sudoers_report" ||
     printf 'Warning: /etc/sudoers does not include %s; sudo keeps its pty for Stealth.\n' "$SUDOERS_DROPIN" >&2
 awk -v new="$INCLUDE_LINE" -v old="$OLD_INCLUDE_LINE" \
-    '$0 != new && $0 != old' "$TORRC" > "$TMP/torrc.rewritten"
-printf '\n%s\n' "$INCLUDE_LINE" >> "$TMP/torrc.rewritten"
-cat "$TMP/torrc.rewritten" > "$TORRC"
+    '$0 != new && $0 != old' "$TORRC" >"$TMP/torrc.rewritten"
+printf '\n%s\n' "$INCLUDE_LINE" >>"$TMP/torrc.rewritten"
+cat "$TMP/torrc.rewritten" >"$TORRC"
 tor --verify-config -f "$TORRC" >/dev/null
 systemd-analyze verify "$UNIT"
-if [[ -e $OLD_UNIT ]] && (( old_unit_enabled )); then
+if [[ -e $OLD_UNIT ]] && ((old_unit_enabled)); then
     systemctl disable privacy-shield.service
 fi
 systemctl daemon-reload

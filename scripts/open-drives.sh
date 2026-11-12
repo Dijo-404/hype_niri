@@ -113,11 +113,11 @@ unlock_luks_volumes() {
 
         keyfile="$(mktemp "$RUNTIME_DIR/hype-unlock.XXXXXX")" || continue
         chmod 600 "$keyfile"
-        printf '%s' "$pw" > "$keyfile"
+        printf '%s' "$pw" >"$keyfile"
         unset pw
 
-        udisksctl unlock -b "$dev" --key-file "$keyfile" >/dev/null 2>&1 \
-            || notify "Unlock failed" "Wrong passphrase for $name, or device busy."
+        udisksctl unlock -b "$dev" --key-file "$keyfile" >/dev/null 2>&1 ||
+            notify "Unlock failed" "Wrong passphrase for $name, or device busy."
         rm -f "$keyfile"
         keyfile=""
     done < <(luks_devices)
@@ -134,7 +134,7 @@ mount_unmounted_filesystems() {
         [ -z "${mountpoints:-}" ] || continue
 
         case "$fstype" in
-            ntfs|exfat|btrfs|ext2|ext3|ext4|xfs)
+            ntfs | exfat | btrfs | ext2 | ext3 | ext4 | xfs)
                 mount_with_fallback "$dev" "$fstype" || true
                 ;;
         esac
@@ -152,7 +152,7 @@ pending_work() {
     while read -r dev fstype mnt; do
         [ -b "$dev" ] || continue
         case "$fstype" in
-            ntfs|exfat|btrfs|ext2|ext3|ext4|xfs)
+            ntfs | exfat | btrfs | ext2 | ext3 | ext4 | xfs)
                 [ -z "${mnt:-}" ] && return 0
                 ;;
         esac

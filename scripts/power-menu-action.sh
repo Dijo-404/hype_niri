@@ -33,7 +33,7 @@ case "$ACTION" in
         close_wlogout
         exec systemctl poweroff
         ;;
-    reboot|restart)
+    reboot | restart)
         stop_caffeine
         close_wlogout
         exec systemctl reboot

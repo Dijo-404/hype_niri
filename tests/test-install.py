@@ -5,15 +5,14 @@ Runs sourced installer functions with mocked privileged commands. A temporary
 source copy redirects home paths without changing the real HOME environment.
 """
 
-import os
 import fcntl
-from pathlib import Path
+import os
 import re
 import shlex
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -63,6 +62,7 @@ xdg-user-dirs-update() {{ printf 'xdg-user-dirs-update %s\\n' "$*" >> "$INSTALL_
             text=True,
             env=environment,
             timeout=30,
+            check=False,
         )
         if succeeds:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -84,7 +84,9 @@ xdg-user-dirs-update() {{ printf 'xdg-user-dirs-update %s\\n' "$*" >> "$INSTALL_
             ("satisfied", (*installed, *provided)),
         ):
             (fixture / name).write_text("".join(f"{value}\n" for value in values))
-        return f"SCRIPT_DIR={shlex.quote(str(fixture))}\n" + r"""
+        return (
+            f"SCRIPT_DIR={shlex.quote(str(fixture))}\n"
+            + r"""
 test() {
     # Package mocks simulate a terminal without changing other shell tests.
     if [[ $# == 2 && $1 == -t && $2 == 0 ]]; then
@@ -169,11 +171,12 @@ mktemp() {
     fi
 }
 """
+        )
 
     def validation_fixture(self):
         """Provide valid files while varying only the service state under test."""
         source = self.source.read_text()
-        critical = re.search(r"local critical_files=\((.*?)\n    \)", source, re.S)
+        critical = re.search(r"local critical_files=\((.*?)\n    \)", source, re.DOTALL)
         self.assertIsNotNone(critical)
         for path in re.findall(r'"([^"]+)"', critical.group(1)):
             fixture = Path(path.replace("$INSTALL_TEST_HOME", str(self.user_home)))
@@ -186,10 +189,16 @@ mktemp() {
         agent.touch()
         agent.chmod(0o755)
         policy = self.root / "installed-oom-policy"
-        policy.write_text((REPO / "systemd/user@.service.d/60-hype-niri-oomd.conf").read_text())
+        policy.write_text(
+            (REPO / "systemd/user@.service.d/60-hype-niri-oomd.conf").read_text()
+        )
         self.source.write_text(
-            source.replace("/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1", str(agent))
-            .replace("/etc/systemd/system/user@.service.d/60-hype-niri-oomd.conf", str(policy))
+            source.replace(
+                "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1", str(agent)
+            ).replace(
+                "/etc/systemd/system/user@.service.d/60-hype-niri-oomd.conf",
+                str(policy),
+            )
         )
         return r"""
 command() {
@@ -220,27 +229,37 @@ systemctl() {
 
     def test_validation_succeeds_before_user_manager_starts(self):
         self.run_installer(self.validation_fixture() + "validate")
-        self.assertFalse(any(command.startswith("systemctl show user@") for command in self.commands()))
+        self.assertFalse(
+            any(
+                command.startswith("systemctl show user@")
+                for command in self.commands()
+            )
+        )
 
     def test_validation_rejects_missing_required_network_service(self):
         result = self.run_installer(
             self.validation_fixture() + "MISSING_NETWORK=1 validate", succeeds=False
         )
-        self.assertIn("Required system service unit unavailable: NetworkManager.service", result.stdout)
+        self.assertIn(
+            "Required system service unit unavailable: NetworkManager.service",
+            result.stdout,
+        )
 
     def test_validation_accepts_effective_oom_policy(self):
         self.run_installer(self.validation_fixture() + "ACTIVE_MANAGER=1 validate")
 
     def test_validation_rejects_pressure_limit_override(self):
         result = self.run_installer(
-            self.validation_fixture() + "ACTIVE_MANAGER=1 PRESSURE_LIMIT=3221225471 validate",
+            self.validation_fixture()
+            + "ACTIVE_MANAGER=1 PRESSURE_LIMIT=3221225471 validate",
             succeeds=False,
         )
         self.assertIn("required 40% for 10 seconds", result.stdout)
 
     def test_validation_rejects_pressure_duration_override(self):
         result = self.run_installer(
-            self.validation_fixture() + "ACTIVE_MANAGER=1 PRESSURE_DURATION=30s validate",
+            self.validation_fixture()
+            + "ACTIVE_MANAGER=1 PRESSURE_DURATION=30s validate",
             succeeds=False,
         )
         self.assertIn("required 40% for 10 seconds", result.stdout)
@@ -252,7 +271,9 @@ systemctl() {
         (self.user_home / ".zshrc").symlink_to("missing-zsh-target")
         result = self.run_installer('backup_configs; printf "%s\\n" "$BACKUP_DIR"')
         backup = Path(result.stdout.strip())
-        self.assertEqual((backup / ".config/gtk-3.0/settings.ini").read_text(), "custom settings\n")
+        self.assertEqual(
+            (backup / ".config/gtk-3.0/settings.ini").read_text(), "custom settings\n"
+        )
         self.assertTrue((backup / ".zshrc").is_symlink())
         self.assertEqual(os.readlink(backup / ".zshrc"), "missing-zsh-target")
 
@@ -262,6 +283,21 @@ systemctl() {
         self.run_installer("confirm() { return 1; }; backup_configs", succeeds=False)
         self.assertEqual(settings.read_text(), "keep me")
 
+    def test_backup_preserves_mimeapps_before_browser_changes(self):
+        settings = self.user_home / ".config/mimeapps.list"
+        settings.parent.mkdir()
+        original = "[Default Applications]\ntext/html=firefox.desktop;\n"
+        settings.write_text(original)
+        result = self.run_installer(
+            'backup_configs; set_default_browser; printf "%s\\n" "$BACKUP_DIR"'
+        )
+        self.assertTrue(
+            result.stdout.strip(), "Existing MIME settings were not backed up"
+        )
+        backup = Path(result.stdout.strip())
+        self.assertEqual((backup / ".config/mimeapps.list").read_text(), original)
+        self.assertIn("text/html=brave-browser.desktop;", settings.read_text())
+
     def test_failed_directory_publish_restores_previous_config(self):
         destination = self.user_home / ".config/niri"
         destination.mkdir(parents=True)
@@ -269,7 +305,8 @@ systemctl() {
         staged = self.root / "staged"
         staged.mkdir()
         (staged / "config.kdl").write_text("new config")
-        self.run_installer(f"""
+        self.run_installer(
+            f"""
 mv() {{
     if [[ $* == *'.previous'* || "${{!#}}" != {shlex.quote(str(destination))} ]]; then
         command mv "$@"
@@ -278,7 +315,9 @@ mv() {{
     fi
 }}
 replace_directory {shlex.quote(str(staged))} {shlex.quote(str(destination))}
-""", succeeds=False)
+""",
+            succeeds=False,
+        )
         self.assertEqual((destination / "config.kdl").read_text(), "previous config")
 
     def test_mirror_refresh_does_not_sync_databases_without_upgrade(self):
@@ -287,7 +326,9 @@ reflector() { printf 'Server = https://example.invalid/mirror\n' > "${!#}"; }
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 refresh_mirrors
 """)
-        self.assertFalse(any(command.startswith("pacman ") for command in self.commands()))
+        self.assertFalse(
+            any(command.startswith("pacman ") for command in self.commands())
+        )
 
     def test_declined_upgrade_does_not_refresh_package_databases(self):
         self.run_installer(
@@ -298,14 +339,18 @@ refresh_mirrors
     def test_package_list_ignores_indented_comments_and_duplicates(self):
         fixture = self.root / "packages"
         fixture.mkdir()
-        (fixture / "pkglist.txt").write_text("  # comment\n\n niri # desktop\nniri\n waybar\n")
+        (fixture / "pkglist.txt").write_text(
+            "  # comment\n\n niri # desktop\nniri\n waybar\n"
+        )
         self.run_installer(f"""
 SCRIPT_DIR={shlex.quote(str(fixture))}
 pacman() {{ return 0; }}
 sudo() {{ printf '%s\\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }}
 install_packages
 """)
-        self.assertEqual(self.commands(), ["pacman -S --needed --noconfirm niri waybar"])
+        self.assertEqual(
+            self.commands(), ["pacman -S --needed --noconfirm niri waybar"]
+        )
 
     def test_installed_foreign_packages_are_retained_without_aur_lookup(self):
         packages = ("bemoji", "wlogout", "cloudflare-warp-bin")
@@ -332,7 +377,9 @@ install_packages
     def test_installed_repository_packages_remain_upgrade_eligible(self):
         self.run_installer(
             self.package_fixture(
-                ("niri", "waybar"), repository=("niri", "waybar"), installed=("niri", "waybar")
+                ("niri", "waybar"),
+                repository=("niri", "waybar"),
+                installed=("niri", "waybar"),
             )
             + "install_packages"
         )
@@ -343,7 +390,14 @@ install_packages
     def test_only_missing_foreign_packages_are_exact_aur_targets(self):
         self.run_installer(
             self.package_fixture(
-                ("niri", "bemoji", "wlogout", "cloudflare-warp-bin", "fzf-tab", "brave-bin"),
+                (
+                    "niri",
+                    "bemoji",
+                    "wlogout",
+                    "cloudflare-warp-bin",
+                    "fzf-tab",
+                    "brave-bin",
+                ),
                 repository=("niri",),
                 installed=("niri", "bemoji", "wlogout", "cloudflare-warp-bin"),
             )
@@ -359,7 +413,8 @@ install_packages
             ],
         )
         self.assertEqual(
-            commands[-1], "pacman -T niri bemoji wlogout cloudflare-warp-bin fzf-tab brave-bin"
+            commands[-1],
+            "pacman -T niri bemoji wlogout cloudflare-warp-bin fzf-tab brave-bin",
         )
 
     def test_failed_aur_preflight_stops_before_repository_installation(self):
@@ -401,7 +456,9 @@ printf 'unexpected next phase\n'
         self.assertIn("yay -Si --aur aur/wlogout", commands)
         self.assertFalse(any(command.startswith("pacman -S ") for command in commands))
         self.assertFalse(any(command.startswith("yay -S ") for command in commands))
-        self.assertIn("request failed: Get https://aur.archlinux.org/rpc: EOF", result.stdout)
+        self.assertIn(
+            "request failed: Get https://aur.archlinux.org/rpc: EOF", result.stdout
+        )
         self.assertNotIn("unexpected next phase", result.stdout)
 
     def test_failed_aur_helper_stops_installation(self):
@@ -445,7 +502,9 @@ install_packages
 
     def test_official_download_failure_keeps_mirror_recovery_advice(self):
         result = self.run_installer(
-            self.package_fixture(("xwayland-satellite",), repository=("xwayland-satellite",))
+            self.package_fixture(
+                ("xwayland-satellite",), repository=("xwayland-satellite",)
+            )
             + r"""
 print_warn() { printf '%s\n' "$*"; }
 sudo() {
@@ -463,7 +522,18 @@ install_packages
 
     def test_wallpaper_selection_handles_large_collection_and_preserves_files(self):
         fixture = self.root / "configs"
-        for directory in ("niri", "waybar", "scripts", "alacritty", "fuzzel", "mako", "fastfetch", "wlogout", "hypr", "wallpapers"):
+        for directory in (
+            "niri",
+            "waybar",
+            "scripts",
+            "alacritty",
+            "fuzzel",
+            "mako",
+            "fastfetch",
+            "wlogout",
+            "hypr",
+            "wallpapers",
+        ):
             (fixture / directory).mkdir(parents=True)
         (fixture / "scripts/dummy.sh").write_text("#!/bin/bash\nexit 0\n")
         (fixture / "wallpapers/00000 wallpaper.jpg").write_text("repository wallpaper")
@@ -475,16 +545,30 @@ install_packages
         first.write_text("user wallpaper")
         self.run_installer(f"SCRIPT_DIR={shlex.quote(str(fixture))}; copy_configs")
         self.assertEqual(first.read_text(), "user wallpaper")
-        self.assertEqual((self.user_home / ".local/state/niri/current_wallpaper").resolve(), first)
+        self.assertEqual(
+            (self.user_home / ".local/state/niri/current_wallpaper").resolve(), first
+        )
         self.assertTrue((self.user_home / ".config/niri/outputs.kdl").exists())
 
     def test_reinstall_keeps_saved_monitor_settings_and_moves_drive_links(self):
         fixture = self.root / "configs"
-        for directory in ("niri", "waybar", "scripts", "alacritty", "fuzzel", "mako", "fastfetch", "wlogout", "hypr"):
+        for directory in (
+            "niri",
+            "waybar",
+            "scripts",
+            "alacritty",
+            "fuzzel",
+            "mako",
+            "fastfetch",
+            "wlogout",
+            "hypr",
+        ):
             (fixture / directory).mkdir(parents=True)
         (fixture / "scripts/dummy.sh").write_text("#!/bin/bash\nexit 0\n")
         (fixture / "niri/config.kdl").write_text("repository config\n")
-        saved = 'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n}\n'
+        saved = (
+            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n}\n'
+        )
         niri = self.user_home / ".config/niri"
         niri.mkdir(parents=True)
         (niri / "outputs.kdl").write_text(saved)
@@ -502,8 +586,13 @@ install_packages
         self.assertFalse(legacy_drives.exists())
         self.assertTrue((self.user_home / "drives").is_dir())
         self.assertEqual((self.user_home / "drives/Work").resolve(), work)
-        self.assertEqual(os.readlink(self.user_home / "drives/Offline"), "/missing/custom-drive")
-        self.assertEqual(os.readlink(self.user_home / "drives/Windows-SSD"), "/run/media/user/Windows-SSD")
+        self.assertEqual(
+            os.readlink(self.user_home / "drives/Offline"), "/missing/custom-drive"
+        )
+        self.assertEqual(
+            os.readlink(self.user_home / "drives/Windows-SSD"),
+            "/run/media/user/Windows-SSD",
+        )
 
     def test_generated_theme_does_not_modify_symlink_targets(self):
         original = self.root / "original-theme"
@@ -511,10 +600,58 @@ install_packages
         (original / "settings.ini").write_text("original settings")
         (self.user_home / ".config").mkdir()
         (self.user_home / ".config/gtk-3.0").symlink_to(original)
-        self.run_installer("papirus-folders() { return 0; }; dconf() { return 0; }; setup_gtk")
+        self.run_installer(
+            "papirus-folders() { return 0; }; dconf() { return 0; }; setup_gtk"
+        )
         self.assertEqual((original / "settings.ini").read_text(), "original settings")
         self.assertFalse((self.user_home / ".config/gtk-3.0").is_symlink())
-        self.assertIn("Adwaita-dark", (self.user_home / ".config/gtk-3.0/settings.ini").read_text())
+        self.assertIn(
+            "Adwaita-dark",
+            (self.user_home / ".config/gtk-3.0/settings.ini").read_text(),
+        )
+
+    def test_copy_configs_preserves_top_level_config_symlink_target(self):
+        external = self.root / "external-dotfiles"
+        (external / "niri").mkdir(parents=True)
+        (external / "niri/config.kdl").write_text("external original config\n")
+        (external / "sentinel").write_text("unrelated settings\n")
+        (self.user_home / ".config").symlink_to(external, target_is_directory=True)
+        fixture = self.root / "configs"
+        for directory in (
+            "niri",
+            "waybar",
+            "scripts",
+            "alacritty",
+            "fuzzel",
+            "mako",
+            "fastfetch",
+            "wlogout",
+            "hypr",
+        ):
+            (fixture / directory).mkdir(parents=True)
+        (fixture / "niri/config.kdl").write_text("replacement config\n")
+        (fixture / "scripts/dummy.sh").write_text("#!/bin/bash\nexit 0\n")
+        result = self.run_installer(f"""
+SCRIPT_DIR={shlex.quote(str(fixture))}
+backup_configs
+copy_configs
+printf '%s\\n' "$BACKUP_DIR"
+""")
+        self.assertEqual(
+            (external / "niri/config.kdl").read_text(), "external original config\n"
+        )
+        self.assertEqual((external / "sentinel").read_text(), "unrelated settings\n")
+        config = self.user_home / ".config"
+        self.assertFalse(config.is_symlink())
+        self.assertEqual(
+            (config / "niri/config.kdl").read_text(), "replacement config\n"
+        )
+        self.assertEqual((config / "sentinel").read_text(), "unrelated settings\n")
+        backup = Path(result.stdout.strip())
+        self.assertEqual(
+            (backup / ".config/niri/config.kdl").read_text(),
+            "external original config\n",
+        )
 
     def test_firewall_setup_retains_existing_rules(self):
         self.run_installer("""
@@ -526,7 +663,8 @@ setup_firewall
         self.assertIn("ufw --force enable", self.commands())
 
     def test_warp_mode_failure_prevents_connection(self):
-        self.run_installer("""
+        self.run_installer(
+            """
 systemctl() { return 0; }
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 warp-cli() {
@@ -534,9 +672,13 @@ warp-cli() {
     [[ $* != '--accept-tos mode doh' ]]
 }
 setup_cloudflare
-""", input_text="1\n")
+""",
+            input_text="1\n",
+        )
         self.assertNotIn("warp-cli --accept-tos connect", self.commands())
-        self.assertTrue(any("enable --now warp-svc" in command for command in self.commands()))
+        self.assertTrue(
+            any("enable --now warp-svc" in command for command in self.commands())
+        )
 
     def test_warp_registration_failure_continues_installation_with_diagnostic(self):
         result = self.run_installer(r"""
@@ -561,13 +703,16 @@ run_phase following_phase
         self.assertIn("following phase reached", result.stdout)
         self.assertNotIn("Installation failed", result.stdout)
         self.assertIn("warp-cli --accept-tos registration new", self.commands())
-        self.assertFalse(any(
-            " mode " in command or command.endswith((" connect", " disconnect"))
-            for command in self.commands()
-        ))
+        self.assertFalse(
+            any(
+                " mode " in command or command.endswith((" connect", " disconnect"))
+                for command in self.commands()
+            )
+        )
 
     def test_warp_waits_for_daemon_readiness_before_registration(self):
-        self.run_installer(r"""
+        self.run_installer(
+            r"""
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 warp-cli() {
     printf 'warp-cli %s\n' "$*" >> "$INSTALL_TEST_LOG"
@@ -589,14 +734,21 @@ warp-cli() {
     return 0
 }
 setup_cloudflare
-""", input_text="3\n")
+""",
+            input_text="3\n",
+        )
         commands = self.commands()
         self.assertEqual(commands.count("warp-cli --accept-tos status"), 3)
-        self.assertEqual(commands[-2:], [
-            "warp-cli --accept-tos registration show",
-            "warp-cli --accept-tos registration new",
-        ])
-        self.assertFalse(any(command.endswith((" connect", " disconnect")) for command in commands))
+        self.assertEqual(
+            commands[-2:],
+            [
+                "warp-cli --accept-tos registration show",
+                "warp-cli --accept-tos registration new",
+            ],
+        )
+        self.assertFalse(
+            any(command.endswith((" connect", " disconnect")) for command in commands)
+        )
 
     def test_warp_unready_daemon_continues_without_registration_or_connection(self):
         result = self.run_installer(r"""
@@ -616,11 +768,14 @@ run_phase following_phase
         self.assertIn("following phase reached", result.stdout)
         commands = self.commands()
         self.assertEqual(commands.count("warp-cli --accept-tos status"), 10)
-        self.assertFalse(any(
-            " registration " in command or " mode " in command
-            or command.endswith((" connect", " disconnect"))
-            for command in commands
-        ))
+        self.assertFalse(
+            any(
+                " registration " in command
+                or " mode " in command
+                or command.endswith((" connect", " disconnect"))
+                for command in commands
+            )
+        )
 
     def test_warp_service_failure_continues_without_cli_requests(self):
         result = self.run_installer(r"""
@@ -641,7 +796,8 @@ run_phase following_phase
         self.assertEqual(self.commands(), ["systemctl enable --now warp-svc"])
 
     def test_warp_connection_failure_continues_installation_with_diagnostic(self):
-        result = self.run_installer(r"""
+        result = self.run_installer(
+            r"""
 print_warn() { printf '%s\n' "$*"; }
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 warp-cli() {
@@ -655,7 +811,9 @@ warp-cli() {
 following_phase() { printf '%s\n' 'following phase reached'; }
 run_phase setup_cloudflare
 run_phase following_phase
-""", input_text="1\n")
+""",
+            input_text="1\n",
+        )
         self.assertIn("Connection failed: tunnel unavailable", result.stdout)
         self.assertIn("continuing installation", result.stdout)
         self.assertIn("following phase reached", result.stdout)
@@ -664,23 +822,34 @@ run_phase following_phase
         self.assertNotIn("warp-cli --accept-tos disconnect", self.commands())
 
     def test_warp_skip_keeps_current_connection(self):
-        self.run_installer("""
+        self.run_installer(
+            """
 systemctl() { return 0; }
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 warp-cli() { printf 'warp-cli %s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 setup_cloudflare
-""", input_text="3\n")
-        self.assertFalse(any(command.endswith((" connect", " disconnect")) for command in self.commands()))
+""",
+            input_text="3\n",
+        )
+        self.assertFalse(
+            any(
+                command.endswith((" connect", " disconnect"))
+                for command in self.commands()
+            )
+        )
 
     def test_warp_registers_when_status_succeeds_but_registration_is_missing(self):
-        self.run_installer("""
+        self.run_installer(
+            """
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 warp-cli() {
     printf 'warp-cli %s\n' "$*" >> "$INSTALL_TEST_LOG"
     [[ $* != '--accept-tos registration show' ]]
 }
 setup_cloudflare
-""", input_text="1\n")
+""",
+            input_text="1\n",
+        )
         commands = self.commands()
         self.assertIn("warp-cli --accept-tos registration new", commands)
         self.assertLess(
@@ -689,19 +858,25 @@ setup_cloudflare
         )
 
     def test_warp_retains_existing_registration(self):
-        self.run_installer("""
+        self.run_installer(
+            """
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 warp-cli() { printf 'warp-cli %s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 setup_cloudflare
-""", input_text="1\n")
+""",
+            input_text="1\n",
+        )
         self.assertIn("warp-cli --accept-tos registration show", self.commands())
         self.assertNotIn("warp-cli --accept-tos registration new", self.commands())
 
     def test_failed_required_service_propagates_failure(self):
-        self.run_installer("""
+        self.run_installer(
+            """
 systemctl() { printf 'NetworkManager.service disabled\n'; }
 enable_system_service_now NetworkManager.service
-""", succeeds=False)
+""",
+            succeeds=False,
+        )
 
     def test_stealth_stages_only_runtime_payload_and_replaces_stale_files(self):
         destination = self.user_home / ".local/share/stealth"
@@ -713,25 +888,39 @@ setup_stealth
 """)
         self.assertEqual(
             {entry.name for entry in destination.iterdir()},
-            {"stealth.zsh", "install-stealth.sh", "stealth.sh", "stealth.service", "stealth.nft", "stealth.sudoers", "torrc.conf"},
+            {
+                "stealth.zsh",
+                "install-stealth.sh",
+                "stealth.sh",
+                "stealth.service",
+                "stealth.nft",
+                "stealth.sudoers",
+                "torrc.conf",
+            },
         )
 
     def test_failed_stealth_install_retains_previous_staging(self):
         destination = self.user_home / ".local/share/stealth"
         destination.mkdir(parents=True)
         (destination / "existing").write_text("keep me")
-        self.run_installer("""
+        self.run_installer(
+            """
 sudo() { [[ $1 != bash ]]; }
 setup_stealth
-""", succeeds=False)
+""",
+            succeeds=False,
+        )
         self.assertEqual((destination / "existing").read_text(), "keep me")
 
     def test_main_stops_at_failed_phase(self):
-        result = self.run_installer("""
+        result = self.run_installer(
+            """
 preflight() { return 1; }
 refresh_mirrors() { printf 'unexpected phase\n'; }
 main
-""", succeeds=False)
+""",
+            succeeds=False,
+        )
         self.assertEqual(self.commands(), [])
         self.assertNotIn("unexpected phase", result.stdout)
 
@@ -743,17 +932,24 @@ main
     def test_concurrent_installer_stops_before_mutation(self):
         with (self.runtime / "hype-niri-install.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            result = self.run_installer("""
+            result = self.run_installer(
+                """
 preflight() { printf 'unexpected mutation\n'; }
 main
-""", succeeds=False)
-        self.assertIn("Another Hype Niri installation is already running", result.stdout)
+""",
+                succeeds=False,
+            )
+        self.assertIn(
+            "Another Hype Niri installation is already running", result.stdout
+        )
         self.assertNotIn("unexpected mutation", result.stdout)
         self.assertEqual(self.commands(), [])
 
     def test_stale_audio_service_is_removed_without_touching_its_source(self):
         external = self.root / "legacy.service"
-        external.write_text("[Service]\nExecStart=%h/.config/waybar/scripts/audio-jack-switch.sh\n")
+        external.write_text(
+            "[Service]\nExecStart=%h/.config/waybar/scripts/audio-jack-switch.sh\n"
+        )
         unit = self.user_home / ".config/systemd/user/audio-jack-switch.service"
         unit.parent.mkdir(parents=True)
         unit.symlink_to(external)
@@ -816,8 +1012,12 @@ setup_desktop_integrations
             (REPO / "systemd/user/hype-auto-power-profile.service").read_bytes(),
         )
         self.assertEqual(
-            (config / "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf").read_bytes(),
-            (REPO / "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf").read_bytes(),
+            (
+                config / "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf"
+            ).read_bytes(),
+            (
+                REPO / "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf"
+            ).read_bytes(),
         )
         self.assertIn("--user daemon-reload", self.commands())
 
@@ -826,9 +1026,15 @@ setup_desktop_integrations
 configure_file_indexing() { :; }
 setup_desktop_integrations
 """)
-        link = self.user_home / ".config/systemd/user/graphical-session.target.wants/hype-auto-power-profile.service"
+        link = (
+            self.user_home
+            / ".config/systemd/user/graphical-session.target.wants/hype-auto-power-profile.service"
+        )
         self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve().read_bytes(), (REPO / "systemd/user/hype-auto-power-profile.service").read_bytes())
+        self.assertEqual(
+            link.resolve().read_bytes(),
+            (REPO / "systemd/user/hype-auto-power-profile.service").read_bytes(),
+        )
         self.assertEqual(self.commands(), [])
 
     def test_brave_becomes_default_browser_without_dropping_other_defaults(self):
@@ -844,7 +1050,9 @@ setup_desktop_integrations
         )
         self.run_installer("set_default_browser\nset_default_browser")
         lines = (config / "mimeapps.list").read_text().splitlines()
-        self.assertIn("x-scheme-handler/claude-cli=claude-code-url-handler.desktop", lines)
+        self.assertIn(
+            "x-scheme-handler/claude-cli=claude-code-url-handler.desktop", lines
+        )
         self.assertIn("image/png=feh.desktop;", lines)
         self.assertNotIn("text/html=firefox.desktop", lines)
         for mime in ("text/html", "x-scheme-handler/http", "x-scheme-handler/https"):
@@ -860,6 +1068,30 @@ setup_desktop_integrations
         self.assertEqual(lines[0], "[Default Applications]")
         self.assertIn("x-scheme-handler/https=brave-browser.desktop;", lines)
 
+    def test_default_browser_preserves_existing_mimeapps_after_read_error(self):
+        settings = self.user_home / ".config/mimeapps.list"
+        settings.parent.mkdir()
+        original = (
+            "[Default Applications]\n"
+            "x-scheme-handler/claude-cli=claude-code-url-handler.desktop\n"
+            "[Added Associations]\nimage/png=feh.desktop;\n"
+        )
+        settings.write_text(original)
+        self.run_installer(
+            r"""
+cat() {
+    if [[ ${!#} == "$INSTALL_TEST_HOME/.config/mimeapps.list" ]]; then
+        printf '[Default Applications]\n'
+        return 1
+    fi
+    command cat "$@"
+}
+set_default_browser
+""",
+            succeeds=False,
+        )
+        self.assertEqual(settings.read_text(), original)
+
     def test_user_dirs_are_lowercase_and_adopt_legacy_folders(self):
         legacy = self.user_home / "Pictures/Wallpapers"
         legacy.mkdir(parents=True)
@@ -869,14 +1101,30 @@ setup_desktop_integrations
         (self.user_home / "Videos/clip.mp4").write_text("clip")
         (self.user_home / "videos").mkdir()
         self.run_installer("setup_user_dirs")
-        self.assertEqual((self.user_home / "pictures/Wallpapers/kept.jpg").read_text(), "wallpaper")
+        self.assertEqual(
+            (self.user_home / "pictures/Wallpapers/kept.jpg").read_text(), "wallpaper"
+        )
         self.assertFalse((self.user_home / "Pictures").exists())
         self.assertFalse((self.user_home / "Music").exists())
         self.assertTrue((self.user_home / "Videos/clip.mp4").exists())
-        for directory in ("desktop", "documents", "downloads", "music", "projects", "public", "templates"):
+        for directory in (
+            "desktop",
+            "documents",
+            "downloads",
+            "music",
+            "projects",
+            "public",
+            "templates",
+        ):
             self.assertTrue((self.user_home / directory).is_dir(), directory)
-        self.assertIn(f"xdg-user-dirs-update --set PICTURES {self.user_home}/pictures", self.commands())
-        self.assertIn(f"xdg-user-dirs-update --set DOWNLOAD {self.user_home}/downloads", self.commands())
+        self.assertIn(
+            f"xdg-user-dirs-update --set PICTURES {self.user_home}/pictures",
+            self.commands(),
+        )
+        self.assertIn(
+            f"xdg-user-dirs-update --set DOWNLOAD {self.user_home}/downloads",
+            self.commands(),
+        )
 
     def test_user_dirs_never_move_external_configured_paths(self):
         external = self.root / "external-pictures"
@@ -890,20 +1138,34 @@ setup_user_dirs
 
     def test_blueman_launches_use_escape_wrapper(self):
         desktop = self.root / "blueman-manager.desktop"
-        desktop.write_text("[Desktop Entry]\nName=Bluetooth Manager\nExec=blueman-manager\nIcon=blueman\n")
+        desktop.write_text(
+            "[Desktop Entry]\nName=Bluetooth Manager\nExec=blueman-manager\nIcon=blueman\n"
+        )
         self.source.write_text(
-            self.source.read_text().replace("/usr/share/applications/blueman-manager.desktop", str(desktop))
+            self.source.read_text().replace(
+                "/usr/share/applications/blueman-manager.desktop", str(desktop)
+            )
         )
         self.run_installer("""
 configure_file_indexing() { :; }
 setup_desktop_integrations
 """)
-        entry = (self.user_home / ".local/share/applications/blueman-manager.desktop").read_text()
-        self.assertIn(f'Exec=/usr/bin/python3 "{self.user_home}/.config/scripts/blueman-manager.py"', entry)
+        entry = (
+            self.user_home / ".local/share/applications/blueman-manager.desktop"
+        ).read_text()
+        self.assertIn(
+            f'Exec=/usr/bin/python3 "{self.user_home}/.config/scripts/blueman-manager.py"',
+            entry,
+        )
         self.assertIn("Icon=blueman", entry)
         self.assertEqual(
-            (self.user_home / ".config/systemd/user/blueman-manager.service.d/hype-niri.conf").read_bytes(),
-            (REPO / "systemd/user/blueman-manager.service.d/hype-niri.conf").read_bytes(),
+            (
+                self.user_home
+                / ".config/systemd/user/blueman-manager.service.d/hype-niri.conf"
+            ).read_bytes(),
+            (
+                REPO / "systemd/user/blueman-manager.service.d/hype-niri.conf"
+            ).read_bytes(),
         )
 
     def docker_fixture(self, containers="", *, query_status=0):
@@ -924,27 +1186,51 @@ configure_docker_socket
 
     def test_idle_docker_switches_to_socket_activation(self):
         self.run_installer(self.docker_fixture())
-        self.assertEqual(self.commands(), ["enable docker.socket", "docker --host unix:///run/docker.sock ps --quiet", "systemctl disable --now docker.service"])
+        self.assertEqual(
+            self.commands(),
+            [
+                "enable docker.socket",
+                "docker --host unix:///run/docker.sock ps --quiet",
+                "systemctl disable --now docker.service",
+            ],
+        )
 
     def test_running_docker_containers_are_preserved(self):
         self.run_installer(self.docker_fixture("running-container"))
-        self.assertEqual(self.commands(), ["enable docker.socket", "docker --host unix:///run/docker.sock ps --quiet"])
+        self.assertEqual(
+            self.commands(),
+            [
+                "enable docker.socket",
+                "docker --host unix:///run/docker.sock ps --quiet",
+            ],
+        )
 
     def test_failed_docker_query_preserves_existing_service(self):
         self.run_installer(self.docker_fixture(query_status=1))
-        self.assertEqual(self.commands(), ["enable docker.socket", "docker --host unix:///run/docker.sock ps --quiet"])
+        self.assertEqual(
+            self.commands(),
+            [
+                "enable docker.socket",
+                "docker --host unix:///run/docker.sock ps --quiet",
+            ],
+        )
 
     def test_ly_enable_failure_preserves_previous_display_manager(self):
-        self.run_installer("""
+        self.run_installer(
+            """
 systemctl() { printf 'ly@.service disabled\nsddm.service enabled\n'; }
 sudo() {
     printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"
     [[ $* != 'systemctl enable --force ly@tty2.service' ]]
 }
 setup_system
-""", succeeds=False)
+""",
+            succeeds=False,
+        )
         self.assertIn("systemctl enable --force ly@tty2.service", self.commands())
-        self.assertFalse(any("systemctl disable" in command for command in self.commands()))
+        self.assertFalse(
+            any("systemctl disable" in command for command in self.commands())
+        )
 
     def test_ly_template_is_enabled_before_previous_manager_is_disabled(self):
         self.run_installer("""

@@ -112,7 +112,7 @@ A `swayidle -w` watcher holds a sleep delay inhibitor while the lock helper conf
 
 ## Checks
 
-These checks use temporary fixtures and mocked system commands:
+Regression checks use temporary fixtures and mocked system commands:
 
 ```bash
 python3 tests/test-install.py
@@ -123,4 +123,12 @@ python3 tests/test-auto-power-profile.py
 bash stealth/test-stealth.sh
 bash stealth/test-install-stealth.sh
 shellcheck install.sh scripts/*.sh stealth/*.sh systemd/*.sh
+shfmt -l install.sh scripts/*.sh stealth/*.sh systemd/*.sh
+prettier --check . --ignore-unknown
+ruff check scripts tests
+ruff format --check scripts tests
 ```
+
+Static checks require ShellCheck, shfmt, Prettier, and Ruff. Shell formatting
+uses the four-space indentation in `.editorconfig`; `ruff.toml` also checks
+import placement while allowing the required PyGObject initialization order.

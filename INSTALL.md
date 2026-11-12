@@ -59,6 +59,7 @@ for target in \
     .config/niri .config/waybar .config/scripts .config/alacritty \
     .config/fuzzel .config/mako .config/fastfetch .config/wlogout .config/hypr \
     .config/gtk-3.0 .config/gtk-4.0 .config/autostart .config/fontconfig \
+    .config/mimeapps.list \
     .config/systemd/user .config/wireplumber \
     .local/share/icons/Papirus-Dark \
     .zshrc .p10k.zsh .local/share/stealth .local/share/privacy-shield; do
@@ -89,6 +90,10 @@ cp zsh/.p10k.zsh ~/
 chmod +x ~/.config/scripts/*.sh
 bash -c 'source ./install.sh; setup_desktop_integrations'
 ```
+
+When editing `~/.config/niri/outputs.kdl`, keep each output block's opening
+line as `output "name" {`, with each setting and the closing brace on separate
+lines. Display helpers reject compact blocks before changing monitor settings.
 
 ### 4. Apply Dark Theme (GTK + dconf)
 

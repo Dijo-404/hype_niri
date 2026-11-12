@@ -19,7 +19,10 @@ fail() {
 }
 
 require_root() {
-    (( EUID == 0 )) || { printf 'Run this command with sudo.\n' >&2; exit 1; }
+    ((EUID == 0)) || {
+        printf 'Run this command with sudo.\n' >&2
+        exit 1
+    }
     touch "$LOG"
     chmod 600 "$LOG"
 }
@@ -52,8 +55,8 @@ valid_clone_name() {
 random_mac() {
     local -a bytes
     read -r -a bytes < <(od -An -N6 -tx1 /dev/urandom)
-    (( ${#bytes[@]} == 6 )) || return 1
-    printf '%02x:%s:%s:%s:%s:%s\n' "$(( (16#${bytes[0]} | 2) & 254 ))" \
+    ((${#bytes[@]} == 6)) || return 1
+    printf '%02x:%s:%s:%s:%s:%s\n' "$(((16#${bytes[0]} | 2) & 254))" \
         "${bytes[1]}" "${bytes[2]}" "${bytes[3]}" "${bytes[4]}" "${bytes[5]}"
 }
 
@@ -72,7 +75,7 @@ firewall_present() {
 
 wait_for_network() {
     local interface=$1 connection=$2 attempt state active_connection address
-    for (( attempt=0; attempt<15; attempt++ )); do
+    for ((attempt = 0; attempt < 15; attempt++)); do
         state=$(nmcli -g GENERAL.STATE device show "$interface" 2>/dev/null || true)
         active_connection=$(nmcli -g GENERAL.CON-UUID device show "$interface" 2>/dev/null || true)
         address=$(nmcli -g IP4.ADDRESS device show "$interface" 2>/dev/null || true)
@@ -94,8 +97,27 @@ disconnect_nm() {
     [[ $state == 30* || $state == 20* ]]
 }
 
+activate_saved_connection() (
+    local interface=$1 original=$2 connection=$3 mac_policy policy_tmp
+    local policy_file=$STATE_DIR/mac-policy
+    trap - EXIT
+    if [[ -f $policy_file ]]; then
+        mac_policy=$(cat "$policy_file") || exit 2
+    else
+        mac_policy=$(nmcli --escape no -g 802-11-wireless.cloned-mac-address connection show uuid "$connection") || exit 2
+        policy_tmp=$(mktemp "$STATE_DIR/.mac-policy.XXXXXX") || exit 2
+        printf '%s\n' "$mac_policy" >"$policy_tmp" || exit 2
+        mv -f "$policy_tmp" "$policy_file" || exit 2
+    fi
+    trap 'nmcli connection modify --temporary uuid "$connection" 802-11-wireless.cloned-mac-address "$mac_policy" && rm -f "$policy_file" || exit 2' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    nmcli connection modify --temporary uuid "$connection" 802-11-wireless.cloned-mac-address "$original" || exit 2
+    nmcli -w 30 connection up uuid "$connection" ifname "$interface" || exit 1
+)
+
 restore_mac() {
-    local interface=$1 original=$2 connection=$3 require_network=${4:-1} network_ok=1
+    local interface=$1 original=$2 connection=$3 require_network=${4:-1} network_ok=1 activation_result=0
     RESTORE_NETWORK_OK=1
     RESTORE_NM_UNMANAGED=0
     disconnect_nm "$interface"
@@ -105,12 +127,15 @@ restore_mac() {
         return 1
     fi
     ip link set dev "$interface" up
-    if ! nmcli -w 30 connection up uuid "$connection" ifname "$interface"; then
+    activate_saved_connection "$interface" "$original" "$connection" || activation_result=$?
+    if ((activation_result > 1)); then
+        return 1
+    elif ((activation_result)); then
         network_ok=0
     elif ! wait_for_network "$interface" "$connection"; then
         network_ok=0
     fi
-    if [[ $(current_mac "$interface") != "$original" ]] && (( ! require_network )); then
+    if [[ $(current_mac "$interface") != "$original" ]] && ((! require_network)); then
         log 'NetworkManager changed the MAC while Wi-Fi was unavailable; disabling its control for recovery.'
         nmcli -w 15 device disconnect "$interface" || true
         nmcli device set "$interface" managed no || return 1
@@ -121,10 +146,10 @@ restore_mac() {
         RESTORE_NM_UNMANAGED=1
     fi
     [[ $(current_mac "$interface") == "$original" ]] || return 1
-    if (( ! network_ok )); then
+    if ((! network_ok)); then
         RESTORE_NETWORK_OK=0
         log 'Original MAC restored, but the saved Wi-Fi profile could not reconnect.'
-        (( ! require_network )) || return 1
+        ((! require_network)) || return 1
     fi
 }
 
@@ -142,15 +167,15 @@ write_state() {
     state_tmp=$(mktemp "$STATE_DIR/.state.XXXXXX")
     printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
         "$START_INTERFACE" "$START_LINK_TYPE" "$START_MAC" "$START_TOR_PREEXISTING" \
-        "$START_CONNECTION" "$START_CLONE_UUID" "$START_CLONE_NAME" "$START_SPOOF_MAC" > "$state_tmp"
+        "$START_CONNECTION" "$START_CLONE_UUID" "$START_CLONE_NAME" "$START_SPOOF_MAC" >"$state_tmp"
     mv -f "$state_tmp" "$STATE_FILE"
 }
 
 read_state() {
     local -a lines
     [[ -f $STATE_FILE ]] || return 1
-    mapfile -t lines < "$STATE_FILE"
-    (( ${#lines[@]} == 8 )) || fail 'Saved state is incomplete.'
+    mapfile -t lines <"$STATE_FILE"
+    ((${#lines[@]} == 8)) || fail 'Saved state is incomplete.'
     SAVED_INTERFACE=${lines[0]}
     SAVED_LINK_TYPE=${lines[1]}
     SAVED_MAC=${lines[2]}
@@ -181,14 +206,14 @@ tor_listeners_ready() {
 
 verify_transparent_tor() {
     local attempts=${1:-3} response ip attempt
-    for (( attempt=1; attempt<=attempts; attempt++ )); do
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
         if response=$(curl --ipv4 --proxy '' --noproxy '*' --fail --silent --show-error \
             --connect-timeout 8 --max-time 15 "$CHECK_URL" 2>>"$LOG") &&
-            ip=$(jq -er 'select(.IsTor == true) | .IP | select(type == "string")' <<< "$response"); then
+            ip=$(jq -er 'select(.IsTor == true) | .IP | select(type == "string")' <<<"$response"); then
             printf '%s\n' "$ip"
             return 0
         fi
-        (( attempt < attempts )) && sleep 2
+        ((attempt < attempts)) && sleep 2
     done
     return 1
 }
@@ -196,20 +221,20 @@ verify_transparent_tor() {
 start_cleanup() {
     local result=$?
     trap - EXIT
-    (( result == 0 )) && return 0
+    ((result == 0)) && return 0
     set +e
     rm -f "$ACTIVE_FILE"
     log 'Start failed; attempting to restore the network and Tor state.'
-    if (( MAC_ATTEMPTED )); then
+    if ((MAC_ATTEMPTED)); then
         restore_mac "$START_INTERFACE" "$START_MAC" "$START_CONNECTION" || log 'MAC restoration failed; manual recovery is required.'
     fi
-    if (( TOR_STARTED )); then
+    if ((TOR_STARTED)); then
         systemctl stop tor.service || log 'Tor could not be stopped.'
     fi
-    if (( FIREWALL_INSTALLED )); then
+    if firewall_present; then
         log 'The firewall remains active to block leaks. Run stealth-stop to recover.'
     else
-        if (( CLONE_CREATED )); then
+        if ((CLONE_CREATED)); then
             delete_clone "$START_CLONE_UUID" "$START_CLONE_NAME" || log 'Temporary Wi-Fi profile could not be removed.'
         fi
         rm -f "$STATE_FILE"
@@ -255,7 +280,6 @@ start_stealth() {
     START_TOR_PREEXISTING=$tor_preexisting
     MAC_ATTEMPTED=0
     TOR_STARTED=0
-    FIREWALL_INSTALLED=0
     CLONE_CREATED=0
     trap start_cleanup EXIT
     trap 'exit 130' INT
@@ -264,7 +288,6 @@ start_stealth() {
 
     log "Installing fail-closed firewall before changing $START_INTERFACE."
     nft -D "uplink=\"$START_INTERFACE\"" -f "$RULES"
-    FIREWALL_INSTALLED=1
 
     if [[ $START_LINK_TYPE == wifi ]]; then
         nmcli connection clone --temporary uuid "$START_CONNECTION" "$START_CLONE_NAME"
@@ -288,7 +311,7 @@ start_stealth() {
     fi
     [[ $(default_interface) == "$START_INTERFACE" ]] || fail 'The default IPv4 route changed during startup.'
 
-    if (( ! tor_preexisting )); then
+    if ((! tor_preexisting)); then
         TOR_STARTED=1
         systemctl start tor.service
     fi
@@ -298,7 +321,7 @@ start_stealth() {
 
     log "Stealth active: $START_LINK_TYPE $START_INTERFACE MAC $new_mac; Tor exit $tor_ip."
     log 'Host IPv4 TCP and DNS use Tor; IPv6, other UDP, ICMP, and forwarded traffic are blocked.'
-    : > "$ACTIVE_FILE"
+    : >"$ACTIVE_FILE"
     chmod 644 "$ACTIVE_FILE"
     trap - EXIT INT TERM
 }
@@ -310,7 +333,7 @@ stop_stealth() {
     if firewall_present; then
         has_firewall=1
     fi
-    if [[ ! -f $STATE_FILE ]] && (( ! has_firewall )); then
+    if [[ ! -f $STATE_FILE ]] && ((! has_firewall)); then
         rm -f "$ACTIVE_FILE"
         rmdir "$STATE_DIR" 2>/dev/null || true
         log 'Stealth is already stopped.'
@@ -330,16 +353,16 @@ stop_stealth() {
     if [[ $SAVED_TOR_PREEXISTING == 0 ]] && systemctl is-active --quiet tor.service; then
         systemctl stop tor.service || fail 'Could not stop Tor; firewall remains active.'
     fi
-    if (( has_firewall )); then
+    if ((has_firewall)); then
         nft delete table inet stealth || fail 'Could not remove stealth firewall.'
     fi
     rm -f "$STATE_FILE"
     rmdir "$STATE_DIR" 2>/dev/null || true
-    if (( RESTORE_NETWORK_OK )); then
+    if ((RESTORE_NETWORK_OK)); then
         log 'Stealth stopped; ordinary routing restored.'
     else
         log 'Stealth stopped; original MAC restored, but Wi-Fi is unavailable. Reconnect the original profile when the network returns.'
-        if (( RESTORE_NM_UNMANAGED )); then
+        if ((RESTORE_NM_UNMANAGED)); then
             log "NetworkManager control was disabled for MAC recovery. Run: sudo nmcli device set $SAVED_INTERFACE managed yes; sudo nmcli connection up uuid $SAVED_CONNECTION ifname $SAVED_INTERFACE"
         fi
     fi
@@ -375,27 +398,27 @@ status_stealth() {
     if firewall_present; then
         has_firewall=1
     fi
-    if (( has_state )); then
+    if ((has_state)); then
         read_state
         printf 'Saved pre-start MAC: %s\n' "$SAVED_MAC"
         if [[ $SAVED_LINK_TYPE == wifi ]]; then
             printf 'Expected spoofed MAC: %s\n' "$SAVED_SPOOF_MAC"
-            if (( has_firewall )) && [[ $mac != "$SAVED_SPOOF_MAC" ]]; then
+            if ((has_firewall)) && [[ $mac != "$SAVED_SPOOF_MAC" ]]; then
                 printf 'Warning: the expected spoofed MAC is not active.\n'
                 health=1
             fi
         else
             printf 'MAC spoofing: off (Ethernet)\n'
-            if (( has_firewall )) && [[ $mac != "$SAVED_MAC" ]]; then
+            if ((has_firewall)) && [[ $mac != "$SAVED_MAC" ]]; then
                 printf 'Warning: the Ethernet MAC changed since Stealth started.\n'
                 health=1
             fi
         fi
-    elif (( has_firewall )) || [[ $service_state == active ]]; then
+    elif ((has_firewall)) || [[ $service_state == active ]]; then
         printf 'Warning: saved MAC state is missing; safe stop is unavailable.\n'
         health=1
     fi
-    if (( has_firewall )); then
+    if ((has_firewall)); then
         printf 'Fail-closed firewall: active\n'
         if [[ ! -f $ACTIVE_FILE ]]; then
             printf 'Warning: Stealth routing is not confirmed active.\n'
@@ -414,7 +437,7 @@ status_stealth() {
         fi
     else
         printf 'Fail-closed firewall: inactive\n'
-        if (( has_state )); then
+        if ((has_state)); then
             printf 'Warning: saved state exists without its stealth firewall.\n'
             health=1
         fi
@@ -432,5 +455,8 @@ case ${1:-} in
     start) start_stealth ;;
     stop) stop_stealth ;;
     status) status_stealth ;;
-    *) printf 'Usage: stealth {start|stop|status}\n' >&2; exit 2 ;;
+    *)
+        printf 'Usage: stealth {start|stop|status}\n' >&2
+        exit 2
+        ;;
 esac

@@ -8,15 +8,13 @@ import gi
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
-from gi.repository import GLib
+from gi.repository import GLib  # noqa: E402
 
 GLib.set_prgname("blueman-manager")
 
-from gi.repository import Gdk, Gtk  # noqa: E402
-
 from blueman.Functions import create_logger, create_parser, set_proc_title  # noqa: E402
 from blueman.main.Manager import Blueman  # noqa: E402
-
+from gi.repository import Gdk, Gtk  # noqa: E402
 
 LOG_LEVELS = {
     name: getattr(logging, name)

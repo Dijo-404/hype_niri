@@ -11,25 +11,25 @@ token="${EPOCHREALTIME/./}"
 previous=0
 phase=""
 if [ -f "$state_file" ]; then
-    read -r previous phase < "$state_file" || true
+    read -r previous phase <"$state_file" || true
 fi
 [[ "$previous" =~ ^[0-9]{1,18}$ ]] || previous=0
 previous=$((10#$previous))
 elapsed=$((token - previous))
 
-if [[ "$phase" == double ]] && (( elapsed >= 0 && elapsed <= window_us )); then
+if [[ "$phase" == double ]] && ((elapsed >= 0 && elapsed <= window_us)); then
     exit 0
-elif [[ "$phase" == single ]] && (( elapsed >= 0 && elapsed <= window_us )); then
+elif [[ "$phase" == single ]] && ((elapsed >= 0 && elapsed <= window_us)); then
     action=double
 else
     action=single
 fi
-printf '%s %s\n' "$token" "$action" > "$state_file"
+printf '%s %s\n' "$token" "$action" >"$state_file"
 flock -u 9
 
 sleep 0.4
 flock -x 9
-read -r current current_action 2>/dev/null < "$state_file" || exit 0
+read -r current current_action 2>/dev/null <"$state_file" || exit 0
 [[ "$current" == "$token" && "$current_action" == "$action" ]] || exit 0
 
 if [[ "$action" == double ]]; then

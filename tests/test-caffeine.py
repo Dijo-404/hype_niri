@@ -4,16 +4,17 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shlex
 import shutil
 import signal
 import subprocess
 import time
 import unittest
+from pathlib import Path
 
-
-spec = importlib.util.spec_from_file_location("runtime_test_utilities", Path(__file__).with_name("test-runtime.py"))
+spec = importlib.util.spec_from_file_location(
+    "runtime_test_utilities", Path(__file__).with_name("test-runtime.py")
+)
 runtime_utilities = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime_utilities)
 
@@ -34,7 +35,7 @@ class CaffeineTests(unittest.TestCase):
             CAFFEINE_TEST_FAIL=str(int(fail)),
             CAFFEINE_TEST_DELAY=str(delay),
         )
-        program = '''
+        program = """
 import os, pathlib, subprocess, sys, time
 args = sys.argv[1:]
 assert "--what=idle" in args and "--mode=block" in args
@@ -46,8 +47,11 @@ pathlib.Path(os.environ["CAFFEINE_TEST_ACQUIRED"]).touch()
 child = subprocess.Popen(args[args.index("--") + 1:])
 pathlib.Path(os.environ["CAFFEINE_TEST_CHILD"]).write_text(str(child.pid))
 sys.exit(child.wait())
-'''
-        self.mock("systemd-inhibit", f"exec -a systemd-inhibit {shlex.quote(shutil.which('python3'))} -c {shlex.quote(program)} \"$@\"")
+"""
+        self.mock(
+            "systemd-inhibit",
+            f'exec -a systemd-inhibit {shlex.quote(shutil.which("python3"))} -c {shlex.quote(program)} "$@"',
+        )
         self.mock("pkill", 'printf "refresh\\n" >> "$RUNTIME_TEST_LOG"')
 
     def wait_for(self, predicate, message, timeout=3):
@@ -59,7 +63,11 @@ sys.exit(child.wait())
     def start(self, action="toggle", *, relative=False):
         script = self.scripts / "caffeine-control.sh"
         process = subprocess.Popen(
-            ["bash", str(script.relative_to(self.user_home) if relative else script), action],
+            [
+                "bash",
+                str(script.relative_to(self.user_home) if relative else script),
+                action,
+            ],
             cwd=self.user_home if relative else None,
             env=self.environment,
             stdout=subprocess.PIPE,
@@ -71,7 +79,10 @@ sys.exit(child.wait())
         return process
 
     def wait_child(self):
-        self.wait_for(lambda: self.child_pid.exists() and self.child_pid.read_text().strip(), "holder did not start")
+        self.wait_for(
+            lambda: self.child_pid.exists() and self.child_pid.read_text().strip(),
+            "holder did not start",
+        )
         return int(self.child_pid.read_text())
 
     def result(self, process):
@@ -104,7 +115,10 @@ sys.exit(child.wait())
         self.assertEqual(result["class"], "activated")
         self.assertTrue(self.acquired.exists(), "On was emitted before acquisition")
         child = self.wait_child()
-        self.wait_for(lambda: Path(f"/proc/{child}/comm").read_text().strip() == "sleep", "holder did not become sleep")
+        self.wait_for(
+            lambda: Path(f"/proc/{child}/comm").read_text().strip() == "sleep",
+            "holder did not become sleep",
+        )
         self.assertTrue((self.runtime / "caffeine_state").exists())
 
     def test_holder_exit_clears_state_refreshes_bar_and_reaps_child(self):
@@ -115,10 +129,18 @@ sys.exit(child.wait())
         parent = int(self.started.read_text())
         before = self.log.read_text().count("refresh")
         os.kill(parent, signal.SIGTERM)
-        self.wait_for(lambda: not (self.runtime / "caffeine_state").exists(), "dead holder left active state")
+        self.wait_for(
+            lambda: not (self.runtime / "caffeine_state").exists(),
+            "dead holder left active state",
+        )
         self.assertFalse((self.runtime / "caffeine_pid").exists())
-        self.wait_for(lambda: not self.running(child), "holder exit orphaned its sleep child")
-        self.wait_for(lambda: self.log.read_text().count("refresh") > before, "holder exit did not refresh Waybar")
+        self.wait_for(
+            lambda: not self.running(child), "holder exit orphaned its sleep child"
+        )
+        self.wait_for(
+            lambda: self.log.read_text().count("refresh") > before,
+            "holder exit did not refresh Waybar",
+        )
         self.assertEqual(self.result(self.start("status"))["class"], "deactivated")
 
     def test_sleep_exit_clears_active_state(self):
@@ -127,7 +149,10 @@ sys.exit(child.wait())
         child = self.wait_child()
         self.assertEqual(self.result(process)["class"], "activated")
         os.kill(child, signal.SIGTERM)
-        self.wait_for(lambda: not (self.runtime / "caffeine_state").exists(), "exited sleep left active state")
+        self.wait_for(
+            lambda: not (self.runtime / "caffeine_state").exists(),
+            "exited sleep left active state",
+        )
         self.assertFalse((self.runtime / "caffeine_pid").exists())
 
     def test_status_and_stop_release_runtime_lock_and_preserve_holder(self):
@@ -136,12 +161,19 @@ sys.exit(child.wait())
         parent = self.started.read_text()
         child = self.wait_child()
         self.assertEqual(self.result(self.start("status"))["class"], "activated")
-        self.assertEqual(self.started.read_text(), parent, "status unnecessarily restarted acquired holder")
+        self.assertEqual(
+            self.started.read_text(),
+            parent,
+            "status unnecessarily restarted acquired holder",
+        )
         process = self.start("stop")
         stdout, stderr = process.communicate(timeout=3)
         self.assertEqual(process.returncode, 0, stdout + stderr)
         self.wait_for(lambda: not self.running(child), "stop orphaned the holder")
-        self.wait_for(lambda: not list(self.runtime.glob("caffeine-ready.*")), "readiness file leaked after stop")
+        self.wait_for(
+            lambda: not list(self.runtime.glob("caffeine-ready.*")),
+            "readiness file leaked after stop",
+        )
 
     def test_absolute_stop_recognizes_holder_started_from_relative_path(self):
         self.fixture()
@@ -150,7 +182,10 @@ sys.exit(child.wait())
         process = self.start("stop")
         stdout, stderr = process.communicate(timeout=3)
         self.assertEqual(process.returncode, 0, stdout + stderr)
-        self.wait_for(lambda: not self.running(child), "absolute stop failed to recognize its relative-path holder")
+        self.wait_for(
+            lambda: not self.running(child),
+            "absolute stop failed to recognize its relative-path holder",
+        )
 
 
 if __name__ == "__main__":

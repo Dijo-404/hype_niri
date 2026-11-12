@@ -3,14 +3,13 @@
 
 import json
 import os
-from pathlib import Path
 import shlex
 import signal
 import subprocess
 import tempfile
 import time
 import unittest
-
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -29,7 +28,9 @@ class SleepTests(unittest.TestCase):
         for name in ("prepare-sleep.sh", "runtime-dir.sh", "suspend-now.sh"):
             source = REPO / "scripts" / name
             destination = self.scripts / name
-            destination.write_text(source.read_text().replace("$HOME", "$TEST_SLEEP_HOME"))
+            destination.write_text(
+                source.read_text().replace("$HOME", "$TEST_SLEEP_HOME")
+            )
             destination.chmod(source.stat().st_mode)
         self.environment = os.environ | {
             "TEST_SLEEP_HOME": str(self.root),
@@ -38,32 +39,52 @@ class SleepTests(unittest.TestCase):
             "XDG_SESSION_ID": "test-session",
             "TEST_SLEEP_ROOT": str(self.root),
         }
-        self.write_command("loginctl", """#!/usr/bin/env bash
+        self.write_command(
+            "loginctl",
+            """#!/usr/bin/env bash
 [[ "$*" == 'show-session test-session -p LockedHint --value' ]] || exit 2
 [[ ! -f "$TEST_SLEEP_ROOT/hint-error" ]] || exit 1
 if [[ -f "$TEST_SLEEP_ROOT/ready" ]]; then echo yes; else echo no; fi
-""")
-        self.write_command("pgrep", """#!/usr/bin/env bash
+""",
+        )
+        self.write_command(
+            "pgrep",
+            """#!/usr/bin/env bash
 [[ "$*" == "-u $UID -x hyprlock" ]] || exit 2
 [[ -f "$TEST_SLEEP_ROOT/locker" ]]
-""")
-        self.write_command("sleep", """#!/usr/bin/env python3
+""",
+        )
+        self.write_command(
+            "sleep",
+            """#!/usr/bin/env python3
 import os, sys, time
 time.sleep(float(sys.argv[1]) * float(os.environ.get('TEST_SLEEP_SCALE', '1')))
-""")
-        self.write_command("lock.sh", """#!/usr/bin/env bash
+""",
+        )
+        self.write_command(
+            "lock.sh",
+            """#!/usr/bin/env bash
 [[ "$*" == sleep ]] || exit 2
 touch "$TEST_SLEEP_ROOT/started" "$TEST_SLEEP_ROOT/locker"
 [[ ! -f "$TEST_SLEEP_ROOT/fail" ]] || exit 7
 while [[ ! -f "$TEST_SLEEP_ROOT/lock-release" ]]; do /usr/bin/sleep 0.01; done
 touch "$TEST_SLEEP_ROOT/ready"
 /usr/bin/sleep 30
-""", directory=self.scripts)
-        self.write_command("caffeine-control.sh", "#!/usr/bin/env bash\nexit 0\n", directory=self.scripts)
-        self.write_command("systemctl", """#!/usr/bin/env bash
+""",
+            directory=self.scripts,
+        )
+        self.write_command(
+            "caffeine-control.sh",
+            "#!/usr/bin/env bash\nexit 0\n",
+            directory=self.scripts,
+        )
+        self.write_command(
+            "systemctl",
+            """#!/usr/bin/env bash
 [[ "$*" == suspend ]] || exit 2
 touch "$TEST_SLEEP_ROOT/suspended"
-""")
+""",
+        )
 
     def write_command(self, name, text, directory=None):
         path = (directory or self.bin) / name
@@ -72,9 +93,14 @@ touch "$TEST_SLEEP_ROOT/suspended"
 
     def start(self, *arguments, script="prepare-sleep.sh", command=None):
         process = subprocess.Popen(
-            ["bash", "-c", command] if command is not None else [str(self.scripts / script), *arguments],
-            env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True,
+            ["bash", "-c", command]
+            if command is not None
+            else [str(self.scripts / script), *arguments],
+            env=self.environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
         )
 
         def cleanup():
@@ -98,7 +124,9 @@ touch "$TEST_SLEEP_ROOT/suspended"
         process = self.start()
         self.wait_file("started")
         time.sleep(0.4)
-        self.assertIsNone(process.poll(), "Sleep preparation finished before the locker was ready")
+        self.assertIsNone(
+            process.poll(), "Sleep preparation finished before the locker was ready"
+        )
         (self.root / "lock-release").touch()
         self.assertEqual(process.wait(timeout=2), 0)
         self.assertTrue((self.root / "ready").exists())
@@ -107,7 +135,9 @@ touch "$TEST_SLEEP_ROOT/suspended"
         (self.root / "locker").touch()
         process = self.start()
         time.sleep(0.4)
-        self.assertIsNone(process.poll(), "A locker process alone does not confirm session locking")
+        self.assertIsNone(
+            process.poll(), "A locker process alone does not confirm session locking"
+        )
         (self.root / "ready").touch()
         self.assertEqual(process.wait(timeout=2), 0)
 
@@ -128,7 +158,9 @@ touch "$TEST_SLEEP_ROOT/suspended"
         (self.root / "fail").touch()
         self.environment["TEST_SLEEP_SCALE"] = "0.01"
         process = self.start()
-        self.assertNotEqual(process.wait(timeout=3), 0, "A failed locker was reported ready")
+        self.assertNotEqual(
+            process.wait(timeout=3), 0, "A failed locker was reported ready"
+        )
         self.assertFalse((self.root / "ready").exists())
         self.assertIn("lock", process.stderr.read().lower())
 
@@ -141,7 +173,9 @@ touch "$TEST_SLEEP_ROOT/suspended"
     def test_explicit_suspend_waits_for_confirmed_lock(self):
         process = self.start(script="suspend-now.sh")
         self.wait_file("started")
-        self.assertFalse((self.root / "suspended").exists(), "Suspended before the locker was ready")
+        self.assertFalse(
+            (self.root / "suspended").exists(), "Suspended before the locker was ready"
+        )
         (self.root / "lock-release").touch()
         self.assertEqual(process.wait(timeout=2), 0)
         self.assertTrue((self.root / "ready").exists())
@@ -155,26 +189,39 @@ touch "$TEST_SLEEP_ROOT/suspended"
         self.assertFalse((self.root / "suspended").exists())
 
     def test_watch_uses_native_waiting_inhibitor_and_ignores_user_idle_config(self):
-        self.write_command("swayidle", """#!/usr/bin/env python3
+        self.write_command(
+            "swayidle",
+            """#!/usr/bin/env python3
 import json, os, sys, time
 from pathlib import Path
 with (Path(os.environ['TEST_SLEEP_ROOT']) / 'watch-args').open('a') as output:
     output.write(json.dumps(sys.argv[1:]) + '\\n')
 time.sleep(30)
-""")
+""",
+        )
         startup_commands = [
             json.loads(line.removeprefix("spawn-sh-at-startup "))
             for line in (REPO / "niri/config.kdl").read_text().splitlines()
             if line.startswith("spawn-sh-at-startup ")
         ]
-        command = next((command for command in startup_commands if "prepare-sleep.sh" in command), None)
-        self.assertIsNotNone(command, "The compositor does not start the sleep inhibitor")
-        watcher = self.start(command=command.replace("~/.config/scripts", shlex.quote(str(self.scripts))))
+        command = next(
+            (command for command in startup_commands if "prepare-sleep.sh" in command),
+            None,
+        )
+        self.assertIsNotNone(
+            command, "The compositor does not start the sleep inhibitor"
+        )
+        watcher = self.start(
+            command=command.replace("~/.config/scripts", shlex.quote(str(self.scripts)))
+        )
         self.wait_file("watch-args")
         duplicate = self.start("--watch")
         self.assertEqual(duplicate.wait(timeout=2), 0)
         self.assertIsNone(watcher.poll())
-        calls = [json.loads(line) for line in (self.root / "watch-args").read_text().splitlines()]
+        calls = [
+            json.loads(line)
+            for line in (self.root / "watch-args").read_text().splitlines()
+        ]
         self.assertEqual(len(calls), 1)
         arguments = calls[0]
         self.assertIn("-w", arguments)
@@ -182,7 +229,14 @@ time.sleep(30)
         command = arguments[arguments.index("before-sleep") + 1]
         (self.root / "ready").touch()
         (self.root / "locker").touch()
-        result = subprocess.run(command, shell=True, env=self.environment, capture_output=True, timeout=2)
+        result = subprocess.run(
+            command,
+            shell=True,
+            env=self.environment,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

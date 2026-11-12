@@ -21,17 +21,17 @@ sed \
     -e "s|/run/privacy-shield|$TEST_ROOT/live/run/privacy-shield|g" \
     -e "s|/var/log/stealth.log|$TEST_ROOT/live/var/log/stealth.log|g" \
     -e "s|/var/log/privacy-shield.log|$TEST_ROOT/live/var/log/privacy-shield.log|g" \
-    "$SOURCE/install-stealth.sh" > "$TEST_ROOT/stage/install-stealth.sh"
-printf '%s\n' 'original script' > "$TEST_ROOT/live/usr/local/bin/privacy-shield.sh"
-printf '%s\n' 'original unit' > "$TEST_ROOT/live/etc/systemd/system/privacy-shield.service"
-printf '%s\n' 'original rules' > "$TEST_ROOT/live/etc/privacy-shield.nft"
-printf '%s\n' 'original Tor listener config' > "$TEST_ROOT/live/etc/tor/torrc.d/privacy-shield.conf"
-printf 'User tor\n%%include %s\n' "$TEST_ROOT/live/etc/tor/torrc.d/privacy-shield.conf" > "$TEST_ROOT/live/etc/tor/torrc"
-printf '%s\n' 'old log' > "$TEST_ROOT/live/var/log/privacy-shield.log"
+    "$SOURCE/install-stealth.sh" >"$TEST_ROOT/stage/install-stealth.sh"
+printf '%s\n' 'original script' >"$TEST_ROOT/live/usr/local/bin/privacy-shield.sh"
+printf '%s\n' 'original unit' >"$TEST_ROOT/live/etc/systemd/system/privacy-shield.service"
+printf '%s\n' 'original rules' >"$TEST_ROOT/live/etc/privacy-shield.nft"
+printf '%s\n' 'original Tor listener config' >"$TEST_ROOT/live/etc/tor/torrc.d/privacy-shield.conf"
+printf 'User tor\n%%include %s\n' "$TEST_ROOT/live/etc/tor/torrc.d/privacy-shield.conf" >"$TEST_ROOT/live/etc/tor/torrc"
+printf '%s\n' 'old log' >"$TEST_ROOT/live/var/log/privacy-shield.log"
 chmod 644 "$TEST_ROOT/live/var/log/privacy-shield.log"
 touch "$TEST_ROOT/old_enabled"
 
-cat > "$TEST_ROOT/bin/mock-command" <<'MOCK'
+cat >"$TEST_ROOT/bin/mock-command" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 root=$STEALTH_TEST_ROOT
@@ -106,7 +106,7 @@ assert_legacy_restored() {
 
 exec 9>"$TEST_ROOT/live/run/stealth.lock"
 flock -n 9
-if run_install 9>&- > "$TEST_ROOT/locked-install.out" 2>&1; then
+if run_install 9>&- >"$TEST_ROOT/locked-install.out" 2>&1; then
     printf 'Expected installer to reject a concurrent Stealth operation.\n' >&2
     exit 1
 fi
@@ -118,7 +118,7 @@ exec 9>&-
 
 exec 8>"$TEST_ROOT/live/run/privacy-shield.lock"
 flock -n 8
-if run_install 8>&- > "$TEST_ROOT/legacy-locked-install.out" 2>&1; then
+if run_install 8>&- >"$TEST_ROOT/legacy-locked-install.out" 2>&1; then
     printf 'Expected installer to reject a concurrent legacy operation.\n' >&2
     exit 1
 fi
@@ -131,7 +131,7 @@ exec 8>&-
 
 MOCK_TOR_FAIL_AT=3
 export MOCK_TOR_FAIL_AT
-if run_install > "$TEST_ROOT/failed-install.out" 2>&1; then
+if run_install >"$TEST_ROOT/failed-install.out" 2>&1; then
     printf 'Expected installer rollback.\n' >&2
     exit 1
 fi
@@ -139,14 +139,14 @@ assert_legacy_restored
 unset MOCK_TOR_FAIL_AT
 rm "$TEST_ROOT/tor_count"
 
-if MOCK_VISUDO_FAIL=1 run_install > "$TEST_ROOT/sudoers-failed-install.out" 2>&1; then
+if MOCK_VISUDO_FAIL=1 run_install >"$TEST_ROOT/sudoers-failed-install.out" 2>&1; then
     printf 'Expected installer rollback after sudoers validation.\n' >&2
     exit 1
 fi
 assert_legacy_restored
 rm "$TEST_ROOT/tor_count"
 
-run_install > "$TEST_ROOT/successful-install.out" 2>&1
+run_install >"$TEST_ROOT/successful-install.out" 2>&1
 rg -q 'stealth-transparent-v2' "$TEST_ROOT/live/usr/local/bin/stealth"
 [[ -f $TEST_ROOT/live/etc/systemd/system/stealth.service ]]
 [[ -f $TEST_ROOT/live/etc/stealth.nft ]]
@@ -166,7 +166,7 @@ rg -q '^Defaults!STEALTH_CMDS !use_pty$' "$TEST_ROOT/live/etc/sudoers.d/stealth"
 [[ $(rg -c '^%include ' "$TEST_ROOT/live/etc/tor/torrc") == 1 ]]
 rg -Fq 'stealth.conf' "$TEST_ROOT/live/etc/tor/torrc"
 
-run_install > "$TEST_ROOT/reinstall.out"
+run_install >"$TEST_ROOT/reinstall.out"
 [[ $(rg -c '^%include ' "$TEST_ROOT/live/etc/tor/torrc") == 1 ]]
 [[ $(stat -c '%a' "$TEST_ROOT/live/var/log/stealth.log") == 600 ]]
 

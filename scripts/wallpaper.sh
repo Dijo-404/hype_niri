@@ -86,7 +86,7 @@ case "${1:-}" in
         ensure_current_wallpaper || exit 0
         apply_wallpaper "$CURRENT_LINK" none
         ;;
-    current|restore|sync)
+    current | restore | sync)
         ensure_current_wallpaper || exit 0
         apply_wallpaper "$CURRENT_LINK" none
         ;;
@@ -106,7 +106,7 @@ case "${1:-}" in
                 printf '%s\t%s\n' "$index" "$label"
             done | fuzzel --dmenu -p "Wallpaper: " --only-match --with-nth 2 --accept-nth 1 --match-nth 2
         )" || exit 0
-        [[ "$choice" =~ ^[0-9]+$ ]] && (( choice < ${#images[@]} )) || exit 0
+        [[ "$choice" =~ ^[0-9]+$ ]] && ((choice < ${#images[@]})) || exit 0
         set_wallpaper "${images[choice]}"
         ;;
     *)
