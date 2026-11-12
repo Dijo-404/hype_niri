@@ -478,6 +478,26 @@ install_packages
         self.assertEqual((self.user_home / ".local/state/niri/current_wallpaper").resolve(), first)
         self.assertTrue((self.user_home / ".config/niri/outputs.kdl").exists())
 
+    def test_reinstall_keeps_saved_monitor_settings_and_moves_drive_links(self):
+        fixture = self.root / "configs"
+        for directory in ("niri", "waybar", "scripts", "alacritty", "fuzzel", "mako", "fastfetch", "wlogout", "hypr"):
+            (fixture / directory).mkdir(parents=True)
+        (fixture / "scripts/dummy.sh").write_text("#!/bin/bash\nexit 0\n")
+        (fixture / "niri/config.kdl").write_text("repository config\n")
+        saved = 'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n}\n'
+        niri = self.user_home / ".config/niri"
+        niri.mkdir(parents=True)
+        (niri / "outputs.kdl").write_text(saved)
+        (niri / "config.kdl").write_text("old config\n")
+        legacy_drives = self.user_home / "Drives"
+        legacy_drives.mkdir()
+        (legacy_drives / "Windows-SSD").symlink_to("/run/media/user/Windows-SSD")
+        self.run_installer(f"SCRIPT_DIR={shlex.quote(str(fixture))}; copy_configs")
+        self.assertEqual((niri / "outputs.kdl").read_text(), saved)
+        self.assertEqual((niri / "config.kdl").read_text(), "repository config\n")
+        self.assertFalse(legacy_drives.exists())
+        self.assertTrue((self.user_home / "drives").is_dir())
+
     def test_generated_theme_does_not_modify_symlink_targets(self):
         original = self.root / "original-theme"
         original.mkdir()

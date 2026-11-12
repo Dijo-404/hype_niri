@@ -358,7 +358,7 @@ yay -S --needed ntfs-3g gvfs udisks2 lvm2 libblockdev-lvm
 - `udisks2` — the mount daemon Nautilus talks to.
 - `lvm2` and `libblockdev-lvm` — let encrypted LUKS drives reveal and mount LVM-backed filesystems.
 
-The `Super+U` keybinding runs `~/.config/scripts/open-drives.sh` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks GVFS to unlock encrypted drives, mounts inner filesystems, and creates friendly links under `~/Drives`.
+The `Super+U` keybinding runs `~/.config/scripts/open-drives.sh` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks GVFS to unlock encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
 
 **2. Disable Windows Fast Startup** (this is the cause ~90% of the time).
 

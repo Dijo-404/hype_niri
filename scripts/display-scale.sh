@@ -5,15 +5,15 @@ source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
 exec 9>"$RUNTIME_DIR/hype-niri-outputs.lock"
 flock -w 5 9 || exit 0
 
-outputs_kdl="${XDG_CONFIG_HOME:-$HOME/.config}/niri/outputs.kdl"
+source "${BASH_SOURCE[0]%/*}/niri-outputs.sh"
 reload=1
 [ "${1:-}" = "--no-reload" ] && reload=0
 
 command -v niri >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
-mkdir -p "$(dirname "$outputs_kdl")"
-[ -e "$outputs_kdl" ] || : > "$outputs_kdl"
+mkdir -p "$(dirname "$OUTPUTS_KDL")"
+[ -e "$OUTPUTS_KDL" ] || : > "$OUTPUTS_KDL"
 
 scale_for_resolution() {
     local width="$1" height="$2" short
@@ -29,24 +29,34 @@ scale_for_resolution() {
 
 outputs_json="$(niri msg --json outputs 2>/dev/null)" || exit 0
 
-tmp="$(mktemp "$(dirname "$outputs_kdl")/.outputs.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
+tmp="$(mktemp "$(dirname "$OUTPUTS_KDL")/.outputs.XXXXXX")"
+next="$tmp.next"
+trap 'rm -f -- "$tmp" "$next"' EXIT
+cp -- "$OUTPUTS_KDL" "$tmp"
 
-while IFS=$'\t' read -r name width height; do
-    [ -n "$name" ] || continue
-    printf 'output "%s" {\n    scale %s\n}\n' "$name" "$(scale_for_resolution "$width" "$height")"
+# Saved outputs keep their mode and scale; legacy connector names move to the stable name.
+while IFS=$'\t' read -r id connector width height; do
+    [ -n "$id" ] || continue
+    if ! has_output_block "$tmp" "$id" "$connector"; then
+        upsert_output_block "$tmp" "$id" "$connector" "scale $(scale_for_resolution "$width" "$height")" > "$next"
+    elif [ "$id" != "$connector" ] && has_output_block "$tmp" "$connector" "$connector"; then
+        upsert_output_block "$tmp" "$id" "$connector" > "$next"
+    else
+        continue
+    fi
+    mv -f -- "$next" "$tmp"
 done < <(
-    jq -r '
+    jq -r "$OUTPUT_ID_JQ"'
         to_entries[]
         | .value as $o
         | (if $o.current_mode == null then null else ($o.modes[$o.current_mode] // null) end) as $m
         | select($m != null)
-        | [$o.name, ($m.width | tostring), ($m.height | tostring)]
+        | [($o | output_id), $o.name, ($m.width | tostring), ($m.height | tostring)]
         | @tsv
     ' <<<"$outputs_json" 2>/dev/null | sort
-) > "$tmp"
+)
 
-if [ -s "$tmp" ] && ! cmp -s "$tmp" "$outputs_kdl" 2>/dev/null; then
-    mv -f "$tmp" "$outputs_kdl"
+if ! cmp -s "$tmp" "$OUTPUTS_KDL" && niri validate -c "$tmp" >/dev/null 2>&1; then
+    mv -f -- "$tmp" "$OUTPUTS_KDL"
     [ "$reload" = 1 ] && niri msg action load-config-file >/dev/null 2>&1 || true
 fi

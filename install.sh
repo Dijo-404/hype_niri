@@ -338,7 +338,7 @@ preflight() {
         waybar/icons/16x16/panel/nm-signal-75.svg
         waybar/icons/16x16/panel/nm-signal-100.svg
         waybar/icons/16x16/panel/nm-no-connection.svg
-        scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/runtime-dir.sh scripts/auto-power-profile.py
+        scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/niri-outputs.sh scripts/runtime-dir.sh scripts/auto-power-profile.py
         scripts/blueman-manager.py
         systemd/user/hype-auto-power-profile.service
         systemd/user/blueman-manager.service.d/hype-niri.conf
@@ -616,6 +616,13 @@ copy_configs() {
             print_error "Could not copy $config; its existing configuration was retained."
             return 1
         fi
+        # Saved monitor modes and scales live in outputs.kdl and must survive reinstalls.
+        if [ "$config" = niri ] && [ -f "$HOME/.config/niri/outputs.kdl" ]; then
+            if ! cp -p -- "$HOME/.config/niri/outputs.kdl" "$tmp/outputs.kdl"; then
+                print_error "Could not keep saved monitor settings; niri configuration was retained."
+                return 1
+            fi
+        fi
         replace_directory "$tmp" "$HOME/.config/$config" || return 1
         print_done "Copied $config -> ~/.config/$config"
     done
@@ -636,6 +643,11 @@ copy_configs() {
     print_done "Seeded niri output-scale config"
 
     setup_user_dirs || return 1
+    # open-drives.sh links mounts under ~/drives; the old ~/Drives held only those links.
+    if [ -d "$HOME/Drives" ] && [ ! -L "$HOME/Drives" ]; then
+        find "$HOME/Drives" -maxdepth 1 -type l -delete
+        adopt_lowercase_dir "$HOME/Drives" "$HOME/drives" || return 1
+    fi
     adopt_lowercase_dir "$HOME/pictures/Screenshots" "$HOME/pictures/screenshots" || return 1
     adopt_lowercase_dir "$HOME/pictures/Wallpapers" "$HOME/pictures/wallpapers" || return 1
     if [ -d "$SCRIPT_DIR/wallpapers" ]; then
@@ -1376,6 +1388,7 @@ validate() {
         "$HOME/.config/scripts/copilot-display.sh"
         "$HOME/.config/scripts/copilot-shortcut.sh"
         "$HOME/.config/scripts/display-scale.sh"
+        "$HOME/.config/scripts/niri-outputs.sh"
         "$HOME/.config/scripts/fullscreen-toggle.sh"
         "$HOME/.config/scripts/lock-screen.sh"
         "$HOME/.config/scripts/lock.sh"

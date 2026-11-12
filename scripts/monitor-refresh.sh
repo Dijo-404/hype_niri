@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-CONFIG_FILE="${NIRI_CONFIG:-$HOME/.config/niri/config.kdl}"
 NOTIFY_ID=2006
 source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
+source "${BASH_SOURCE[0]%/*}/niri-outputs.sh"
 LOCK_FILE="$RUNTIME_DIR/hype-monitor-refresh.lock"
 
 if command -v flock >/dev/null 2>&1; then
@@ -93,14 +93,6 @@ scale_for_resolution() {
     else
         printf '1.0\n'
     fi
-}
-
-kdl_escape() {
-    local value="$1"
-
-    value="${value//\\/\\\\}"
-    value="${value//\"/\\\"}"
-    printf '%s' "$value"
 }
 
 get_outputs_json() {
@@ -264,113 +256,26 @@ apply_scale() {
     fi
 }
 
-write_config_mode() {
-    local output_name="$1"
-    local mode="$2"
-    local scale="$3"
-    local config_dir
+save_output_mode() {
+    local id="$1"
+    local connector="$2"
+    local mode="$3"
+    local scale="$4"
     local tmp_file
-    local output_kdl
 
-    output_kdl="$(kdl_escape "$output_name")"
-    config_dir="$(dirname "$CONFIG_FILE")"
-    mkdir -p "$config_dir"
-    tmp_file="$(mktemp "$config_dir/.config.kdl.XXXXXX")"
+    mkdir -p "$(dirname "$OUTPUTS_KDL")"
+    [ -e "$OUTPUTS_KDL" ] || : > "$OUTPUTS_KDL"
+    tmp_file="$(mktemp "$(dirname "$OUTPUTS_KDL")/.outputs.XXXXXX")"
     trap 'rm -f -- "${tmp_file:-}"' EXIT
 
-    if [ -f "$CONFIG_FILE" ]; then
-        awk -v output="$output_kdl" -v mode="$mode" -v scale="$scale" '
-            BEGIN {
-                in_output = 0
-                seen_output = 0
-                wrote_mode = 0
-                wrote_scale = 0
-            }
-
-            /^[[:space:]]*output[[:space:]]+"/ {
-                output_name = $0
-                sub(/^[[:space:]]*output[[:space:]]+"/, "", output_name)
-                if (output_name ~ /"[[:space:]]*\{[[:space:]]*$/) {
-                    sub(/"[[:space:]]*\{[[:space:]]*$/, "", output_name)
-                    if (output_name == output) {
-                        in_output = 1
-                        seen_output = 1
-                        wrote_mode = 0
-                        wrote_scale = 0
-                        print
-                        next
-                    }
-                }
-            }
-
-            in_output && /^[[:space:]]*mode[[:space:]]+"/ {
-                indent = $0
-                sub(/[^[:space:]].*/, "", indent)
-                if (indent == "") {
-                    indent = "    "
-                }
-                if (!wrote_mode) {
-                    print indent "mode \"" mode "\""
-                    wrote_mode = 1
-                }
-                next
-            }
-
-            in_output && /^[[:space:]]*scale[[:space:]]+/ {
-                indent = $0
-                sub(/[^[:space:]].*/, "", indent)
-                if (indent == "") {
-                    indent = "    "
-                }
-                if (!wrote_scale) {
-                    print indent "scale " scale
-                    wrote_scale = 1
-                }
-                next
-            }
-
-            in_output && /^[[:space:]]*}[[:space:]]*$/ {
-                if (!wrote_mode) {
-                    print "    mode \"" mode "\""
-                    wrote_mode = 1
-                }
-                if (!wrote_scale) {
-                    print "    scale " scale
-                    wrote_scale = 1
-                }
-                in_output = 0
-                print
-                next
-            }
-
-            { print }
-
-            END {
-                if (!seen_output) {
-                    print ""
-                    print "output \"" output "\" {"
-                    print "    mode \"" mode "\""
-                    print "    scale " scale
-                    print "}"
-                }
-            }
-        ' "$CONFIG_FILE" >"$tmp_file"
-    else
-        {
-            printf 'output "%s" {\n' "$output_kdl"
-            printf '    mode "%s"\n' "$mode"
-            printf '    scale %s\n' "$scale"
-            printf '}\n'
-        } >"$tmp_file"
-    fi
-
+    upsert_output_block "$OUTPUTS_KDL" "$id" "$connector" \
+        "mode \"$(kdl_escape "$mode")\"" "scale $scale" > "$tmp_file"
     if ! niri validate -c "$tmp_file" >/dev/null 2>&1; then
-        rm -f "$tmp_file"
-        notify "Could not save default refresh rate" "Edited config did not validate: $CONFIG_FILE"
+        notify "Could not save default refresh rate" "Edited config did not validate: $OUTPUTS_KDL"
         exit 1
     fi
 
-    mv "$tmp_file" "$CONFIG_FILE"
+    mv -f -- "$tmp_file" "$OUTPUTS_KDL"
 }
 
 main() {
@@ -383,6 +288,7 @@ main() {
     local mode_height
     local mode_rest
     local scale
+    local output_id
 
     missing_commands
 
@@ -406,12 +312,13 @@ main() {
     mode_rest="${mode#*x}"
     mode_height="${mode_rest%%@*}"
     scale="$(scale_for_resolution "$mode_width" "$mode_height")"
+    output_id="$(jq -r --arg output "$output_name" "$OUTPUT_ID_JQ"'.[$output] | output_id' <<<"$outputs_json")"
 
     exec 8>"$RUNTIME_DIR/hype-niri-outputs.lock"
     flock -w 5 8 || exit 0
     apply_mode "$output_name" "$mode"
     apply_scale "$output_name" "$scale"
-    write_config_mode "$output_name" "$mode" "$scale"
+    save_output_mode "$output_id" "$output_name" "$mode" "$scale"
     notify "Monitor refresh saved" "$output_name is now $mode at ${scale}x scale"
 }
 

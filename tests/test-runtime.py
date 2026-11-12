@@ -40,6 +40,7 @@ class RuntimeTests(unittest.TestCase):
             "XDG_RUNTIME_DIR": str(self.runtime),
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "RUNTIME_TEST_LOG": str(self.log),
+            "XDG_CONFIG_HOME": str(self.user_home / ".config"),
         }
         for command in ("notify-send", "pkill"):
             self.mock(command, "exit 0")
@@ -585,6 +586,81 @@ fi
                 self.assertIn("niri msg output eDP-1 on", commands)
                 self.assertIn("niri msg output DP-1 on", commands)
                 self.assertEqual(state.exists(), rollback_fails)
+
+    def outputs_fixture(self, outputs_kdl):
+        """Model a laptop panel plus an external monitor on a changeable connector."""
+        niri_dir = self.user_home / ".config/niri"
+        niri_dir.mkdir(parents=True, exist_ok=True)
+        (niri_dir / "outputs.kdl").write_text(outputs_kdl)
+        (niri_dir / "config.kdl").write_text('include "outputs.kdl"\n')
+        mode = lambda width, height, refresh, preferred=False: {
+            "width": width, "height": height, "refresh_rate": refresh, "is_preferred": preferred,
+        }
+        outputs = {
+            "eDP-1": {
+                "name": "eDP-1", "make": "Samsung Display Corp.", "model": "0x419F", "serial": None,
+                "current_mode": 0, "modes": [mode(2880, 1800, 120000, True)],
+            },
+            "DP-2": {
+                "name": "DP-2", "make": "Dell Inc.", "model": "DELL U2723QE", "serial": "ABC123",
+                "current_mode": 1, "modes": [mode(2560, 1440, 165000), mode(2560, 1440, 59951, True)],
+            },
+        }
+        (self.root / "outputs.json").write_text(json.dumps(outputs))
+        self.environment["RUNTIME_TEST_OUTPUTS"] = str(self.root / "outputs.json")
+        self.mock("niri", f"""
+if [[ $1 == validate ]]; then exec {shlex.quote(shutil.which("niri"))} "$@" >/dev/null 2>&1; fi
+if [[ $* == "msg --json outputs" ]]; then cat "$RUNTIME_TEST_OUTPUTS"; exit 0; fi
+printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
+""")
+        return niri_dir
+
+    def test_display_scale_keeps_saved_modes_and_adopts_stable_names(self):
+        niri_dir = self.outputs_fixture(
+            'output "eDP-1" {\n    scale 2.0\n}\n'
+            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n}\n'
+        )
+        self.run_script("display-scale.sh")
+        self.assertEqual(
+            (niri_dir / "outputs.kdl").read_text(),
+            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n}\n'
+            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n',
+        )
+        self.assertIn("niri msg action load-config-file", self.log.read_text())
+
+    def test_display_scale_adds_only_new_outputs(self):
+        niri_dir = self.outputs_fixture('output "Samsung Display Corp. 0x419F Unknown" {\n    scale 1.5\n}\n')
+        self.run_script("display-scale.sh")
+        self.assertEqual(
+            (niri_dir / "outputs.kdl").read_text(),
+            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 1.5\n}\n'
+            'output "Dell Inc. DELL U2723QE ABC123" {\n    scale 1.0\n}\n',
+        )
+        self.run_script("display-scale.sh")
+        self.assertEqual(self.log.read_text().count("load-config-file"), 1)
+
+    def test_monitor_refresh_saves_mode_in_outputs_file_by_stable_name(self):
+        niri_dir = self.outputs_fixture(
+            'output "DP-2" {\n    mode "2560x1440@59.951"\n    position x=0 y=0\n}\n'
+            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n'
+        )
+        self.environment["RUNTIME_TEST_CHOICES"] = str(self.root / "choices")
+        (self.root / "choices").write_text("DP-2\n2560x1440@165\n")
+        self.mock("fuzzel", """
+cat >/dev/null
+choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
+sed -i 1d "$RUNTIME_TEST_CHOICES"
+printf '%s\\n' "$choice"
+""")
+        self.run_script("monitor-refresh.sh")
+        self.assertEqual(
+            (niri_dir / "outputs.kdl").read_text(),
+            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n'
+            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n'
+            '    position x=0 y=0\n}\n',
+        )
+        self.assertEqual((niri_dir / "config.kdl").read_text(), 'include "outputs.kdl"\n')
+        self.assertIn("niri msg output DP-2 mode 2560x1440@165", self.log.read_text())
 
     def test_waybar_keeps_single_instance_and_publishes_complete_config(self):
         self.waybar_fixture()

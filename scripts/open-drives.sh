@@ -4,7 +4,7 @@ set -u
 
 USER_NAME="${USER:-$(id -un 2>/dev/null || printf user)}"
 MEDIA_DIR="/run/media/$USER_NAME"
-DRIVES_DIR="$HOME/Drives"
+DRIVES_DIR="$HOME/drives"
 source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
 LOCK_FILE="$RUNTIME_DIR/hype-open-drives.lock"
 keyfile=""
