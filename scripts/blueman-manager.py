@@ -10,7 +10,6 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib
 
-# GTK derives the Wayland app ID from this before it initialises; keep Blueman's own.
 GLib.set_prgname("blueman-manager")
 
 from gi.repository import Gdk, Gtk  # noqa: E402
@@ -34,7 +33,6 @@ def close_on_escape(_window, event, app):
 
 
 def bind_escape(app):
-    # Blueman creates its window during the first activation and reuses it.
     if app.window is None:
         return
     app.window.connect("key-press-event", close_on_escape, app)

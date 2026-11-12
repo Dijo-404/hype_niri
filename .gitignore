@@ -10,6 +10,5 @@
 .codex/
 plans/
 
-# Per-machine monitor settings written by display-scale.sh and monitor-refresh.sh
 niri/outputs.kdl
 __pycache__/

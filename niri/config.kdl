@@ -1,4 +1,3 @@
-// Per-output scales, written by display-scale.sh
 include "outputs.kdl"
 
 environment {
@@ -30,8 +29,6 @@ input {
 layout {
     gaps 4
 
-    // Negative struts shrink the outer gap: 4 - 2 = 2px from every screen edge,
-    // while keeping the 4px gap between windows.
     struts {
         left -2
         right -2
@@ -112,10 +109,8 @@ window-rule {
     clip-to-geometry true
 }
 
-// Kept separate so opacity-toggle.sh can switch it without rewriting this file.
 include "opacity.kdl"
 
-// Frosted-glass backdrop for the translucent bar; radius matches window#waybar.
 layer-rule {
     match namespace="^waybar$"
     geometry-corner-radius 6
@@ -187,8 +182,6 @@ binds {
     Mod+Shift+D hotkey-overlay-title="Display Refresh Rate" { spawn-sh "~/.config/scripts/monitor-refresh.sh"; }
     Mod+U { spawn-sh "~/.config/scripts/open-drives.sh"; }
     Mod+C { spawn-sh "alacritty -e nvim"; }
-    // Copilot sends Super+Shift+F23; Niri matches the base keysym, which
-    // xkeyboard-config 2.49 maps to XF86TouchpadOff. Keep older mappings too.
     Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
     Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
     Mod+F23 repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }

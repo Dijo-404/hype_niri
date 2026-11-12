@@ -1,4 +1,3 @@
-# Zsh commands for the installed Stealth service.
 _stealth_installed() {
     local version
     version=$(/usr/local/bin/stealth version 2>/dev/null)

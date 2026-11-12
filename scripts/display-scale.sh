@@ -34,7 +34,6 @@ next="$tmp.next"
 trap 'rm -f -- "$tmp" "$next"' EXIT
 cp -- "$OUTPUTS_KDL" "$tmp"
 
-# Saved outputs keep their mode and scale; legacy connector names move to the stable name.
 while IFS=$'\t' read -r id connector width height; do
     [ -n "$id" ] || continue
     if ! has_output_block "$tmp" "$id" "$connector"; then

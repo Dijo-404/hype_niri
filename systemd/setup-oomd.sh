@@ -34,7 +34,6 @@ if systemctl is-active --quiet "$user_manager"; then
     oom_policy="$(systemctl show "$user_manager" \
         -p MemoryAccounting -p ManagedOOMMemoryPressure -p ManagedOOMSwap \
         -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec)"
-    # systemd normalizes 40% to UINT32_MAX * 40 / 100.
     for setting in MemoryAccounting=yes ManagedOOMMemoryPressure=kill ManagedOOMSwap=kill \
         ManagedOOMMemoryPressureLimit=1717986918 ManagedOOMMemoryPressureDurationUSec=10s; do
         if ! grep -qx "$setting" <<< "$oom_policy"; then

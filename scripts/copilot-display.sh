@@ -13,14 +13,11 @@ case "$mode" in
 esac
 
 if [[ "$mode" == resume ]]; then
-    # A delayed press from before sleep must not blank the displays after resume.
     (
         flock -x 8
         rm -f -- "$RUNTIME_DIR/hype-copilot.state"
     ) 8>"$RUNTIME_DIR/hype-copilot.lock"
 elif [[ -n "${HYPE_COPILOT_TOKEN:-}" ]]; then
-    # Recheck after taking the display lock: resume may have cancelled this press
-    # while its controller was waiting to run.
     (
         flock -x 8
         read -r token phase 2>/dev/null < "$RUNTIME_DIR/hype-copilot.state" || exit 1
@@ -48,8 +45,6 @@ ensure_locked() {
     fi
 
     "$HOME/.config/scripts/lock.sh" sleep 9>&- >/dev/null 2>&1 &
-    # Niri sets LockedHint only once the compositor confirms the session lock.
-    # Process existence alone does not establish that the desktop is protected.
     for ((attempt = 0; attempt < 50; attempt++)); do
         hint="$(locked_hint)" || return 1
         [[ "$hint" == yes || "$hint" == no ]] || return 1
@@ -63,7 +58,6 @@ ensure_locked() {
 
 wait_outputs() {
     local desired="$1" attempt current
-    # IPC acknowledges a requested mode change before the hardware applies it.
     for ((attempt = 0; attempt < 50; attempt++)); do
         current="$(niri msg --json outputs)" || return 1
         if jq -e --rawfile names "$state_file" --arg desired "$desired" '
@@ -88,7 +82,6 @@ restore_outputs() {
     connected="$(niri msg --json outputs)" || return 1
     while IFS= read -r output; do
         [[ -n "$output" ]] || continue
-        # A monitor unplugged while blanked need not block the others from waking.
         jq -e --arg name "$output" 'has($name)' <<< "$connected" >/dev/null || continue
         niri msg output "$output" on || failed=1
     done < "$state_file"
@@ -103,7 +96,6 @@ if [[ -f "$state_file" || "$mode" == resume ]]; then
         exit 1
     fi
     if [[ ! -f "$state_file" ]]; then
-        # Normal suspend/resume needs only DPMS wake, with the session locked.
         niri msg action power-on-monitors
     elif restore_outputs; then
         rm -f -- "$state_file"
@@ -130,8 +122,6 @@ trap 'rm -f -- "$tmp_file"' EXIT
 printf '%s\n' "$outputs" > "$tmp_file"
 mv -f -- "$tmp_file" "$state_file"
 
-# Disabling outputs avoids Niri's automatic DPMS wake on keyboard/mouse input.
-# The next double press confirms the lock before restoring the password prompt.
 failed=0
 while IFS= read -r output; do
     if ! niri msg output "$output" off; then
@@ -147,7 +137,6 @@ if (( failed )) || ! wait_outputs off; then
     exit 1
 fi
 
-# Start the locker after blackout so its appearance is hidden from view.
 sleep 1
 if ! ensure_locked; then
     notify_failure "Could not confirm the session lock; displays remain off. Double-press Copilot with Super to retry."

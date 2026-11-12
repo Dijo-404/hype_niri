@@ -183,7 +183,6 @@ class AutoPowerProfile:
         if key is None:
             self.last_state = None
             return GLib.SOURCE_REMOVE
-        # Only policy transitions override a profile selected manually.
         if key == self.last_state:
             return GLib.SOURCE_REMOVE
         self.last_state = key

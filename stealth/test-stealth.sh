@@ -10,7 +10,6 @@ printf '%s\n' '98:bd:80:57:0e:ae' > "$TEST_ROOT/sys/class/net/wlan0/address"
 printf '%s\n' '60:6d:3c:e0:f1:6a' > "$TEST_ROOT/sys/class/net/enp0s13f0u3/address"
 touch "$TEST_ROOT/rules"
 
-# Replace only fixed filesystem paths in the temporary test copy.
 sed \
     -e "s|/var/log/stealth.log|$TEST_ROOT/log|g" \
     -e "s|/run/stealth|$TEST_ROOT/run/stealth|g" \
@@ -201,7 +200,6 @@ assert_state_link_type() {
     [[ $(sed -n '2p' "$state_file") == "$1" ]] || { printf 'Expected saved link type %s.\n' "$1" >&2; exit 1; }
 }
 
-# Wi-Fi still uses its temporary connection and a spoofed MAC.
 [[ $(run_script version) == stealth-transparent-v2 ]]
 run_script start > "$TEST_ROOT/start.out"
 assert_file "$TEST_ROOT/firewall"
@@ -245,8 +243,6 @@ run_script stop > "$TEST_ROOT/stop-again.out"
 assert_no_file "$TEST_ROOT/run/stealth/state"
 assert_no_file "$TEST_ROOT/clone_exists"
 
-# A failed transparent verification restores the MAC and newly started Tor,
-# but keeps the firewall and saved state so stealth-stop can recover.
 MOCK_CURL_FAIL=1
 export MOCK_CURL_FAIL
 if run_script start > "$TEST_ROOT/failed-start.out" 2>&1; then
@@ -264,7 +260,6 @@ assert_no_file "$TEST_ROOT/clone_exists"
 assert_no_file "$TEST_ROOT/run/stealth/state"
 unset MOCK_CURL_FAIL
 
-# Tor that was active before Stealth is left running on stop.
 touch "$TEST_ROOT/tor_active"
 run_script start > "$TEST_ROOT/preexisting-start.out"
 assert_file "$TEST_ROOT/run/stealth/active"
@@ -275,7 +270,6 @@ assert_no_file "$TEST_ROOT/firewall"
 assert_no_file "$TEST_ROOT/clone_exists"
 assert_mac '98:bd:80:57:0e:ae'
 
-# A failed start with preexisting Tor must not publish an active marker.
 MOCK_CURL_FAIL=1
 export MOCK_CURL_FAIL
 if run_script start > "$TEST_ROOT/preexisting-failed-start.out" 2>&1; then
@@ -295,7 +289,6 @@ run_script stop > "$TEST_ROOT/preexisting-failed-stop.out"
 assert_file "$TEST_ROOT/tor_active"
 unset MOCK_CURL_FAIL
 
-# A NetworkManager activation failure must not start Tor or remove the firewall.
 rm -f "$TEST_ROOT/tor_active"
 MOCK_NM_UP_FAIL=1
 export MOCK_NM_UP_FAIL
@@ -313,7 +306,6 @@ assert_no_file "$TEST_ROOT/nm_disconnected"
 assert_no_file "$TEST_ROOT/clone_exists"
 assert_mac '98:bd:80:57:0e:ae'
 
-# Failure before the temporary profile exists leaves recoverable partial state.
 MOCK_CLONE_FAIL=1
 export MOCK_CLONE_FAIL
 if run_script start > "$TEST_ROOT/clone-failed-start.out" 2>&1; then
@@ -329,8 +321,6 @@ assert_no_file "$TEST_ROOT/firewall"
 assert_no_file "$TEST_ROOT/run/stealth/state"
 assert_mac '98:bd:80:57:0e:ae'
 
-# If the AP disappears and NM randomizes the scanning MAC, explicit stop
-# restores the saved MAC before removing the firewall and explains recovery.
 run_script start > "$TEST_ROOT/ap-start.out"
 MOCK_NM_UP_FAIL=1
 MOCK_NM_SCAN_RANDOM=1
@@ -344,8 +334,6 @@ assert_mac '98:bd:80:57:0e:ae'
 rg -q 'sudo nmcli device set wlan0 managed yes' "$TEST_ROOT/ap-stop.out"
 unset MOCK_NM_UP_FAIL MOCK_NM_SCAN_RANDOM
 
-# USB tethering appears to NetworkManager as Ethernet. Stealth must leave
-# that link and its MAC alone while routing host TCP and DNS through Tor.
 rm -f "$TEST_ROOT/stealth_active" "$TEST_ROOT/tor_active" \
     "$TEST_ROOT/nm_disconnected" "$TEST_ROOT/nm_unmanaged"
 touch "$TEST_ROOT/route_wired"
@@ -367,7 +355,6 @@ if rg -q 'Expected spoofed MAC:' "$TEST_ROOT/wired-status.out"; then
     exit 1
 fi
 
-# A disconnected tether must not prevent stop from removing its firewall.
 touch "$TEST_ROOT/route_missing"
 run_script stop > "$TEST_ROOT/wired-stop.out"
 assert_no_file "$TEST_ROOT/firewall"
@@ -376,7 +363,6 @@ assert_no_file "$TEST_ROOT/run/stealth/state"
 [[ $(cat "$TEST_ROOT/sys/class/net/enp0s13f0u3/address") == '60:6d:3c:e0:f1:6a' ]]
 rm -f "$TEST_ROOT/route_missing" "$TEST_ROOT/stealth_active"
 
-# Failed Tor verification must keep the firewall and state for safe recovery.
 MOCK_CURL_FAIL=1
 export MOCK_CURL_FAIL
 if run_script start > "$TEST_ROOT/wired-failed-start.out" 2>&1; then
@@ -393,7 +379,6 @@ assert_no_file "$TEST_ROOT/firewall"
 assert_no_file "$TEST_ROOT/run/stealth/state"
 unset MOCK_CURL_FAIL
 
-# Non-physical or unsupported uplinks are rejected before installing rules.
 printf '%s\n' bridge > "$TEST_ROOT/device_type"
 if run_script start > "$TEST_ROOT/unsupported-start.out" 2>&1; then
     printf 'Expected unsupported link type to be rejected.\n' >&2

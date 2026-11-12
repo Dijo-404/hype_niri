@@ -1,4 +1,3 @@
-// Wheel (active session): passwordless udisks2 mount/unlock for fixed & removable disks. LUKS passphrase is still required.
 polkit.addRule(function(action, subject) {
     if (!subject.isInGroup("wheel") || !subject.active) return;
 

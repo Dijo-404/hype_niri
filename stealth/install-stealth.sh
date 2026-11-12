@@ -13,7 +13,6 @@ INCLUDE_LINE='%include /etc/tor/torrc.d/stealth.conf'
 SUDOERS_DROPIN=/etc/sudoers.d/stealth
 LOG=/var/log/stealth.log
 
-# These paths are only used to migrate an earlier installation.
 OLD_SCRIPT=/usr/local/bin/privacy-shield.sh
 OLD_UNIT=/etc/systemd/system/privacy-shield.service
 OLD_RULES=/etc/privacy-shield.nft
@@ -147,7 +146,6 @@ if [[ -e $OLD_UNIT ]] && (( old_unit_enabled )); then
 fi
 systemctl daemon-reload
 
-# All previous active paths were backed up before migration.
 rm -f "$OLD_SCRIPT" "$OLD_UNIT" "$OLD_RULES" "$OLD_TOR_DROPIN"
 if [[ -e $OLD_LOG ]]; then
     if [[ ! -e $LOG ]]; then

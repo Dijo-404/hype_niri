@@ -400,8 +400,6 @@ install_packages() {
         if pacman -Si "$pkg" >/dev/null 2>&1; then
             pacman_packages+=("$pkg")
         elif pacman -T "$pkg" >/dev/null 2>&1; then
-            # Foreign packages and their installed providers already satisfy the
-            # requirement. AUR lookup failures must not select replacements.
             retained_packages+=("$pkg")
             print_done "Retaining installed package/provider: $pkg"
         else
@@ -425,8 +423,6 @@ install_packages() {
             print_error "Missing AUR packages require interactive input; rerun ./install.sh in a terminal."
             exit 1
         fi
-        # yay's install resolver can search alternate providers after an RPC
-        # error. Its info operation checks exact names and fails on that error.
         print_step "Checking missing AUR package metadata..."
         if ! yay -Si --aur "${aur_packages[@]}" >> "$install_log" 2>&1; then
             save_install_log "$install_log" aur
@@ -451,7 +447,6 @@ install_packages() {
         fi
     fi
 
-    # Do not report success if a helper skipped an unavailable target.
     if ! pacman -T "${packages[@]}" >> "$install_log" 2>&1; then
         print_error "Required packages remain unsatisfied; installation stopped."
         save_install_log "$install_log" verification
@@ -510,7 +505,6 @@ backup_configs() {
     print_done "Backup saved to $BACKUP_DIR"
 }
 
-# Publish a staged directory, restoring the previous path if the rename fails.
 replace_directory() {
     local staged="$1" destination="$2" previous="$1.previous"
     if [ -e "$destination" ] || [ -L "$destination" ]; then
@@ -527,7 +521,6 @@ replace_directory() {
     rm -rf -- "$previous"
 }
 
-# Generated files must replace symlinks without changing their external targets.
 prepare_generated_config_dir() {
     local dir="$1" tmp
     mkdir -p "$(dirname "$dir")"
@@ -549,7 +542,6 @@ prepare_generated_config_dir() {
     fi
 }
 
-# Rename a legacy directory to its lowercase path without merging into existing content.
 adopt_lowercase_dir() {
     local legacy="$1" target="$2"
     if [ "$legacy" != "$target" ] && [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
@@ -579,7 +571,6 @@ setup_user_dirs() {
             configured="$(xdg-user-dir "$name" 2>/dev/null)" || configured=""
             configured="${configured%/}"
         fi
-        # Adopt only directories directly under home, never home itself or external paths.
         for legacy in "$configured" "$HOME/${dir^}"; do
             if [ -n "$legacy" ] && [ "$(dirname -- "$legacy")" = "$HOME" ]; then
                 adopt_lowercase_dir "$legacy" "$target" || return 1
@@ -616,7 +607,6 @@ copy_configs() {
             print_error "Could not copy $config; its existing configuration was retained."
             return 1
         fi
-        # Saved monitor modes and scales live in outputs.kdl and must survive reinstalls.
         if [ "$config" = niri ] && [ -f "$HOME/.config/niri/outputs.kdl" ]; then
             if ! cp -p -- "$HOME/.config/niri/outputs.kdl" "$tmp/outputs.kdl"; then
                 print_error "Could not keep saved monitor settings; niri configuration was retained."
@@ -633,7 +623,6 @@ copy_configs() {
     fi
     print_done "Made scripts executable"
 
-    # Seed outputs.kdl so niri's include resolves on first launch.
     if [ -x "$HOME/.config/scripts/display-scale.sh" ]; then
         "$HOME/.config/scripts/display-scale.sh" --no-reload >/dev/null 2>&1 || true
     fi
@@ -643,7 +632,6 @@ copy_configs() {
     print_done "Seeded niri output-scale config"
 
     setup_user_dirs || return 1
-    # open-drives.sh links mounts under ~/drives; the old ~/Drives held only those links.
     if [ -d "$HOME/Drives" ] && [ ! -L "$HOME/Drives" ]; then
         find "$HOME/Drives" -maxdepth 1 -type l -delete
         adopt_lowercase_dir "$HOME/Drives" "$HOME/drives" || return 1
@@ -738,7 +726,6 @@ setup_tray_icons() {
             _tmp_resources+=("$tmp")
             cp -- "$SCRIPT_DIR/waybar/icons/16x16/panel/$icon.svg" "$tmp"
             chmod 644 "$tmp"
-            # Replace only the applet alias, preserving shared theme icons.
             mv -fT -- "$tmp" "$theme/$size/panel/$icon.svg"
         done
     done
@@ -860,7 +847,6 @@ if schema and schema.has_key("ignored-directories"):
 PY
 }
 
-# Launch Blueman from the app launcher through the wrapper that closes on Escape.
 install_blueman_desktop_entry() {
     local source=/usr/share/applications/blueman-manager.desktop
     local destination="$HOME/.local/share/applications/blueman-manager.desktop" tmp
@@ -877,7 +863,6 @@ install_blueman_desktop_entry() {
 }
 
 set_default_browser() {
-    # Merge Brave into the user's mimeapps.list without dropping other defaults.
     local desktop=brave-browser.desktop destination="$HOME/.config/mimeapps.list" tmp
     local types="text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https x-scheme-handler/about x-scheme-handler/unknown"
     prepare_generated_config_dir "$HOME/.config" || return 1
@@ -1063,7 +1048,6 @@ setup_system() {
             return 1
         fi
 
-        # Configure the next boot without disrupting the current login session.
         if ! sudo systemctl enable --force "$ly_unit"; then
             print_error "Could not enable $ly_unit; the current display manager was retained"
             return 1
@@ -1179,7 +1163,6 @@ setup_logind() {
 [Login]
 HandleLidSwitch=suspend
 HandleLidSwitchExternalPower=suspend
-# Docked (external monitor): don't suspend; niri blanks the built-in panel.
 HandleLidSwitchDocked=ignore
 LidSwitchIgnoreInhibited=yes
 HoldoffTimeoutSec=0s
@@ -1249,8 +1232,6 @@ setup_cloudflare() {
     fi
     print_done "warp-svc enabled and running"
 
-    # A Type=simple service can be active before its CLI socket is ready.
-    # Missing registration still returns a successful status query.
     for attempt in {1..10}; do
         if warp_output=$(warp-cli --accept-tos status 2>&1); then
             warp_ready=true
@@ -1595,7 +1576,6 @@ PY
         oom_policy="$(systemctl show "$user_manager" \
             -p MemoryAccounting -p ManagedOOMMemoryPressure -p ManagedOOMSwap \
             -p ManagedOOMMemoryPressureLimit -p ManagedOOMMemoryPressureDurationUSec 2>/dev/null || true)"
-        # systemd normalizes 40% to UINT32_MAX * 40 / 100.
         if grep -qx 'MemoryAccounting=yes' <<< "$oom_policy" && \
             grep -qx 'ManagedOOMMemoryPressure=kill' <<< "$oom_policy" && \
             grep -qx 'ManagedOOMSwap=kill' <<< "$oom_policy" && \

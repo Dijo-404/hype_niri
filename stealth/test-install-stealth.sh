@@ -129,7 +129,6 @@ flock -n "$TEST_ROOT/live/run/stealth.lock" true
 flock -u 8
 exec 8>&-
 
-# A failure after old files and log are migrated must restore the old installation.
 MOCK_TOR_FAIL_AT=3
 export MOCK_TOR_FAIL_AT
 if run_install > "$TEST_ROOT/failed-install.out" 2>&1; then
@@ -140,7 +139,6 @@ assert_legacy_restored
 unset MOCK_TOR_FAIL_AT
 rm "$TEST_ROOT/tor_count"
 
-# An invalid combined sudoers policy must remove the drop-in again.
 if MOCK_VISUDO_FAIL=1 run_install > "$TEST_ROOT/sudoers-failed-install.out" 2>&1; then
     printf 'Expected installer rollback after sudoers validation.\n' >&2
     exit 1

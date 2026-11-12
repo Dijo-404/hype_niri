@@ -166,8 +166,6 @@ window#waybar.hidden {
   padding: 0 4px;
 }
 
-/* Waybar packs the label at the start of a box inside each button, so the
-   label sets the circle width and is styled directly instead of inheriting. */
 #workspaces button {
   transition: background-color 0.25s cubic-bezier(0.25, 0.9, 0.25, 1);
   background: transparent;
