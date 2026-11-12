@@ -8,8 +8,8 @@
 }
 
 window#waybar {
-  background-color: #000000;
-  border: 2px solid #b0b0b0;
+  background-color: rgba(0, 0, 0, 0.55);
+  border: 2px solid rgba(200, 200, 200, 0.45);
   border-radius: 6px;
 }
 
@@ -40,12 +40,13 @@ window#waybar.hidden {
 #battery,
 #connectivity,
 #custom-power {
-  background-color: #2d2d2d;
+  background-color: rgba(255, 255, 255, 0.09);
   color: #ffffff;
   border-radius: 8px;
   box-shadow:
-    2px 2px 5px rgba(0, 0, 0, 0.4),
-    inset 1px 1px 2px rgba(255, 255, 255, 0.1);
+    0 2px 6px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   padding: 0 12px;
   margin-top: 6px;
   margin-bottom: 6px;
@@ -132,7 +133,7 @@ window#waybar.hidden {
 #battery:hover,
 #connectivity:hover,
 #custom-power:hover {
-  background-color: #404040;
+  background-color: rgba(255, 255, 255, 0.17);
 }
 
 #custom-power-profile.performance {
@@ -152,11 +153,12 @@ window#waybar.hidden {
 }
 
 #workspaces {
-  background-color: #2d2d2d;
+  background-color: rgba(255, 255, 255, 0.09);
   border-radius: 12px;
   box-shadow:
-    2px 2px 5px rgba(0, 0, 0, 0.4),
-    inset 1px 1px 2px rgba(255, 255, 255, 0.1);
+    0 2px 6px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   margin-top: 6px;
   margin-bottom: 6px;
   margin-left: 3px;
@@ -194,7 +196,7 @@ window#waybar.hidden {
 }
 
 #workspaces button:hover {
-  background: #404040;
+  background: rgba(255, 255, 255, 0.17);
   box-shadow: none;
   text-shadow: none;
 }

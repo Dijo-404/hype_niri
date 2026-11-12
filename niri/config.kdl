@@ -106,6 +106,13 @@ window-rule {
 // Kept separate so opacity-toggle.sh can switch it without rewriting this file.
 include "opacity.kdl"
 
+// Frosted-glass backdrop for the translucent bar; radius matches window#waybar.
+layer-rule {
+    match namespace="^waybar$"
+    geometry-corner-radius 6
+    background-effect { blur true; }
+}
+
 window-rule {
     match app-id="^blueman-manager$"
     open-floating true
