@@ -177,7 +177,7 @@ binds {
     Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
     Mod+F23 repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
     Mod+XF86Assistant repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
-    Mod+B { spawn "firefox"; }
+    Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
     Mod+A hotkey-overlay-title="App Launcher: fuzzel" { spawn "fuzzel"; }

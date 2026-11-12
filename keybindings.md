@@ -70,7 +70,7 @@ These are the primary default keybindings for the Hype Niri environment.
 | `Super + U`          | `open-drives`      | Mount/unlock known external/secondary drives, then launch Nautilus |
 | `Super + C`          | `nvim`             | Launch Neovim                                                      |
 | `Super + Copilot`    | `copilot-shortcut` | Open VS Code after a 400ms double-press window                     |
-| `Super + B`          | `firefox`          | Launch Browser                                                     |
+| `Super + B`          | `brave`            | Launch Browser (Brave, also the default web browser)               |
 | `Ctrl + Shift + Esc` | `htop`             | Launch System Monitor                                              |
 | `Super + A`          | `fuzzel`           | Launch Application Menu                                            |
 | `Super + Tab`        | `toggle-overview`  | Open Window Overview                                               |

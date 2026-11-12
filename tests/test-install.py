@@ -824,6 +824,35 @@ setup_desktop_integrations
         self.assertEqual(link.resolve().read_bytes(), (REPO / "systemd/user/hype-auto-power-profile.service").read_bytes())
         self.assertEqual(self.commands(), [])
 
+    def test_brave_becomes_default_browser_without_dropping_other_defaults(self):
+        config = self.user_home / ".config"
+        config.mkdir()
+        (config / "mimeapps.list").write_text(
+            "[Default Applications]\n"
+            "x-scheme-handler/claude-cli=claude-code-url-handler.desktop\n"
+            "text/html=firefox.desktop\n"
+            "\n"
+            "[Added Associations]\n"
+            "image/png=feh.desktop;\n"
+        )
+        self.run_installer("set_default_browser\nset_default_browser")
+        lines = (config / "mimeapps.list").read_text().splitlines()
+        self.assertIn("x-scheme-handler/claude-cli=claude-code-url-handler.desktop", lines)
+        self.assertIn("image/png=feh.desktop;", lines)
+        self.assertNotIn("text/html=firefox.desktop", lines)
+        for mime in ("text/html", "x-scheme-handler/http", "x-scheme-handler/https"):
+            self.assertEqual(lines.count(f"{mime}=brave-browser.desktop;"), 1, mime)
+        self.assertLess(
+            lines.index("x-scheme-handler/https=brave-browser.desktop;"),
+            lines.index("[Added Associations]"),
+        )
+
+    def test_default_browser_creates_mimeapps_list(self):
+        self.run_installer("set_default_browser")
+        lines = (self.user_home / ".config/mimeapps.list").read_text().splitlines()
+        self.assertEqual(lines[0], "[Default Applications]")
+        self.assertIn("x-scheme-handler/https=brave-browser.desktop;", lines)
+
     def test_user_dirs_are_lowercase_and_adopt_legacy_folders(self):
         legacy = self.user_home / "Pictures/Wallpapers"
         legacy.mkdir(parents=True)

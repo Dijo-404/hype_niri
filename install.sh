@@ -876,8 +876,42 @@ install_blueman_desktop_entry() {
     mv -fT -- "$tmp" "$destination"
 }
 
+set_default_browser() {
+    # Merge Brave into the user's mimeapps.list without dropping other defaults.
+    local desktop=brave-browser.desktop destination="$HOME/.config/mimeapps.list" tmp
+    local types="text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https x-scheme-handler/about x-scheme-handler/unknown"
+    prepare_generated_config_dir "$HOME/.config" || return 1
+    tmp="$(mktemp "${destination}.XXXXXX")"
+    _tmp_resources+=("$tmp")
+    { cat -- "$destination" 2>/dev/null || true; } | awk -v desktop="$desktop" -v types="$types" '
+        BEGIN { n = split(types, list, " "); for (i = 1; i <= n; i++) wanted[list[i]] = 1 }
+        function emit() { for (i = 1; i <= n; i++) print list[i] "=" desktop ";"; done = 1 }
+        /^[[:space:]]*$/ { blanks = blanks $0 "\n"; next }
+        /^\[/ {
+            if (section == "[Default Applications]" && !done) emit()
+            printf "%s", blanks; blanks = ""
+            section = $0
+            print
+            next
+        }
+        section == "[Default Applications]" {
+            key = $0; sub(/=.*/, "", key)
+            if (key in wanted) next
+        }
+        { printf "%s", blanks; blanks = ""; print }
+        END {
+            if (!done) {
+                if (section != "[Default Applications]") print "[Default Applications]"
+                emit()
+            }
+        }
+    ' > "$tmp" || return 1
+    chmod 644 "$tmp"
+    mv -fT -- "$tmp" "$destination"
+}
+
 setup_desktop_integrations() {
-    print_header "Desktop Integration Setup" "audio routing, Bluetooth manager and automatic power profiles"
+    print_header "Desktop Integration Setup" "audio routing, Bluetooth manager, default browser and automatic power profiles"
 
     local dir file tmp destination
     for dir in systemd systemd/user systemd/user/graphical-session.target.wants \
@@ -900,12 +934,13 @@ setup_desktop_integrations() {
     ln -sfT -- ../hype-auto-power-profile.service "$tmp"
     mv -fT -- "$tmp" "$destination"
     install_blueman_desktop_entry || return 1
+    set_default_browser || print_warn "Could not set Brave as the default browser"
     remove_stale_audio_service
     configure_file_indexing || print_warn "Could not configure file indexing exclusions"
     if systemctl --user show-environment >/dev/null 2>&1; then
         systemctl --user daemon-reload
     fi
-    print_done "Installed audio policy, Bluetooth manager and automatic power service"
+    print_done "Installed audio policy, Bluetooth manager, Brave default browser and automatic power service"
 }
 
 enable_system_service_now() {
