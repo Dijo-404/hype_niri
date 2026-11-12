@@ -30,6 +30,15 @@ input {
 layout {
     gaps 4
 
+    // Negative struts shrink the outer gap: 4 - 2 = 2px from every screen edge,
+    // while keeping the 4px gap between windows.
+    struts {
+        left -2
+        right -2
+        top -2
+        bottom -2
+    }
+
     preset-column-widths {
         proportion 0.33333
         proportion 0.5
