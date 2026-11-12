@@ -211,6 +211,8 @@ create_drive_links() {
     find "$DRIVES_DIR" -maxdepth 1 -xtype l -delete 2>/dev/null || true
 
     while read -r source target; do
+        printf -v source '%b' "$source"
+        printf -v target '%b' "$target"
         case "$target" in
             "$MEDIA_DIR"/*)
                 base_name="$(sanitize_link_name "$(alias_for_mount "$source" "$target")")"
@@ -237,3 +239,6 @@ if [ "$storage_ready" = 1 ]; then
     unlock_luks_volumes
     wait_and_mount
 fi
+
+mkdir -p "$DRIVES_DIR"
+exec nautilus "$DRIVES_DIR" 9>&-

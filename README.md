@@ -72,6 +72,8 @@ Power profiles switch automatically: Performance on AC, Balanced on battery at 3
 
 Docker starts on demand, idle audio devices suspend after five seconds, and file indexing skips dependency/cache directories. Startup and control scripts use locks and atomic writes to prevent duplicate processes and partial configurations.
 
+A `swayidle -w` watcher holds a sleep delay inhibitor while the lock helper confirms the session is locked. Explicit suspend requests abort if that confirmation fails. Lid-close and other external requests remain subject to logind's five-second delay limit; see the [swayidle documentation](https://github.com/swaywm/swayidle/blob/master/swayidle.1.scd).
+
 <br/>
 
 ## Repository Structure
@@ -115,6 +117,8 @@ These checks use temporary fixtures and mocked system commands:
 ```bash
 python3 tests/test-install.py
 python3 tests/test-runtime.py
+python3 tests/test-sleep.py
+python3 tests/test-caffeine.py
 python3 tests/test-auto-power-profile.py
 bash stealth/test-stealth.sh
 bash stealth/test-install-stealth.sh

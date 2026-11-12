@@ -662,23 +662,83 @@ printf '%s\\n' "$choice"
         self.assertEqual((niri_dir / "config.kdl").read_text(), 'include "outputs.kdl"\n')
         self.assertIn("niri msg output DP-2 mode 2560x1440@165", self.log.read_text())
 
-    def test_waybar_keeps_single_instance_and_publishes_complete_config(self):
-        self.waybar_fixture()
+    def test_waybar_keeps_single_instance_with_hotplug_capable_config(self):
+        config = self.waybar_fixture()
         self.hold_mock("waybar")
         self.start_script("start-waybar.sh")
         self.run_script("start-waybar.sh")
-        self.assertEqual(len(self.log.read_text().splitlines()), 1)
-        generated = self.runtime / "hype-waybar-multi-output.json"
-        self.assertEqual([bar["output"] for bar in json.loads(generated.read_text())], ["eDP-1", "DP-1"])
-        self.assertFalse(list(self.runtime.glob(".hype-waybar.*")))
+        self.assertEqual(self.log.read_text().splitlines(), [f"--config {config}"])
 
-    def test_failed_waybar_generation_cleans_temporary_file(self):
+    def test_fullscreen_toggle_does_not_hide_bars_on_other_outputs(self):
+        self.mock("niri", 'printf "niri %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.mock("pgrep", "exit 0")
+        self.mock("pkill", 'printf "pkill %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.run_script("fullscreen-toggle.sh")
+        self.assertEqual(self.log.read_text().splitlines(), ["niri msg action fullscreen-window"])
+
+    def test_brightness_changes_succeed_and_notify_in_both_directions(self):
+        value = self.root / "brightness"
+        self.environment["RUNTIME_TEST_BRIGHTNESS"] = str(value)
+        self.mock("brightnessctl", '''
+case "$*" in
+    get) cat "$RUNTIME_TEST_BRIGHTNESS" ;;
+    max) printf '1000\\n' ;;
+    '-q set '*) printf '%s\\n' "$3" > "$RUNTIME_TEST_BRIGHTNESS" ;;
+    *) exit 90 ;;
+esac''')
+        self.mock("notify-send", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        for action, expected, percent in (("up", 510, 51), ("down", 490, 49)):
+            with self.subTest(action=action):
+                value.write_text("500\n")
+                self.log.unlink(missing_ok=True)
+                self.run_script("brightness-control.sh", action)
+                self.assertEqual(int(value.read_text()), expected)
+                self.assertIn(f"Brightness: {percent}%", self.log.read_text())
+
+    def test_drive_links_decode_source_and_target_before_opening_nautilus(self):
+        self.environment["USER"] = "runtime-test"
+        self.mock("findmnt", r"printf '%s\n' '/dev/mapper/My\x20Drive /run/media/runtime-test/My\x20Drive'")
+        self.mock("lsblk", '''
+if [[ "$*" == '-no LABEL /dev/mapper/My Drive' ]]; then
+    printf 'My Drive\\n'
+fi''')
+        self.mock("udisksctl", "exit 90")
+        self.mock("udevadm", "exit 0")
+        self.mock("fuzzel", "exit 1")
+        self.mock("nautilus", '''
+[[ -L "$1/My Drive" ]] || exit 91
+printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''')
+        self.run_script("open-drives.sh")
+        link = self.user_home / "drives/My Drive"
+        self.assertTrue(link.is_symlink(), "decoded drive shortcut was not created")
+        self.assertEqual(os.readlink(link), "/run/media/runtime-test/My Drive")
+        self.assertTrue(self.log.exists(), "Nautilus was not launched")
+        self.assertEqual(self.log.read_text().splitlines(), [f"nautilus {link.parent}"])
+
+    def test_drives_open_nautilus_when_mount_tools_are_unavailable(self):
+        self.mock("nautilus", '''
+[[ -d "$1" ]] || exit 91
+printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''')
+        result = subprocess.run(
+            ["bash", "-c", '''
+command() {
+    [[ "$*" != '-v udisksctl' ]] || return 1
+    builtin command "$@"
+}
+source "$1"
+''', "bash", str(self.scripts / "open-drives.sh")],
+            env=self.environment, capture_output=True, text=True, timeout=8,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.log.exists(), "Nautilus was not launched without mounting tools")
+        self.assertEqual(self.log.read_text().splitlines(), [f"nautilus {self.user_home / 'drives'}"])
+
+    def test_waybar_passes_jsonc_config_through_without_parsing(self):
         config = self.waybar_fixture()
-        config.write_text("{ invalid JSON }")
+        config.write_text('// Waybar accepts JSONC.\n{"modules-left": ["clock"],}\n')
         self.mock("waybar", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
         self.run_script("start-waybar.sh")
         self.assertIn(str(config), self.log.read_text())
-        self.assertFalse(list(self.runtime.glob(".hype-waybar.*")))
 
     def test_concurrent_sensor_scans_publish_complete_cache(self):
         sensor = self.sensor_fixture(label='Package\t"CPU"')
@@ -765,19 +825,23 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
     def test_caffeine_stop_terminates_owned_sleep_child(self):
         pid_file = self.root / "sleep-pid"
         self.environment["RUNTIME_TEST_CHILD_PID"] = str(pid_file)
+        parent_file = self.runtime / "caffeine_pid"
+        self.addCleanup(self.terminate_recorded_pid, pid_file)
+        self.addCleanup(self.terminate_recorded_pid, parent_file)
         program = (
-            "import os,subprocess; "
-            "child=subprocess.Popen(['/usr/bin/sleep','infinity']); "
+            "import os,subprocess,sys; "
+            "child=subprocess.Popen(sys.argv[sys.argv.index('--')+1:]); "
             "open(os.environ['RUNTIME_TEST_CHILD_PID'],'w').write(str(child.pid)); "
             "child.wait()"
         )
         self.mock("systemd-inhibit", f"exec -a systemd-inhibit {shlex.quote(shutil.which('python3'))} -c {shlex.quote(program)} \"$@\"")
         result = json.loads(self.run_script("caffeine-control.sh", "toggle").stdout)
         self.assertEqual(result["class"], "activated")
+        deadline = time.monotonic() + 3
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            self.assertLess(time.monotonic(), deadline, "inhibitor child did not become ready")
+            time.sleep(0.01)
         child_pid = int(pid_file.read_text())
-        parent_pid = int((self.runtime / "caffeine_pid").read_text())
-        self.addCleanup(self.terminate_pid, child_pid)
-        self.addCleanup(self.terminate_pid, parent_pid)
         self.run_script("caffeine-control.sh", "stop")
         self.assertFalse((self.runtime / "caffeine_pid").exists())
         self.assertFalse((self.runtime / "caffeine_state").exists())
@@ -799,6 +863,14 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+    @classmethod
+    def terminate_recorded_pid(cls, path):
+        try:
+            pid = int(path.read_text())
+        except (FileNotFoundError, ValueError):
+            return
+        cls.terminate_pid(pid)
 
     def test_caffeine_does_not_kill_unrelated_recorded_pid(self):
         process = subprocess.Popen(["sleep", "infinity"])
@@ -828,14 +900,22 @@ case "$*" in
 esac''')
         self.mock("findmnt", "exit 1")
         self.mock("fuzzel", "printf 'test-only-passphrase'")
+        program = '''
+import os
+from pathlib import Path
+import signal
+import sys
+marker = Path(os.environ["RUNTIME_TEST_KEY"])
+temporary = marker.with_suffix(".tmp")
+temporary.write_text(sys.argv[-1])
+temporary.replace(marker)
+signal.pause()
+'''
+        self.mock("udisksctl", f"exec {shlex.quote(shutil.which('python3'))} -c {shlex.quote(program)} \"$@\"")
         preamble = '''
 function [ {
     if [[ ${1:-} == -b && ${2:-} == "$RUNTIME_TEST_DEVICE" ]]; then return 0; fi
     builtin [ "$@"
-}
-udisksctl() {
-    printf '%s' "$5" > "$RUNTIME_TEST_KEY"
-    sleep 30
 }
 '''
         process = subprocess.Popen(

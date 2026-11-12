@@ -135,6 +135,7 @@ spawn-sh-at-startup "~/.config/scripts/wallpaper.sh init"
 spawn-sh-at-startup "~/.config/scripts/display-scale.sh"
 
 spawn-sh-at-startup "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_ID NIRI_SOCKET; systemctl --user restart hypridle.service || hypridle"
+spawn-sh-at-startup "~/.config/scripts/prepare-sleep.sh --watch"
 
 spawn-sh-at-startup "wl-paste --type text --watch cliphist store"
 spawn-sh-at-startup "wl-paste --type image --watch cliphist store"

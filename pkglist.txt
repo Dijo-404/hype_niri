@@ -24,6 +24,7 @@ fuzzel-git
 mako
 hyprlock
 hypridle
+swayidle
 awww
 hyprpicker
 polkit-gnome

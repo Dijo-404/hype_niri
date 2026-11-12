@@ -633,7 +633,6 @@ copy_configs() {
 
     setup_user_dirs || return 1
     if [ -d "$HOME/Drives" ] && [ ! -L "$HOME/Drives" ]; then
-        find "$HOME/Drives" -maxdepth 1 -type l -delete
         adopt_lowercase_dir "$HOME/Drives" "$HOME/drives" || return 1
     fi
     adopt_lowercase_dir "$HOME/pictures/Screenshots" "$HOME/pictures/screenshots" || return 1
@@ -1339,6 +1338,7 @@ validate() {
         "wlogout"
         "hyprlock"
         "hypridle"
+        "swayidle"
         "mako"
         "fuzzel"
         "wl-paste"

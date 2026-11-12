@@ -158,6 +158,8 @@ InhibitDelayMaxSec=5
 EOF
 ```
 
+Niri starts `prepare-sleep.sh --watch`, which uses `swayidle -w` to hold a delay inhibitor until lock readiness is confirmed. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
+
 To switch to Ly at the next boot, review your current display manager first. Arch ships `ly@tty2.service`. Enable it successfully before disabling an existing display manager, then reserve its TTY:
 
 ```bash

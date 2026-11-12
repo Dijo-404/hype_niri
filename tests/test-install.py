@@ -492,11 +492,18 @@ install_packages
         legacy_drives = self.user_home / "Drives"
         legacy_drives.mkdir()
         (legacy_drives / "Windows-SSD").symlink_to("/run/media/user/Windows-SSD")
+        work = self.root / "work"
+        work.mkdir()
+        (legacy_drives / "Work").symlink_to(work)
+        (legacy_drives / "Offline").symlink_to("/missing/custom-drive")
         self.run_installer(f"SCRIPT_DIR={shlex.quote(str(fixture))}; copy_configs")
         self.assertEqual((niri / "outputs.kdl").read_text(), saved)
         self.assertEqual((niri / "config.kdl").read_text(), "repository config\n")
         self.assertFalse(legacy_drives.exists())
         self.assertTrue((self.user_home / "drives").is_dir())
+        self.assertEqual((self.user_home / "drives/Work").resolve(), work)
+        self.assertEqual(os.readlink(self.user_home / "drives/Offline"), "/missing/custom-drive")
+        self.assertEqual(os.readlink(self.user_home / "drives/Windows-SSD"), "/run/media/user/Windows-SSD")
 
     def test_generated_theme_does_not_modify_symlink_targets(self):
         original = self.root / "original-theme"

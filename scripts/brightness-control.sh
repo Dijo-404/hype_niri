@@ -37,7 +37,9 @@ smooth_set() {
         [ "$next" = "$last" ] && continue
         brightnessctl -q set "$next"
         last="$next"
-        [ "$i" -lt "$steps" ] && sleep 0.005
+        if [ "$i" -lt "$steps" ]; then
+            sleep 0.005
+        fi
     done
 }
 
