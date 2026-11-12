@@ -14,23 +14,23 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 
 ## Tech Stack
 
-| Component | Tool / Link |
-| :--- | :--- |
-| **Compositor** | [Niri](https://github.com/YaLTeR/niri) |
-| **Bar** | [Waybar](https://github.com/Alexays/Waybar) |
-| **Terminal** | [Alacritty](https://github.com/alacritty/alacritty) |
-| **Shell** | [Zsh](https://www.zsh.org/) + [Powerlevel10k](https://github.com/romkatv/powerlevel10k) |
-| **Text Font** | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) |
-| **Waybar Font** | Roboto with Material Design Icons |
-| **Launcher** | [Fuzzel](https://codeberg.org/dnkl/fuzzel) |
-| **Notifications** | [Mako](https://github.com/emersion/mako) |
-| **Lock Screen** | [Hyprlock](https://github.com/hyprwm/hyprlock) |
-| **Idle Daemon** | [Hypridle](https://github.com/hyprwm/hypridle) |
-| **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd) |
-| **Wallpaper** | [Awww](https://codeberg.org/LGFae/awww) |
-| **Login Manager** | [Ly](https://github.com/fairyglade/ly) |
-| **Fetch App** | [Fastfetch](https://github.com/fastfetch-cli/fastfetch) |
-| **Logout Menu** | [Wlogout](https://github.com/ArtsyMacaw/wlogout) |
+| Component             | Tool / Link                                                                             |
+| :-------------------- | :-------------------------------------------------------------------------------------- |
+| **Compositor**        | [Niri](https://github.com/YaLTeR/niri)                                                  |
+| **Bar**               | [Waybar](https://github.com/Alexays/Waybar)                                             |
+| **Terminal**          | [Alacritty](https://github.com/alacritty/alacritty)                                     |
+| **Shell**             | [Zsh](https://www.zsh.org/) + [Powerlevel10k](https://github.com/romkatv/powerlevel10k) |
+| **Text Font**         | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)                            |
+| **Waybar Font**       | Roboto with Material Design Icons                                                       |
+| **Launcher**          | [Fuzzel](https://codeberg.org/dnkl/fuzzel)                                              |
+| **Notifications**     | [Mako](https://github.com/emersion/mako)                                                |
+| **Lock Screen**       | [Hyprlock](https://github.com/hyprwm/hyprlock)                                          |
+| **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                                          |
+| **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd)                      |
+| **Wallpaper**         | [Awww](https://codeberg.org/LGFae/awww)                                                 |
+| **Login Manager**     | [Ly](https://github.com/fairyglade/ly)                                                  |
+| **Fetch App**         | [Fastfetch](https://github.com/fastfetch-cli/fastfetch)                                 |
+| **Logout Menu**       | [Wlogout](https://github.com/ArtsyMacaw/wlogout)                                        |
 
 <br/>
 
@@ -85,7 +85,7 @@ Docker starts on demand, idle audio devices suspend after five seconds, and file
 ├── mako/            # Notification daemon configuration
 ├── niri/            # Core Niri compositor settings and rules
 ├── polkit/          # Polkit rules for NetworkManager and drive access
-├── Wallpapers/      # Default curated wallpapers
+├── wallpapers/      # Default curated wallpapers
 ├── scripts/         # Desktop utility and control scripts
 ├── systemd/         # Automatic power service and OOM protection
 ├── stealth/         # Optional transparent Tor service and installer

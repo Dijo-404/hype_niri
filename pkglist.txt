@@ -24,7 +24,7 @@ kate
 
 # ── Desktop Components ────────────────────────────
 waybar
-fuzzel
+fuzzel-git
 mako
 hyprlock
 hypridle
@@ -44,6 +44,7 @@ firefox
 brave-bin
 discord
 visual-studio-code-bin
+vlc
 vlc-plugins-all
 obsidian
 

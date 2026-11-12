@@ -3,6 +3,7 @@
 Aliases to speed up your terminal workflow in Hype Niri.
 
 ## Navigation & Listing
+
 - `c`, `cl`: Clear screen
 - `ls`: Modern list with icons (`eza` if installed, falls back to `ls --color=auto`)
 - `l`, `ll`: Long list format
@@ -16,6 +17,7 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `-`: Go to previous directory (via `cd -`)
 
 ## Safety Nets (Interactive execution)
+
 - `cp`: Interactive & verbose copy (`cp -iv`)
 - `mv`: Interactive & verbose move (`mv -iv`)
 - `rm`: Interactive & verbose remove (`rm -Iv`)
@@ -23,11 +25,13 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `mkdir`: Create parent directories implicitly (`mkdir -pv`)
 
 ## Search & Grep
+
 - `grep`: Colorized `grep`
 - `fgrep`: Colorized fixed-string search (`grep -F`)
 - `egrep`: Colorized extended-regex search (`grep -E`)
 
 ## Git
+
 - `g`: `git`
 - `gs`: `git status`
 - `ga`: `git add`
@@ -42,6 +46,7 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `gb`: `git branch`
 
 ## Package Management (Yay)
+
 - `syu`: Upgrade official packages, then AUR packages (`sudo pacman -Syu && yay -Syu`)
 - `install`: Install package (`yay -S`)
 - `remove`: Remove package & unused deps (`yay -Rns`)
@@ -49,6 +54,7 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `pkginfo`: Package information (`yay -Qi`)
 
 ## Docker
+
 - `d`: `docker`
 - `dc`: `docker compose`
 - `dps`: `docker ps`
@@ -59,6 +65,7 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `drmi`: `docker rmi`
 
 ## Editors & CLI Tools
+
 - `v`, `vim`, `nv`, `e`: `nvim`
 - `lg`: `lazygit`
 - `ld`: `lazydocker`
@@ -70,12 +77,14 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `catp`: `bat --style=plain` (no line numbers)
 
 ## Config Shortcuts
+
 - `zshrc`: Edit `~/.zshrc` in Neovim
 - `niriconf`: Edit Niri config in Neovim
 - `alacrittyconf`: Edit Alacritty config in Neovim
 - `reload`: Source `~/.zshrc` to apply changes instantly
 
 ## System Utilities
+
 - `df`: Human-readable disk usage
 - `du`: Human-readable file usage
 - `free`: Human-readable memory usage
@@ -84,6 +93,7 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `ff`: Run `fastfetch` system info
 
 ## Stealth (Tor)
+
 - `stealth-start`: Start transparent Tor routing and verify a normal TCP request uses Tor
 - `stealth-status`: Show service, firewall, MAC, and live Tor verification
 - `stealth-stop`: Restore the original Wi-Fi MAC and connection when needed, then remove the Stealth firewall

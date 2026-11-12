@@ -626,7 +626,7 @@ fi
         self.assertEqual(result["class"], "warning")
 
     def test_wallpaper_ensure_handles_newlines_without_launching_daemon(self):
-        wallpapers = self.user_home / "Pictures/Wallpapers"
+        wallpapers = self.user_home / "pictures/wallpapers"
         wallpapers.mkdir(parents=True)
         image = wallpapers / "one\ntwo.PNG"
         image.touch()
@@ -676,7 +676,7 @@ read -r _ < "$RUNTIME_TEST_HOLD"''')
         self.assertIn("Muted", self.log.read_text().splitlines()[-1])
 
     def test_wallpaper_menu_preserves_newline_filename(self):
-        wallpapers = self.user_home / "Pictures/Wallpapers"
+        wallpapers = self.user_home / "pictures/wallpapers"
         wallpapers.mkdir(parents=True)
         image = wallpapers / "one\ntwo.jpg"
         image.touch()

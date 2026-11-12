@@ -6,7 +6,7 @@ source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
 exec 9>"$RUNTIME_DIR/hype-wallpaper.lock"
 flock -w 2 9 || exit 0
 
-WALLPAPER_DIR="${WALLPAPER_DIR:-$HOME/Pictures/Wallpapers}"
+WALLPAPER_DIR="${WALLPAPER_DIR:-$HOME/pictures/wallpapers}"
 
 STATE_DIR="$HOME/.local/state/niri"
 CURRENT_LINK="$STATE_DIR/current_wallpaper"

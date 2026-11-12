@@ -74,12 +74,14 @@ done
 Move the dotfiles to their respective locations in your home directory.
 
 ```bash
-mkdir -p ~/.config ~/.cache/cliphist ~/Pictures/Screenshots ~/Pictures/Wallpapers
+mkdir -p ~/.config ~/.cache/cliphist
+bash -c 'source ./install.sh; setup_user_dirs'
+mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
 cp -r niri waybar scripts alacritty fuzzel mako fastfetch wlogout hypr ~/.config/
 touch ~/.config/niri/outputs.kdl
 
-[ -d Wallpapers ] && cp -an Wallpapers/. ~/Pictures/Wallpapers/
+[ -d wallpapers ] && cp -an wallpapers/. ~/pictures/wallpapers/
 
 cp zsh/.zshrc ~/
 cp zsh/.p10k.zsh ~/
@@ -169,11 +171,11 @@ If another display manager is enabled, disable its service only after deciding t
 
 The user service follows charger and battery events without polling:
 
-| Power source | Profile |
-| --- | --- |
-| Charger connected | Performance |
-| Battery at 30% or above | Balanced |
-| Battery below 30% | Power Saver |
+| Power source            | Profile     |
+| ----------------------- | ----------- |
+| Charger connected       | Performance |
+| Battery at 30% or above | Balanced    |
+| Battery below 30%       | Power Saver |
 
 Hardware without Performance support falls back to Balanced. Manual Waybar selections last until the next charger or battery-threshold change. The service stops with the graphical session.
 
@@ -241,6 +243,7 @@ sudo systemctl enable ufw.service
 ```
 
 Verify:
+
 ```bash
 sudo ufw status verbose
 ```
@@ -321,7 +324,8 @@ yay -Syu --aur
 
 - **Powerlevel10k Prompt**: The theme is pre-configured out of the box. Run `p10k configure` in your terminal to customize it.
 - **Learn the Controls**: Check out `keybindings.md` to learn how to navigate the Niri compositor.
-- **Wallpapers**: The wallpaper script looks inside `~/Pictures/Wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
+- **User Directories**: The installer sets the XDG user directories to lowercase names (`~/desktop`, `~/documents`, `~/downloads`, `~/music`, `~/pictures`, `~/projects`, `~/public`, `~/templates`, `~/videos`). Existing capitalised folders are renamed when the lowercase folder does not exist yet.
+- **Wallpapers**: The wallpaper script looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
 - **Lock Screen**: `Super+L` locks via hyprlock and uses the saved wallpaper pointer from `~/.local/state/niri/current_wallpaper`.
 - **Firewall / WARP / Stealth**: If you skipped step 7, use the relevant commands above later. Stealth remains off until `stealth-start`.
 

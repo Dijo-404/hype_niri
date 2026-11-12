@@ -92,7 +92,7 @@ animations {
 
 prefer-no-csd
 
-screenshot-path "~/Pictures/Screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
+screenshot-path "~/pictures/screenshots/Screenshot from %Y-%m-%d %H-%M-%S.png"
 
 hotkey-overlay {
     skip-at-startup
@@ -107,9 +107,10 @@ window-rule {
 include "opacity.kdl"
 
 window-rule {
-    match app-id="blueman-manager"
+    match app-id="^blueman-manager$"
     open-floating true
-    default-column-width {}
+    default-column-width { fixed 595; }
+    default-window-height { fixed 365; }
 }
 
 spawn-sh-at-startup "~/.config/scripts/start-waybar.sh"
@@ -167,7 +168,7 @@ binds {
 
     Mod+T hotkey-overlay-title="Terminal: alacritty" { spawn "alacritty"; }
     Mod+E { spawn "nautilus" "-w"; }
-    Mod+D hotkey-overlay-title="Display Refresh Rate" { spawn-sh "~/.config/scripts/monitor-refresh.sh"; }
+    Mod+Shift+D hotkey-overlay-title="Display Refresh Rate" { spawn-sh "~/.config/scripts/monitor-refresh.sh"; }
     Mod+U { spawn-sh "~/.config/scripts/open-drives.sh"; }
     Mod+C { spawn-sh "alacritty -e nvim"; }
     // Copilot sends Super+Shift+F23; Niri matches the base keysym, which

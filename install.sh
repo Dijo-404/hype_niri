@@ -20,6 +20,10 @@ INSTALL_PHASES=(
 PHASE_TOTAL=$((${#INSTALL_PHASES[@]} + 1))
 PHASE_CURRENT=0
 DESKTOP_CONFIG_DIRS=(niri waybar scripts alacritty fuzzel mako fastfetch wlogout hypr)
+XDG_USER_DIRS=(
+    DESKTOP:desktop DOWNLOAD:downloads TEMPLATES:templates PUBLICSHARE:public
+    DOCUMENTS:documents MUSIC:music PICTURES:pictures VIDEOS:videos PROJECTS:projects
+)
 
 INDENT="  "
 BOX_W=60
@@ -335,7 +339,9 @@ preflight() {
         waybar/icons/16x16/panel/nm-signal-100.svg
         waybar/icons/16x16/panel/nm-no-connection.svg
         scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/runtime-dir.sh scripts/auto-power-profile.py
+        scripts/blueman-manager.py
         systemd/user/hype-auto-power-profile.service
+        systemd/user/blueman-manager.service.d/hype-niri.conf
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf
         systemd/setup-oomd.sh systemd/user@.service.d/60-hype-niri-oomd.conf
         polkit/49-udisks2.rules polkit/50-network-manager.rules
@@ -462,6 +468,7 @@ backup_configs() {
         .zshrc .p10k.zsh
         .config/gtk-3.0 .config/gtk-4.0 .config/autostart .config/fontconfig
         .config/systemd/user .config/wireplumber
+        .local/share/applications/blueman-manager.desktop
         .local/share/icons/Papirus-Dark
         .local/share/stealth .local/share/privacy-shield
     )
@@ -542,6 +549,57 @@ prepare_generated_config_dir() {
     fi
 }
 
+# Rename a legacy directory to its lowercase path without merging into existing content.
+adopt_lowercase_dir() {
+    local legacy="$1" target="$2"
+    if [ "$legacy" != "$target" ] && [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
+        if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+            if ! mv -T -- "$legacy" "$target"; then
+                print_error "Could not rename $legacy to $target"
+                return 1
+            fi
+            print_done "Renamed $legacy -> $target"
+        elif rmdir -- "$legacy" 2>/dev/null; then
+            print_done "Removed empty $legacy"
+        else
+            print_warn "Kept $legacy beside $target; merge its files manually"
+        fi
+    fi
+    mkdir -p "$target"
+}
+
+setup_user_dirs() {
+    local entry name dir target configured legacy
+    for entry in "${XDG_USER_DIRS[@]}"; do
+        name="${entry%%:*}"
+        dir="${entry#*:}"
+        target="$HOME/$dir"
+        configured=""
+        if command -v xdg-user-dir &>/dev/null; then
+            configured="$(xdg-user-dir "$name" 2>/dev/null)" || configured=""
+            configured="${configured%/}"
+        fi
+        # Adopt only directories directly under home, never home itself or external paths.
+        for legacy in "$configured" "$HOME/${dir^}"; do
+            if [ -n "$legacy" ] && [ "$(dirname -- "$legacy")" = "$HOME" ]; then
+                adopt_lowercase_dir "$legacy" "$target" || return 1
+            fi
+        done
+        mkdir -p "$target"
+        if command -v xdg-user-dirs-update &>/dev/null; then
+            xdg-user-dirs-update --set "$name" "$target" || {
+                print_error "Could not set XDG $name directory"
+                return 1
+            }
+        fi
+    done
+    if command -v xdg-user-dirs-update &>/dev/null; then
+        print_done "XDG user directories set to lowercase names"
+    else
+        print_warn "xdg-user-dirs-update not found; created lowercase directories only"
+    fi
+}
+
 copy_configs() {
     print_header "Copying Configurations" "niri, waybar, terminal, theming and dotfiles"
 
@@ -577,11 +635,12 @@ copy_configs() {
     fi
     print_done "Seeded niri output-scale config"
 
-    mkdir -p "$HOME/Pictures/Screenshots"
-    mkdir -p "$HOME/Pictures/Wallpapers"
-    if [ -d "$SCRIPT_DIR/Wallpapers" ]; then
-        cp -an -- "$SCRIPT_DIR/Wallpapers/." "$HOME/Pictures/Wallpapers/"
-        print_done "Added wallpapers -> ~/Pictures/Wallpapers (existing files preserved)"
+    setup_user_dirs || return 1
+    adopt_lowercase_dir "$HOME/pictures/Screenshots" "$HOME/pictures/screenshots" || return 1
+    adopt_lowercase_dir "$HOME/pictures/Wallpapers" "$HOME/pictures/wallpapers" || return 1
+    if [ -d "$SCRIPT_DIR/wallpapers" ]; then
+        cp -an -- "$SCRIPT_DIR/wallpapers/." "$HOME/pictures/wallpapers/"
+        print_done "Added wallpapers -> ~/pictures/wallpapers (existing files preserved)"
     else
         print_warn "No wallpapers found in source directory"
     fi
@@ -589,7 +648,7 @@ copy_configs() {
     mkdir -p "$HOME/.local/state/niri"
     if [ ! -e "$HOME/.local/state/niri/current_wallpaper" ]; then
         local wallpapers=() seed_wallpaper
-        mapfile -d '' -t wallpapers < <(find "$HOME/Pictures/Wallpapers" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print0 | sort -z)
+        mapfile -d '' -t wallpapers < <(find "$HOME/pictures/wallpapers" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print0 | sort -z)
         seed_wallpaper="${wallpapers[0]:-}"
         if [ -n "$seed_wallpaper" ] && [ -f "$seed_wallpaper" ]; then
             ln -sfn "$seed_wallpaper" "$HOME/.local/state/niri/current_wallpaper"
@@ -789,22 +848,32 @@ if schema and schema.has_key("ignored-directories"):
 PY
 }
 
-setup_desktop_integrations() {
-    print_header "Desktop Integration Setup" "user directories, audio routing and automatic power profiles"
-
-    if command -v xdg-user-dirs-update &>/dev/null; then
-        xdg-user-dirs-update
-        print_done "XDG user directories initialized"
-    else
-        print_warn "xdg-user-dirs-update not found"
+# Launch Blueman from the app launcher through the wrapper that closes on Escape.
+install_blueman_desktop_entry() {
+    local source=/usr/share/applications/blueman-manager.desktop
+    local destination="$HOME/.local/share/applications/blueman-manager.desktop" tmp
+    if [ ! -f "$source" ]; then
+        print_warn "Blueman desktop entry not found; skipped launcher override"
+        return 0
     fi
+    prepare_generated_config_dir "$HOME/.local/share/applications" || return 1
+    tmp="$(mktemp "${destination}.XXXXXX")"
+    _tmp_resources+=("$tmp")
+    sed "s|^Exec=.*|Exec=/usr/bin/python3 \"$HOME/.config/scripts/blueman-manager.py\"|" "$source" > "$tmp"
+    chmod 644 "$tmp"
+    mv -fT -- "$tmp" "$destination"
+}
+
+setup_desktop_integrations() {
+    print_header "Desktop Integration Setup" "audio routing, Bluetooth manager and automatic power profiles"
 
     local dir file tmp destination
     for dir in systemd systemd/user systemd/user/graphical-session.target.wants \
-        wireplumber wireplumber/wireplumber.conf.d; do
+        systemd/user/blueman-manager.service.d wireplumber wireplumber/wireplumber.conf.d; do
         prepare_generated_config_dir "$HOME/.config/$dir"
     done
     for file in systemd/user/hype-auto-power-profile.service \
+        systemd/user/blueman-manager.service.d/hype-niri.conf \
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf; do
         destination="$HOME/.config/$file"
         tmp="$(mktemp "${destination}.XXXXXX")"
@@ -818,12 +887,13 @@ setup_desktop_integrations() {
     _tmp_resources+=("$tmp")
     ln -sfT -- ../hype-auto-power-profile.service "$tmp"
     mv -fT -- "$tmp" "$destination"
+    install_blueman_desktop_entry || return 1
     remove_stale_audio_service
     configure_file_indexing || print_warn "Could not configure file indexing exclusions"
     if systemctl --user show-environment >/dev/null 2>&1; then
         systemctl --user daemon-reload
     fi
-    print_done "Installed audio policy and automatic power service"
+    print_done "Installed audio policy, Bluetooth manager and automatic power service"
 }
 
 enable_system_service_now() {
@@ -1316,6 +1386,7 @@ validate() {
         "$HOME/.config/scripts/power-menu-action.sh"
         "$HOME/.config/scripts/power-profile.sh"
         "$HOME/.config/scripts/auto-power-profile.py"
+        "$HOME/.config/scripts/blueman-manager.py"
         "$HOME/.config/scripts/runtime-dir.sh"
         "$HOME/.config/scripts/prepare-sleep.sh"
         "$HOME/.config/scripts/start-tray-applets.sh"
@@ -1341,6 +1412,7 @@ validate() {
         "$HOME/.config/gtk-4.0/settings.ini"
         "$HOME/.config/fontconfig/conf.d/60-hype-niri-fonts.conf"
         "$HOME/.config/systemd/user/hype-auto-power-profile.service"
+        "$HOME/.config/systemd/user/blueman-manager.service.d/hype-niri.conf"
         "$HOME/.config/wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf"
         "$HOME/.zshrc"
         "$HOME/.p10k.zsh"
@@ -1373,16 +1445,18 @@ validate() {
         fi
     done
 
-    if /usr/bin/python3 - "$HOME/.config/scripts/auto-power-profile.py" <<'PY'
+    if /usr/bin/python3 - "$HOME/.config/scripts/auto-power-profile.py" \
+        "$HOME/.config/scripts/blueman-manager.py" <<'PY'
 import ast
 from pathlib import Path
 import sys
-ast.parse(Path(sys.argv[1]).read_text())
+for path in sys.argv[1:]:
+    ast.parse(Path(path).read_text())
 PY
     then
-        print_done "Automatic power controller syntax valid"
+        print_done "Python helper syntax valid"
     else
-        print_error "Automatic power controller syntax invalid"
+        print_error "Python helper syntax invalid"
         all_ok=false
     fi
 

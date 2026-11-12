@@ -53,6 +53,8 @@ curl() {{ return 99; }}
 sudo() {{ printf '%s\\n' "$*" >> "$INSTALL_TEST_LOG"; return 1; }}
 systemctl() {{ return 1; }}
 stdbuf() {{ shift 2; "$@"; }}
+xdg-user-dir() {{ printf '%s/\\n' "$INSTALL_TEST_HOME"; }}
+xdg-user-dirs-update() {{ printf 'xdg-user-dirs-update %s\\n' "$*" >> "$INSTALL_TEST_LOG"; }}
 """
         result = subprocess.run(
             ["bash", "-c", preamble + code],
@@ -461,11 +463,11 @@ install_packages
 
     def test_wallpaper_selection_handles_large_collection_and_preserves_files(self):
         fixture = self.root / "configs"
-        for directory in ("niri", "waybar", "scripts", "alacritty", "fuzzel", "mako", "fastfetch", "wlogout", "hypr", "Wallpapers"):
+        for directory in ("niri", "waybar", "scripts", "alacritty", "fuzzel", "mako", "fastfetch", "wlogout", "hypr", "wallpapers"):
             (fixture / directory).mkdir(parents=True)
         (fixture / "scripts/dummy.sh").write_text("#!/bin/bash\nexit 0\n")
-        (fixture / "Wallpapers/00000 wallpaper.jpg").write_text("repository wallpaper")
-        wallpapers = self.user_home / "Pictures/Wallpapers"
+        (fixture / "wallpapers/00000 wallpaper.jpg").write_text("repository wallpaper")
+        wallpapers = self.user_home / "pictures/wallpapers"
         wallpapers.mkdir(parents=True)
         for index in range(5000):
             (wallpapers / f"{index:05d} wallpaper.jpg").touch()
@@ -776,7 +778,6 @@ remove_stale_audio_service
         config.mkdir()
         (config / "systemd").symlink_to(external, target_is_directory=True)
         self.run_installer("""
-xdg-user-dirs-update() { :; }
 configure_file_indexing() { :; }
 systemctl() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 setup_desktop_integrations
@@ -795,7 +796,6 @@ setup_desktop_integrations
 
     def test_power_service_is_enabled_without_a_running_user_manager(self):
         self.run_installer("""
-xdg-user-dirs-update() { :; }
 configure_file_indexing() { :; }
 setup_desktop_integrations
 """)
@@ -803,6 +803,52 @@ setup_desktop_integrations
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.resolve().read_bytes(), (REPO / "systemd/user/hype-auto-power-profile.service").read_bytes())
         self.assertEqual(self.commands(), [])
+
+    def test_user_dirs_are_lowercase_and_adopt_legacy_folders(self):
+        legacy = self.user_home / "Pictures/Wallpapers"
+        legacy.mkdir(parents=True)
+        (legacy / "kept.jpg").write_text("wallpaper")
+        (self.user_home / "Music").mkdir()
+        (self.user_home / "Videos").mkdir()
+        (self.user_home / "Videos/clip.mp4").write_text("clip")
+        (self.user_home / "videos").mkdir()
+        self.run_installer("setup_user_dirs")
+        self.assertEqual((self.user_home / "pictures/Wallpapers/kept.jpg").read_text(), "wallpaper")
+        self.assertFalse((self.user_home / "Pictures").exists())
+        self.assertFalse((self.user_home / "Music").exists())
+        self.assertTrue((self.user_home / "Videos/clip.mp4").exists())
+        for directory in ("desktop", "documents", "downloads", "music", "projects", "public", "templates"):
+            self.assertTrue((self.user_home / directory).is_dir(), directory)
+        self.assertIn(f"xdg-user-dirs-update --set PICTURES {self.user_home}/pictures", self.commands())
+        self.assertIn(f"xdg-user-dirs-update --set DOWNLOAD {self.user_home}/downloads", self.commands())
+
+    def test_user_dirs_never_move_external_configured_paths(self):
+        external = self.root / "external-pictures"
+        external.mkdir()
+        self.run_installer(f"""
+xdg-user-dir() {{ printf '%s\\n' {shlex.quote(str(external))}; }}
+setup_user_dirs
+""")
+        self.assertTrue(external.is_dir())
+        self.assertTrue((self.user_home / "pictures").is_dir())
+
+    def test_blueman_launches_use_escape_wrapper(self):
+        desktop = self.root / "blueman-manager.desktop"
+        desktop.write_text("[Desktop Entry]\nName=Bluetooth Manager\nExec=blueman-manager\nIcon=blueman\n")
+        self.source.write_text(
+            self.source.read_text().replace("/usr/share/applications/blueman-manager.desktop", str(desktop))
+        )
+        self.run_installer("""
+configure_file_indexing() { :; }
+setup_desktop_integrations
+""")
+        entry = (self.user_home / ".local/share/applications/blueman-manager.desktop").read_text()
+        self.assertIn(f'Exec=/usr/bin/python3 "{self.user_home}/.config/scripts/blueman-manager.py"', entry)
+        self.assertIn("Icon=blueman", entry)
+        self.assertEqual(
+            (self.user_home / ".config/systemd/user/blueman-manager.service.d/hype-niri.conf").read_bytes(),
+            (REPO / "systemd/user/blueman-manager.service.d/hype-niri.conf").read_bytes(),
+        )
 
     def docker_fixture(self, containers="", *, query_status=0):
         return f"""

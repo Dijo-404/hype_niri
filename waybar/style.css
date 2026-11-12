@@ -1,7 +1,7 @@
 * {
   border: none;
   border-radius: 0;
-  font-family: 'Roboto', 'Material Design Icons', sans-serif;
+  font-family: "Roboto", "Material Design Icons", sans-serif;
   font-size: 13px;
   min-height: 0;
   color: #ffffff;
@@ -43,7 +43,9 @@ window#waybar.hidden {
   background-color: #2d2d2d;
   color: #ffffff;
   border-radius: 8px;
-  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4), inset 1px 1px 2px rgba(255, 255, 255, 0.1);
+  box-shadow:
+    2px 2px 5px rgba(0, 0, 0, 0.4),
+    inset 1px 1px 2px rgba(255, 255, 255, 0.1);
   padding: 0 12px;
   margin-top: 6px;
   margin-bottom: 6px;
@@ -105,10 +107,12 @@ window#waybar.hidden {
 }
 
 #custom-power {
-  font-family: 'JetBrainsMono Nerd Font', 'Material Design Icons', sans-serif;
+  font-family: "JetBrainsMono Nerd Font", "Material Design Icons", sans-serif;
   font-size: 16px;
   font-weight: 700;
-  text-shadow: 0.35px 0 currentColor, -0.35px 0 currentColor;
+  text-shadow:
+    0.35px 0 currentColor,
+    -0.35px 0 currentColor;
 }
 
 #clock {
@@ -150,7 +154,9 @@ window#waybar.hidden {
 #workspaces {
   background-color: #2d2d2d;
   border-radius: 12px;
-  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4), inset 1px 1px 2px rgba(255, 255, 255, 0.1);
+  box-shadow:
+    2px 2px 5px rgba(0, 0, 0, 0.4),
+    inset 1px 1px 2px rgba(255, 255, 255, 0.1);
   margin-top: 6px;
   margin-bottom: 6px;
   margin-left: 3px;
@@ -158,40 +164,41 @@ window#waybar.hidden {
   padding: 0 4px;
 }
 
+/* Waybar packs the label at the start of a box inside each button, so the
+   label sets the circle width and is styled directly instead of inheriting. */
 #workspaces button {
-  color: #ffffff;
+  transition: background-color 0.25s cubic-bezier(0.25, 0.9, 0.25, 1);
   background: transparent;
-  border-radius: 50px;
-  padding: 0 8px;
-  margin: 2px 2px;
+  border-radius: 50%;
+  min-width: 0;
+  min-height: 31px;
+  margin: 4px 2px;
+  padding: 0;
+}
+
+#workspaces button label {
+  min-width: 31px;
+  color: #ffffff;
   font-size: 14px;
   font-weight: 600;
 }
 
-#workspaces button label {
-  color: inherit;
+#workspaces button.active {
+  background: #e0e0e0;
 }
 
-#workspaces button.active {
-  transition: color 0.25s cubic-bezier(0.25, 0.9, 0.25, 1), background-color 0.25s cubic-bezier(0.25, 0.9, 0.25, 1);
+#workspaces button.active label {
   color: #121212;
-  background: #e0e0e0;
-  border: none;
-  border-radius: 50%;
-  min-width: 31px;
-  min-height: 31px;
-  margin: 4px 4px;
-  padding: 0;
   font-size: 11px;
   font-weight: 700;
 }
 
 #workspaces button:hover {
   background: #404040;
-  color: #ffffff;
   box-shadow: none;
   text-shadow: none;
 }
+
 #workspaces button:hover label {
   color: #ffffff;
 }
