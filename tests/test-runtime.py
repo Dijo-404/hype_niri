@@ -1185,14 +1185,20 @@ read -r _ < "$RUNTIME_TEST_HOLD"''',
         wallpapers.mkdir(parents=True)
         image = wallpapers / "one\ntwo.jpg"
         image.write_text("first image")
-        self.mock("magick", '''
+        self.mock(
+            "magick",
+            '''
 printf 'thumbnail\n' >> "$RUNTIME_TEST_LOG"
 output="${!#}"
-printf 'PNG' > "${output#PNG:}"''')
-        self.mock("fuzzel", '''
+printf 'PNG' > "${output#PNG:}"''',
+        )
+        self.mock(
+            "fuzzel",
+            """
 cat > "$XDG_CACHE_HOME/menu"
 [[ "${CANCEL_MENU:-0}" != 1 ]] || exit 1
-printf '0\n' ''')
+printf '0\n' """,
+        )
         self.mock("pgrep", '[[ "${!#}" == awww-daemon ]]')
         self.mock("awww", "exit 0")
         self.run_script("wallpaper.sh", "select")
@@ -1207,12 +1213,18 @@ printf '0\n' ''')
         self.assertEqual(self.log.read_text().count("thumbnail"), 2)
         current = self.user_home / ".local/state/niri/current_wallpaper"
         current.unlink()
-        self.run_script("wallpaper.sh", "select", environment=self.environment | {"CANCEL_MENU": "1"})
+        self.run_script(
+            "wallpaper.sh",
+            "select",
+            environment=self.environment | {"CANCEL_MENU": "1"},
+        )
         self.assertFalse(current.exists())
 
     def hotspot_fixture(self):
         self.environment["MOCK_HOTSPOT"] = str(self.root / "hotspot")
-        self.mock("nmcli", r'''
+        self.mock(
+            "nmcli",
+            r"""
 printf '%s\n' "$*" >> "$RUNTIME_TEST_LOG"
 case "$*" in
     '-g connection.uuid connection show id Hype Hotspot')
@@ -1232,16 +1244,21 @@ case "$*" in
     '--wait 15 connection down uuid hotspot-uuid') rm -f "$MOCK_HOTSPOT.active" ;;
     *) printf 'Unexpected nmcli call: %s\n' "$*" >&2; exit 99 ;;
 esac
-''')
+""",
+        )
         return self.root / "hotspot.profile", self.root / "hotspot.active"
 
     def test_hotspot_toggle_saves_profile_reuses_credentials_and_stops(self):
         profile, active = self.hotspot_fixture()
-        self.assertEqual(json.loads(self.run_script("hotspot.sh").stdout)["class"], "inactive")
+        self.assertEqual(
+            json.loads(self.run_script("hotspot.sh").stdout)["class"], "inactive"
+        )
         self.run_script("hotspot.sh", "toggle")
         self.assertTrue(profile.exists())
         self.assertTrue(active.exists())
-        self.assertEqual(json.loads(self.run_script("hotspot.sh").stdout)["class"], "active")
+        self.assertEqual(
+            json.loads(self.run_script("hotspot.sh").stdout)["class"], "active"
+        )
         self.run_script("hotspot.sh", "toggle")
         self.assertFalse(active.exists())
         self.assertTrue(profile.exists())
@@ -1252,13 +1269,20 @@ esac
         self.assertRegex(commands, r"wifi-sec.psk [a-f0-9]{24}")
 
     def test_hotspot_failures_do_not_activate_or_stop_unrelated_profile(self):
-        profile, active = self.hotspot_fixture()
-        for scenario in ({"AP_SUPPORT": "no"}, {"FAIL_UP": "1"}, {"PROFILE_MODE": "infrastructure"}):
+        _profile, active = self.hotspot_fixture()
+        for scenario in (
+            {"AP_SUPPORT": "no"},
+            {"FAIL_UP": "1"},
+            {"PROFILE_MODE": "infrastructure"},
+        ):
             with self.subTest(scenario=scenario):
                 result = subprocess.run(
                     ["bash", str(self.scripts / "hotspot.sh"), "start"],
-                    env=self.environment | scenario, capture_output=True, text=True,
-                    timeout=5, check=False,
+                    env=self.environment | scenario,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(active.exists())
@@ -1282,11 +1306,15 @@ esac
         profile.touch()
         active.touch()
         self.mock("alacritty", 'printf "terminal %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.mock("nm-connection-editor", 'printf "editor %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.mock(
+            "nm-connection-editor", 'printf "editor %s\\n" "$*" >> "$RUNTIME_TEST_LOG"'
+        )
         self.run_script("hotspot.sh", "credentials")
         self.run_script("hotspot.sh", "edit")
         commands = self.log.read_text()
-        self.assertIn("terminal --hold -e nmcli device wifi show-password ifname wlan0", commands)
+        self.assertIn(
+            "terminal --hold -e nmcli device wifi show-password ifname wlan0", commands
+        )
         self.assertIn("editor --edit=hotspot-uuid", commands)
 
     def test_caffeine_stop_terminates_owned_sleep_child(self):

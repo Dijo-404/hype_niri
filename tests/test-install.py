@@ -669,14 +669,17 @@ setup_firewall
         self.assertFalse(any("reset" in command for command in self.commands()))
         self.assertIn("ufw --force enable", self.commands())
         for port, protocol in ((67, "udp"), (53, "udp"), (53, "tcp")):
-            self.assertTrue(any(
-                f"ufw allow in on wlan0 to any port {port} proto {protocol}" in command
-                for command in self.commands()
-            ))
+            self.assertTrue(
+                any(
+                    f"ufw allow in on wlan0 to any port {port} proto {protocol}"
+                    in command
+                    for command in self.commands()
+                )
+            )
         self.assertFalse(any("on eth0" in command for command in self.commands()))
 
     def lazyvim_fixture(self):
-        return r'''
+        return r"""
 git() {
     printf 'git %s\n' "$*" >> "$INSTALL_TEST_LOG"
     [[ ${CLONE_FAIL:-0} == 0 ]] || return 1
@@ -686,7 +689,7 @@ git() {
     [[ ${CLONE_INCOMPLETE:-0} == 0 ]] || return 0
     printf '%s\n' 'return { "LazyVim/LazyVim" }' > "$destination/lua/config/lazy.lua"
 }
-'''
+"""
 
     def test_lazyvim_installs_starter_without_git_metadata(self):
         self.run_installer(self.lazyvim_fixture() + "setup_lazyvim")

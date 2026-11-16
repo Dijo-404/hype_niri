@@ -89,7 +89,7 @@ if [[ "$action" == menu ]]; then
 fi
 
 case "$action" in
-    start|stop|toggle)
+    start | stop | toggle)
         source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
         exec 9>"$RUNTIME_DIR/hype-hotspot.lock"
         flock -n 9 || exit 0
@@ -119,7 +119,10 @@ case "$action" in
         [[ -n "$uuid" ]] || fail "Start the hotspot once to create its saved profile."
         exec nm-connection-editor --edit="$uuid"
         ;;
-    *) printf 'Usage: hotspot.sh {status|menu|toggle|start|stop|credentials|edit}\n' >&2; exit 2 ;;
+    *)
+        printf 'Usage: hotspot.sh {status|menu|toggle|start|stop|credentials|edit}\n' >&2
+        exit 2
+        ;;
 esac
 
 if [[ "$action" == start || "$action" == stop || "$action" == toggle ]]; then

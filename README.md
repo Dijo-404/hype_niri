@@ -28,8 +28,8 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 | **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                                          |
 | **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd)                      |
 | **Wallpaper**         | [Awww](https://codeberg.org/LGFae/awww)                                                 |
-| **Editor**            | [LazyVim](https://www.lazyvim.org/)                                                    |
-| **Recording**         | [OBS Studio](https://obsproject.com/)                                                 |
+| **Editor**            | [LazyVim](https://www.lazyvim.org/)                                                     |
+| **Recording**         | [OBS Studio](https://obsproject.com/)                                                   |
 | **Login Manager**     | [Ly](https://github.com/fairyglade/ly)                                                  |
 | **Fetch App**         | [Fastfetch](https://github.com/fastfetch-cli/fastfetch)                                 |
 | **Logout Menu**       | [Wlogout](https://github.com/ArtsyMacaw/wlogout)                                        |
