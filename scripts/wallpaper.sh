@@ -78,6 +78,23 @@ set_wallpaper() {
     fi
 }
 
+wallpaper_thumbnail() {
+    local img="$1" key thumbnail tmp
+    key="$(printf '%s\0%s' "$img" "$(stat -c '%y:%s' -- "$img")" | sha256sum)"
+    thumbnail="$THUMBNAIL_DIR/${key%% *}.png"
+    if [[ ! -s "$thumbnail" ]]; then
+        tmp="$(mktemp "$THUMBNAIL_DIR/.thumbnail.XXXXXX.png")"
+        if magick "${img}[0]" -auto-orient -thumbnail 256x256 \
+            -strip "PNG:$tmp" 2>/dev/null; then
+            mv -f -- "$tmp" "$thumbnail"
+        else
+            rm -f -- "$tmp"
+            return 1
+        fi
+    fi
+    printf '%s' "$thumbnail"
+}
+
 case "${1:-}" in
     ensure)
         ensure_current_wallpaper || exit 0
@@ -98,13 +115,21 @@ case "${1:-}" in
     select)
         [[ -d "$WALLPAPER_DIR" ]] || exit 0
         mapfile -d '' -t images < <(find "$WALLPAPER_DIR" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print0 | sort -z)
+        ((${#images[@]})) || exit 0
+        THUMBNAIL_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/hype-niri/wallpapers"
+        mkdir -p "$THUMBNAIL_DIR"
         choice="$(
             for index in "${!images[@]}"; do
                 label="${images[index]//$'\n'/\\n}"
                 label="${label//$'\r'/\\r}"
                 label="${label//$'\t'/\\t}"
-                printf '%s\t%s\n' "$index" "$label"
-            done | fuzzel --dmenu -p "Wallpaper: " --only-match --with-nth 2 --accept-nth 1 --match-nth 2
+                printf '%s\t%s' "$index" "$label"
+                if thumbnail="$(wallpaper_thumbnail "${images[index]}")"; then
+                    printf '\0icon\x1f%s' "$thumbnail"
+                fi
+                printf '\n'
+            done | fuzzel --dmenu -p "Wallpaper: " --only-match --with-nth 2 --accept-nth 1 --match-nth 2 \
+                --line-height 80 --lines 6 --width 50 --override main.icons-enabled=yes
         )" || exit 0
         [[ "$choice" =~ ^[0-9]+$ ]] && ((choice < ${#images[@]})) || exit 0
         set_wallpaper "${images[choice]}"

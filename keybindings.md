@@ -124,7 +124,8 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even
 | Keybinding              | Action              | Description                                 |
 | :---------------------- | :------------------ | :------------------------------------------ |
 | `Super + Alt + ←` / `→` | `wallpaper random`  | Cycle random wallpaper next/prev            |
-| `Super + Shift + W`     | `wallpaper select`  | Open wallpaper selector menu                |
+| `Super + Shift + W`     | `wallpaper select`  | Open wallpaper selector with image previews |
+| `Super + Shift + H`     | `hotspot menu`      | Start/stop hotspot, show credentials, edit   |
 | `Super + Alt + ↑`       | `waybar show`       | Show/restart Waybar                         |
 | `Super + Alt + ↓`       | `waybar hide`       | Hide Waybar                                 |
 | `Super + Esc`           | `inhibit-shortcuts` | Toggle Niri keyboard shortcut override      |

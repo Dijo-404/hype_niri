@@ -28,6 +28,8 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 | **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                                          |
 | **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd)                      |
 | **Wallpaper**         | [Awww](https://codeberg.org/LGFae/awww)                                                 |
+| **Editor**            | [LazyVim](https://www.lazyvim.org/)                                                    |
+| **Recording**         | [OBS Studio](https://obsproject.com/)                                                 |
 | **Login Manager**     | [Ly](https://github.com/fairyglade/ly)                                                  |
 | **Fetch App**         | [Fastfetch](https://github.com/fastfetch-cli/fastfetch)                                 |
 | **Logout Menu**       | [Wlogout](https://github.com/ArtsyMacaw/wlogout)                                        |
@@ -71,6 +73,12 @@ yay -Syu --aur
 Power profiles switch automatically: Performance on AC, Balanced on battery at 30% or above, and Power Saver below 30%. Manual selections last until the next charger or threshold change. The controller uses D-Bus events and stops at logout; hardware without Performance support uses Balanced.
 
 Docker starts on demand, idle audio devices suspend after five seconds, and file indexing skips dependency/cache directories. Startup and control scripts use locks and atomic writes to prevent duplicate processes and partial configurations.
+
+`Super+Shift+W` opens a wallpaper picker with cached image previews. Window opening, closing, workspace switching, and overview transitions use tuned [Niri animations](https://niri-wm.github.io/niri/Configuration%3A-Animations.html). Related movement and resize animations share settings to keep transitions synchronized. Niri has no separate tab-content transition setting; tab indicators use its movement animation.
+
+Click the hotspot icon beside the tray to start or stop sharing. Right-click it, or press `Super+Shift+H`, for credentials and connection settings. The first start creates a WPA2 hotspot named `Hype-Niri` with a random password; later starts reuse the saved profile. Starting it may disconnect Wi-Fi on the same adapter. Internet sharing requires an upstream connection, such as Ethernet, USB tethering, or another Wi-Fi adapter. The installer includes `dnsmasq` and configures DHCP/DNS access on hotspot-capable Wi-Fi interfaces when enabling UFW.
+
+Installation includes OBS Studio and the [LazyVim starter](https://www.lazyvim.org/installation). Existing LazyVim settings are retained; other Neovim configurations are backed up before replacement. Open `nvim` to download plugins on first launch, then run `:LazyHealth`.
 
 A `swayidle -w` watcher holds a sleep delay inhibitor while the lock helper confirms the session is locked. Explicit suspend requests abort if that confirmation fails. Lid-close and other external requests remain subject to logind's five-second delay limit; see the [swayidle documentation](https://github.com/swaywm/swayidle/blob/master/swayidle.1.scd).
 

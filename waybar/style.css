@@ -64,6 +64,20 @@ window#waybar.hidden {
   margin: 0;
 }
 
+#custom-hotspot {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+#custom-hotspot.inactive,
+#custom-hotspot.unavailable {
+  color: #aaaaaa;
+}
+
+#custom-hotspot.active {
+  color: #98c379;
+}
+
 #connectivity #image.stealth {
   padding: 0;
   margin: 0 0 0 8px;

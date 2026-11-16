@@ -4,6 +4,8 @@
 
 The automated installer can refresh mirrors, performs a required Arch keyring and full system upgrade, installs packages, backs up and copies configurations, sets up Zsh and GTK theming, enables desktop services and memory pressure protection with `systemd-oomd`, and offers optional firewall, Cloudflare WARP, and Stealth configuration.
 
+Packages include OBS Studio, Neovim, and LazyVim dependencies. The installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
+
 ```bash
 git clone https://github.com/Dijo-404/Hype_Niri.git
 cd Hype_Niri
@@ -89,6 +91,7 @@ cp zsh/.p10k.zsh ~/
 
 chmod +x ~/.config/scripts/*.sh
 bash -c 'source ./install.sh; setup_desktop_integrations'
+bash -c 'source ./install.sh; setup_lazyvim'
 ```
 
 When editing `~/.config/niri/outputs.kdl`, keep each output block's opening

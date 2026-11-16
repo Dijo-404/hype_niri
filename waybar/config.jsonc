@@ -118,7 +118,16 @@
 
   "group/connectivity": {
     "orientation": "horizontal",
-    "modules": ["tray", "image#stealth"]
+    "modules": ["custom/hotspot", "tray", "image#stealth"]
+  },
+  "custom/hotspot": {
+    "exec": "~/.config/scripts/hotspot.sh status",
+    "return-type": "json",
+    "interval": 5,
+    "format": "{}",
+    "on-click": "~/.config/scripts/hotspot.sh toggle",
+    "on-click-right": "~/.config/scripts/hotspot.sh menu",
+    "signal": 17
   },
   "image#stealth": {
     "exec": "~/.config/scripts/stealth-indicator.sh",

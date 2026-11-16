@@ -40,6 +40,7 @@ class RuntimeTests(unittest.TestCase):
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "RUNTIME_TEST_LOG": str(self.log),
             "XDG_CONFIG_HOME": str(self.user_home / ".config"),
+            "XDG_CACHE_HOME": str(self.user_home / ".cache"),
         }
         for command in ("notify-send", "pkill"):
             self.mock(command, "exit 0")
@@ -1178,6 +1179,115 @@ read -r _ < "$RUNTIME_TEST_HOLD"''',
         self.assertEqual(
             (self.user_home / ".local/state/niri/current_wallpaper").resolve(), image
         )
+
+    def test_wallpaper_previews_cache_refresh_and_cancel(self):
+        wallpapers = self.user_home / "pictures/wallpapers"
+        wallpapers.mkdir(parents=True)
+        image = wallpapers / "one\ntwo.jpg"
+        image.write_text("first image")
+        self.mock("magick", '''
+printf 'thumbnail\n' >> "$RUNTIME_TEST_LOG"
+output="${!#}"
+printf 'PNG' > "${output#PNG:}"''')
+        self.mock("fuzzel", '''
+cat > "$XDG_CACHE_HOME/menu"
+[[ "${CANCEL_MENU:-0}" != 1 ]] || exit 1
+printf '0\n' ''')
+        self.mock("pgrep", '[[ "${!#}" == awww-daemon ]]')
+        self.mock("awww", "exit 0")
+        self.run_script("wallpaper.sh", "select")
+        menu = (self.user_home / ".cache/menu").read_bytes()
+        self.assertIn(b"one\\ntwo.jpg\0icon\x1f", menu)
+        thumbnail = Path(menu.split(b"\x1f")[1].rstrip(b"\n").decode())
+        self.assertEqual(thumbnail.read_text(), "PNG")
+        self.run_script("wallpaper.sh", "select")
+        self.assertEqual(self.log.read_text().count("thumbnail"), 1)
+        image.write_text("changed image")
+        self.run_script("wallpaper.sh", "select")
+        self.assertEqual(self.log.read_text().count("thumbnail"), 2)
+        current = self.user_home / ".local/state/niri/current_wallpaper"
+        current.unlink()
+        self.run_script("wallpaper.sh", "select", environment=self.environment | {"CANCEL_MENU": "1"})
+        self.assertFalse(current.exists())
+
+    def hotspot_fixture(self):
+        self.environment["MOCK_HOTSPOT"] = str(self.root / "hotspot")
+        self.mock("nmcli", r'''
+printf '%s\n' "$*" >> "$RUNTIME_TEST_LOG"
+case "$*" in
+    '-g connection.uuid connection show id Hype Hotspot')
+        [[ -e "$MOCK_HOTSPOT.profile" ]] || exit 10
+        printf 'hotspot-uuid\n' ;;
+    '-g UUID connection show --active')
+        if [[ -e "$MOCK_HOTSPOT.active" ]]; then printf 'hotspot-uuid\n'; fi ;;
+    '-g 802-11-wireless.mode connection show uuid hotspot-uuid') printf '%s\n' "${PROFILE_MODE:-ap}" ;;
+    '-g ipv4.method connection show uuid hotspot-uuid') printf 'shared\n' ;;
+    '-g GENERAL.DEVICES connection show uuid hotspot-uuid') printf 'wlan0\n' ;;
+    '-t -f DEVICE,TYPE device status') printf 'wlan0:wifi\neth0:ethernet\n' ;;
+    '-g WIFI-PROPERTIES.AP device show wlan0') printf '%s\n' "${AP_SUPPORT:-yes}" ;;
+    'connection add '*) touch "$MOCK_HOTSPOT.profile" ;;
+    '--wait 20 connection up uuid hotspot-uuid')
+        [[ "${FAIL_UP:-0}" == 0 ]] || { printf 'activation failed\n' >&2; exit 4; }
+        touch "$MOCK_HOTSPOT.active" ;;
+    '--wait 15 connection down uuid hotspot-uuid') rm -f "$MOCK_HOTSPOT.active" ;;
+    *) printf 'Unexpected nmcli call: %s\n' "$*" >&2; exit 99 ;;
+esac
+''')
+        return self.root / "hotspot.profile", self.root / "hotspot.active"
+
+    def test_hotspot_toggle_saves_profile_reuses_credentials_and_stops(self):
+        profile, active = self.hotspot_fixture()
+        self.assertEqual(json.loads(self.run_script("hotspot.sh").stdout)["class"], "inactive")
+        self.run_script("hotspot.sh", "toggle")
+        self.assertTrue(profile.exists())
+        self.assertTrue(active.exists())
+        self.assertEqual(json.loads(self.run_script("hotspot.sh").stdout)["class"], "active")
+        self.run_script("hotspot.sh", "toggle")
+        self.assertFalse(active.exists())
+        self.assertTrue(profile.exists())
+        self.run_script("hotspot.sh", "start")
+        commands = self.log.read_text()
+        self.assertEqual(commands.count("connection add "), 1)
+        self.assertIn("autoconnect no ssid Hype-Niri", commands)
+        self.assertRegex(commands, r"wifi-sec.psk [a-f0-9]{24}")
+
+    def test_hotspot_failures_do_not_activate_or_stop_unrelated_profile(self):
+        profile, active = self.hotspot_fixture()
+        for scenario in ({"AP_SUPPORT": "no"}, {"FAIL_UP": "1"}, {"PROFILE_MODE": "infrastructure"}):
+            with self.subTest(scenario=scenario):
+                result = subprocess.run(
+                    ["bash", str(self.scripts / "hotspot.sh"), "start"],
+                    env=self.environment | scenario, capture_output=True, text=True,
+                    timeout=5, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(active.exists())
+        self.assertNotIn("connection down", self.log.read_text())
+
+    def test_hotspot_menu_cancel_does_not_change_network(self):
+        self.hotspot_fixture()
+        self.mock("fuzzel", "cat >/dev/null; exit 1")
+        self.run_script("hotspot.sh", "menu")
+        self.assertFalse(self.log.exists())
+
+    def test_hotspot_unavailable_status_does_not_notify_repeatedly(self):
+        self.mock("nmcli", "exit 1")
+        self.mock("notify-send", 'printf "notification\\n" >> "$RUNTIME_TEST_LOG"')
+        status = json.loads(self.run_script("hotspot.sh", "status").stdout)
+        self.assertEqual(status["class"], "unavailable")
+        self.assertFalse(self.log.exists())
+
+    def test_hotspot_credentials_and_editor_target_saved_profile(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        active.touch()
+        self.mock("alacritty", 'printf "terminal %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.mock("nm-connection-editor", 'printf "editor %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.run_script("hotspot.sh", "credentials")
+        self.run_script("hotspot.sh", "edit")
+        commands = self.log.read_text()
+        self.assertIn("terminal --hold -e nmcli device wifi show-password ifname wlan0", commands)
+        self.assertIn("editor --edit=hotspot-uuid", commands)
 
     def test_caffeine_stop_terminates_owned_sleep_child(self):
         pid_file = self.root / "sleep-pid"

@@ -656,11 +656,67 @@ printf '%s\\n' "$BACKUP_DIR"
     def test_firewall_setup_retains_existing_rules(self):
         self.run_installer("""
 ufw() { :; }
+nmcli() {
+    case "$*" in
+        '-t -f DEVICE,TYPE device status') printf 'wlan0:wifi\neth0:ethernet\n' ;;
+        '-g WIFI-PROPERTIES.AP device show wlan0') printf 'yes\n' ;;
+        *) return 99 ;;
+    esac
+}
 sudo() { printf '%s\n' "$*" >> "$INSTALL_TEST_LOG"; return 0; }
 setup_firewall
 """)
         self.assertFalse(any("reset" in command for command in self.commands()))
         self.assertIn("ufw --force enable", self.commands())
+        for port, protocol in ((67, "udp"), (53, "udp"), (53, "tcp")):
+            self.assertTrue(any(
+                f"ufw allow in on wlan0 to any port {port} proto {protocol}" in command
+                for command in self.commands()
+            ))
+        self.assertFalse(any("on eth0" in command for command in self.commands()))
+
+    def lazyvim_fixture(self):
+        return r'''
+git() {
+    printf 'git %s\n' "$*" >> "$INSTALL_TEST_LOG"
+    [[ ${CLONE_FAIL:-0} == 0 ]] || return 1
+    local destination="${!#}"
+    mkdir -p "$destination/.git" "$destination/lua/config"
+    printf '%s\n' 'require("config.lazy")' > "$destination/init.lua"
+    [[ ${CLONE_INCOMPLETE:-0} == 0 ]] || return 0
+    printf '%s\n' 'return { "LazyVim/LazyVim" }' > "$destination/lua/config/lazy.lua"
+}
+'''
+
+    def test_lazyvim_installs_starter_without_git_metadata(self):
+        self.run_installer(self.lazyvim_fixture() + "setup_lazyvim")
+        config = self.user_home / ".config/nvim"
+        self.assertTrue((config / "init.lua").is_file())
+        self.assertTrue((config / "lua/config/lazy.lua").is_file())
+        self.assertFalse((config / ".git").exists())
+        self.assertIn("https://github.com/LazyVim/starter.git", self.commands()[0])
+
+    def test_lazyvim_backs_up_old_config_and_preserves_on_rerun(self):
+        config = self.user_home / ".config/nvim"
+        config.mkdir(parents=True)
+        (config / "init.lua").write_text("old settings")
+        self.run_installer(self.lazyvim_fixture() + "setup_lazyvim; setup_lazyvim")
+        backups = list(self.user_home.glob(".config-backup-*/.config/nvim/init.lua"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), "old settings")
+        self.assertEqual(len(self.commands()), 1)
+
+    def test_lazyvim_failed_clone_keeps_old_config(self):
+        config = self.user_home / ".config/nvim"
+        config.mkdir(parents=True)
+        (config / "init.lua").write_text("old settings")
+        for failure in ("CLONE_FAIL=1", "CLONE_INCOMPLETE=1"):
+            with self.subTest(failure=failure):
+                self.run_installer(
+                    self.lazyvim_fixture() + f"{failure}; setup_lazyvim", succeeds=False
+                )
+                self.assertEqual((config / "init.lua").read_text(), "old settings")
+        self.assertFalse(list(config.parent.glob(".nvim.*")))
 
     def test_warp_mode_failure_prevents_connection(self):
         self.run_installer(

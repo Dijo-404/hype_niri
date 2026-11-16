@@ -17,6 +17,7 @@ zsh-theme-powerlevel10k-git
 
 alacritty
 neovim
+tree-sitter-cli
 kate
 
 waybar
@@ -43,6 +44,7 @@ visual-studio-code-bin
 vlc
 vlc-plugins-all
 obsidian
+obs-studio
 
 bat
 eza
@@ -54,6 +56,7 @@ github-cli
 jq
 htop
 wget
+curl
 reflector
 fastfetch
 lazygit
@@ -88,6 +91,7 @@ pavucontrol
 ffmpegthumbnailer
 
 networkmanager
+dnsmasq
 network-manager-applet
 nm-connection-editor
 gnome-keyring

@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR=""
 INSTALL_PHASES=(
     preflight refresh_mirrors update_system_packages install_packages
-    backup_configs copy_configs setup_shell setup_gtk setup_desktop_integrations
+    backup_configs copy_configs setup_lazyvim setup_shell setup_gtk setup_desktop_integrations
     setup_system setup_logind setup_firewall setup_cloudflare setup_stealth
 )
 PHASE_TOTAL=$((${#INSTALL_PHASES[@]} + 1))
@@ -345,7 +345,7 @@ preflight() {
         waybar/icons/16x16/panel/nm-signal-100.svg
         waybar/icons/16x16/panel/nm-no-connection.svg
         scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/niri-outputs.sh scripts/runtime-dir.sh scripts/auto-power-profile.py
-        scripts/blueman-manager.py
+        scripts/blueman-manager.py scripts/hotspot.sh
         systemd/user/hype-auto-power-profile.service
         systemd/user/blueman-manager.service.d/hype-niri.conf
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf
@@ -679,6 +679,41 @@ EOF
     chmod 644 "$tmp"
     mv -fT -- "$tmp" "$HOME/.config/autostart/blueman.desktop"
     print_done "Suppressed blueman tray autostart"
+}
+
+setup_lazyvim() {
+    print_header "Setting Up LazyVim" "Neovim starter with existing configuration backed up"
+
+    local config="$HOME/.config/nvim" tmp
+    if [ -f "$config/lua/config/lazy.lua" ] &&
+        rg -q 'LazyVim/LazyVim' "$config/lua/config/lazy.lua"; then
+        print_done "Existing LazyVim configuration retained"
+        return 0
+    fi
+
+    prepare_generated_config_dir "$HOME/.config" || return 1
+    tmp="$(mktemp -d "$HOME/.config/.nvim.XXXXXX")" || return 1
+    _tmp_resources+=("$tmp")
+    if ! git clone --depth 1 https://github.com/LazyVim/starter.git "$tmp"; then
+        print_error "Could not download LazyVim; existing Neovim configuration was retained."
+        return 1
+    fi
+    if [ ! -f "$tmp/init.lua" ] || [ ! -f "$tmp/lua/config/lazy.lua" ]; then
+        print_error "LazyVim starter is incomplete; existing Neovim configuration was retained."
+        return 1
+    fi
+    rm -rf -- "$tmp/.git"
+
+    if [ -e "$config" ] || [ -L "$config" ]; then
+        if [ -z "$BACKUP_DIR" ]; then
+            BACKUP_DIR="$(mktemp -d "$HOME/.config-backup-$(date +%Y%m%d-%H%M%S).XXXXXX")" || return 1
+        fi
+        mkdir -p "$BACKUP_DIR/.config" || return 1
+        cp -a -- "$config" "$BACKUP_DIR/.config/nvim" || return 1
+        print_done "Backed up Neovim configuration to $BACKUP_DIR/.config/nvim"
+    fi
+    replace_directory "$tmp" "$config" || return 1
+    print_done "LazyVim installed; open nvim to download plugins, then run :LazyHealth"
 }
 
 setup_shell() {
@@ -1212,6 +1247,17 @@ setup_firewall() {
 
     sudo ufw allow in on lo >/dev/null || return 1
     sudo ufw allow out on lo >/dev/null || return 1
+    if command -v nmcli >/dev/null 2>&1; then
+        local device type capability
+        while IFS=: read -r device type; do
+            [ "$type" = wifi ] || continue
+            capability="$(nmcli -g WIFI-PROPERTIES.AP device show "$device" 2>/dev/null)" || continue
+            [ "$capability" = yes ] || continue
+            sudo ufw allow in on "$device" to any port 67 proto udp comment 'Hype hotspot DHCP' >/dev/null || return 1
+            sudo ufw allow in on "$device" to any port 53 proto udp comment 'Hype hotspot DNS' >/dev/null || return 1
+            sudo ufw allow in on "$device" to any port 53 proto tcp comment 'Hype hotspot DNS' >/dev/null || return 1
+        done < <(nmcli -t -f DEVICE,TYPE device status 2>/dev/null)
+    fi
     sudo ufw logging low >/dev/null || return 1
     sudo ufw --force enable >/dev/null || return 1
     sudo systemctl enable ufw.service || return 1
@@ -1370,6 +1416,12 @@ validate() {
         "cliphist"
         "gnome-keyring-daemon"
         "nm-applet"
+        "nmcli"
+        "nvim"
+        "obs"
+        "magick"
+        "dnsmasq"
+        "tree-sitter"
         "blueman-applet"
         "notify-send"
         "brightnessctl"
@@ -1431,6 +1483,7 @@ validate() {
         "$HOME/.config/scripts/display-scale.sh"
         "$HOME/.config/scripts/niri-outputs.sh"
         "$HOME/.config/scripts/fullscreen-toggle.sh"
+        "$HOME/.config/scripts/hotspot.sh"
         "$HOME/.config/scripts/lock-screen.sh"
         "$HOME/.config/scripts/lock.sh"
         "$HOME/.config/scripts/mic-control.sh"
@@ -1450,6 +1503,8 @@ validate() {
         "$HOME/.config/scripts/volume-control.sh"
         "$HOME/.config/scripts/wallpaper.sh"
         "$HOME/.config/alacritty/alacritty.toml"
+        "$HOME/.config/nvim/init.lua"
+        "$HOME/.config/nvim/lua/config/lazy.lua"
         "$HOME/.config/fuzzel/fuzzel.ini"
         "$HOME/.config/mako/config"
         "$HOME/.config/fastfetch/config.jsonc"
