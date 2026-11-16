@@ -64,6 +64,11 @@ window#waybar.hidden {
   margin: 0;
 }
 
+/* NetworkManager sorts first in the tray. */
+#connectivity #tray > widget:first-child image {
+  -gtk-icon-transform: translate(2px, 1px);
+}
+
 #custom-hotspot {
   margin-right: 8px;
   font-size: 16px;

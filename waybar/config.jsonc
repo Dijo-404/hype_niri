@@ -113,7 +113,8 @@
 
   "tray": {
     "icon-size": 16,
-    "spacing": 8
+    "spacing": 8,
+    "orders": { "nm-applet": -1 }
   },
 
   "group/connectivity": {

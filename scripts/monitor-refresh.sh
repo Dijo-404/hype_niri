@@ -221,6 +221,7 @@ choose_line() {
     local prompt="$1"
     local options="$2"
     local choice
+    local status
 
     choice="$(
         printf '%s\n' "$options" |
@@ -232,9 +233,15 @@ choose_line() {
                 --only-match \
                 --with-nth 2 \
                 --accept-nth 1 \
-                --match-nth 2 ||
-            true
-    )"
+                --match-nth 2
+    )" || {
+        status=$?
+        if [ "$status" -gt 2 ]; then
+            notify "Display menu unavailable" "Fuzzel could not start. Run fuzzel --version in a terminal; rebuild fuzzel-git after library upgrades."
+            return "$status"
+        fi
+        return 0
+    }
     [ -n "$choice" ] || exit 0
 
     printf '%s' "$choice"
@@ -306,6 +313,7 @@ main() {
     fi
 
     output_name="$(choose_line "Monitor" "$monitor_options")"
+    [ -n "$output_name" ] || return 0
 
     mode_options="$(build_mode_options "$outputs_json" "$output_name")"
     if [ -z "$mode_options" ]; then
@@ -314,6 +322,7 @@ main() {
     fi
 
     mode="$(choose_line "$output_name refresh" "$mode_options")"
+    [ -n "$mode" ] || return 0
     mode_width="${mode%%x*}"
     mode_rest="${mode#*x}"
     mode_height="${mode_rest%%@*}"

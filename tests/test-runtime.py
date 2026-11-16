@@ -833,6 +833,49 @@ printf '%s\\n' "$choice"
         )
         self.assertNotIn("Monitor refresh saved", commands)
 
+    def test_monitor_refresh_cancel_at_either_menu_keeps_display_unchanged(self):
+        original = 'output "DP-2" {\n    scale 1.5\n}\n'
+        niri_dir = self.outputs_fixture(original)
+        choices = self.root / "choices"
+        self.environment["RUNTIME_TEST_CHOICES"] = str(choices)
+        self.mock(
+            "fuzzel",
+            """
+cat >/dev/null
+choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
+sed -i 1d "$RUNTIME_TEST_CHOICES"
+[[ -n "$choice" ]] || exit 1
+printf '%s\\n' "$choice"
+""",
+        )
+        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        for selections in ("", "DP-2\n"):
+            with self.subTest(selections=selections):
+                choices.write_text(selections)
+                self.run_script("monitor-refresh.sh")
+                self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+                self.assertFalse(
+                    self.log.exists(), "Cancelled picker changed state or notified"
+                )
+
+    def test_monitor_refresh_reports_broken_launcher_without_changing_display(self):
+        original = 'output "DP-2" {\n    scale 1.5\n}\n'
+        niri_dir = self.outputs_fixture(original)
+        self.mock("fuzzel", "cat >/dev/null; exit 127")
+        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        result = subprocess.run(
+            ["bash", str(self.scripts / "monitor-refresh.sh")],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("Display menu unavailable", self.log.read_text())
+        self.assertNotIn("niri msg output", self.log.read_text())
+        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+
     def test_display_scale_rejects_compact_output_without_adding_duplicate(self):
         original = 'output "DP-2" { scale 1.5; }\n'
         niri_dir = self.outputs_fixture(original)
@@ -1237,7 +1280,18 @@ case "$*" in
     '-g GENERAL.DEVICES connection show uuid hotspot-uuid') printf 'wlan0\n' ;;
     '-t -f DEVICE,TYPE device status') printf 'wlan0:wifi\neth0:ethernet\n' ;;
     '-g WIFI-PROPERTIES.AP device show wlan0') printf '%s\n' "${AP_SUPPORT:-yes}" ;;
-    'connection add '*) touch "$MOCK_HOTSPOT.profile" ;;
+    '-g WIFI-PROPERTIES.5GHZ device show wlan0') printf '%s\n' "${BAND_SUPPORT:-yes}" ;;
+    '-g 802-11-wireless.band,802-11-wireless.channel,802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pmf,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show uuid hotspot-uuid')
+        if [[ -e "$MOCK_HOTSPOT.settings" ]]; then cat "$MOCK_HOTSPOT.settings"; fi ;;
+    'connection modify uuid hotspot-uuid 802-11-wireless.band a '*)
+        [[ "${FAIL_MODIFY:-0}" == 0 ]] || { printf 'save failed\n' >&2; exit 4; }
+        printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
+    'connection modify uuid hotspot-uuid wifi-sec.psk '*)
+        [[ "${FAIL_MODIFY:-0}" == 0 ]] || { printf 'save failed\n' >&2; exit 4; }
+        printf '%s' "$6" > "$MOCK_HOTSPOT.password" ;;
+    'connection add '*)
+        touch "$MOCK_HOTSPOT.profile"
+        printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
     '--wait 20 connection up uuid hotspot-uuid')
         [[ "${FAIL_UP:-0}" == 0 ]] || { printf 'activation failed\n' >&2; exit 4; }
         touch "$MOCK_HOTSPOT.active" ;;
@@ -1266,12 +1320,15 @@ esac
         commands = self.log.read_text()
         self.assertEqual(commands.count("connection add "), 1)
         self.assertIn("autoconnect no ssid Hype-Niri", commands)
+        self.assertIn("802-11-wireless.band a 802-11-wireless.channel 36", commands)
+        self.assertIn("wifi-sec.pmf optional", commands)
         self.assertRegex(commands, r"wifi-sec.psk [a-f0-9]{24}")
 
     def test_hotspot_failures_do_not_activate_or_stop_unrelated_profile(self):
         _profile, active = self.hotspot_fixture()
         for scenario in (
             {"AP_SUPPORT": "no"},
+            {"BAND_SUPPORT": "no"},
             {"FAIL_UP": "1"},
             {"PROFILE_MODE": "infrastructure"},
         ):
@@ -1287,6 +1344,50 @@ esac
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(active.exists())
         self.assertNotIn("connection down", self.log.read_text())
+
+    def test_hotspot_upgrades_saved_profile_without_changing_password(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        active.touch()
+        self.run_script("hotspot.sh", "start")
+        commands = self.log.read_text()
+        self.assertIn("802-11-wireless.band a 802-11-wireless.channel 36", commands)
+        self.assertIn(
+            "wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pmf optional", commands
+        )
+        self.assertIn("wifi-sec.pairwise ccmp wifi-sec.group ccmp", commands)
+        self.assertLess(
+            commands.index("connection modify"), commands.index("connection down")
+        )
+        self.assertLess(
+            commands.index("connection down"), commands.index("connection up")
+        )
+        self.assertNotIn("wifi-sec.psk", commands)
+        self.assertNotIn("connection add ", commands)
+        self.assertTrue(active.exists())
+        self.log.unlink()
+        self.run_script("hotspot.sh", "start")
+        commands = self.log.read_text()
+        self.assertNotIn("connection modify", commands)
+        self.assertNotIn("connection down", commands)
+        self.assertNotIn("connection up", commands)
+
+    def test_hotspot_failed_profile_upgrade_keeps_active_connection(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        active.touch()
+        result = subprocess.run(
+            ["bash", str(self.scripts / "hotspot.sh"), "start"],
+            env=self.environment | {"FAIL_MODIFY": "1"},
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(active.exists())
+        self.assertNotIn("connection down", self.log.read_text())
+        self.assertNotIn("connection up", self.log.read_text())
 
     def test_hotspot_menu_cancel_does_not_change_network(self):
         self.hotspot_fixture()
@@ -1316,6 +1417,114 @@ esac
             "terminal --hold -e nmcli device wifi show-password ifname wlan0", commands
         )
         self.assertIn("editor --edit=hotspot-uuid", commands)
+
+    def password_prompt(self):
+        self.mock(
+            "fuzzel",
+            r"""
+cat >/dev/null
+printf 'fuzzel %s\n' "$*" >> "$RUNTIME_TEST_LOG"
+if [[ "$*" != *--password* ]]; then printf 'Change password\n'; exit 0; fi
+[[ "${CANCEL_PASSWORD:-0}" == 0 ]] || exit 1
+printf '%s\n' "$NEW_PASSWORD"
+""",
+        )
+
+    def test_hotspot_password_updates_saved_profile_and_restarts_only_when_active(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        self.password_prompt()
+        for password, running in (
+            ("pa ss$()`word", False), ("a" * 63, True), ("f" * 64, False)
+        ):
+            with self.subTest(length=len(password), active=running):
+                self.log.unlink(missing_ok=True)
+                if running:
+                    active.touch()
+                else:
+                    active.unlink(missing_ok=True)
+                self.run_script(
+                    "hotspot.sh",
+                    "menu",
+                    environment=self.environment | {"NEW_PASSWORD": password},
+                )
+                self.assertEqual((self.root / "hotspot.password").read_text(), password)
+                commands = self.log.read_text()
+                self.assertIn("--dmenu --password --lines 0", commands)
+                self.assertEqual("connection down uuid" in commands, running)
+                self.assertEqual("connection up uuid" in commands, running)
+                self.assertEqual(active.exists(), running)
+                self.assertNotIn("connection add ", commands)
+                if running:
+                    self.assertLess(
+                        commands.index("connection modify"), commands.index("connection down")
+                    )
+                    self.assertLess(
+                        commands.index("connection down"), commands.index("connection up")
+                    )
+
+    def test_hotspot_password_cancel_and_invalid_input_never_change_network(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        active.touch()
+        self.password_prompt()
+        for password, cancel in (
+            ("valid-password", "1"), ("", "0"), ("short", "0"),
+            ("g" * 64, "0"), ("a" * 65, "0"), ("pass\tword", "0"), ("passwörd", "0"),
+        ):
+            with self.subTest(length=len(password), cancel=cancel):
+                self.log.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ["bash", str(self.scripts / "hotspot.sh"), "password"],
+                    env=self.environment
+                    | {"NEW_PASSWORD": password, "CANCEL_PASSWORD": cancel},
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                self.assertEqual(
+                    result.returncode == 0, cancel == "1" or password == ""
+                )
+                self.assertNotIn("connection modify", self.log.read_text())
+                self.assertNotIn("connection down", self.log.read_text())
+                self.assertFalse((self.root / "hotspot.password").exists())
+                self.assertTrue(active.exists())
+
+    def test_hotspot_password_failures_do_not_expose_password(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        active.touch()
+        self.password_prompt()
+        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        password = "private-password"
+        for failure in ("FAIL_MODIFY", "FAIL_UP"):
+            with self.subTest(failure=failure):
+                self.log.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ["bash", str(self.scripts / "hotspot.sh"), "password"],
+                    env=self.environment | {"NEW_PASSWORD": password, failure: "1"},
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(password, result.stdout + result.stderr)
+                notifications = [
+                    line for line in self.log.read_text().splitlines()
+                    if line.startswith("notify ")
+                ]
+                self.assertTrue(notifications)
+                self.assertNotIn(password, "\n".join(notifications))
+                if failure == "FAIL_MODIFY":
+                    self.assertNotIn("connection down", self.log.read_text())
+                    self.assertFalse((self.root / "hotspot.password").exists())
+                    self.assertTrue(active.exists())
+                else:
+                    self.assertEqual((self.root / "hotspot.password").read_text(), password)
+                    self.assertFalse(active.exists())
+                    self.assertIn("Password saved", result.stderr)
 
     def test_caffeine_stop_terminates_owned_sleep_child(self):
         pid_file = self.root / "sleep-pid"
