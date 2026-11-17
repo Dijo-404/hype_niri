@@ -12,10 +12,11 @@ STATE_DIR="$HOME/.local/state/niri"
 CURRENT_LINK="$STATE_DIR/current_wallpaper"
 mkdir -p "$STATE_DIR"
 
-TRANSITION_TYPE="fade"
+TRANSITION_TYPE="center"
 TRANSITION_STEP=90
 TRANSITION_FPS=60
-TRANSITION_DURATION=1
+TRANSITION_DURATION=0.2
+TRANSITION_BEZIER=".33,1,.67,1"
 
 find_wallpaper() {
     [[ -d "$WALLPAPER_DIR" ]] || return 1
@@ -67,7 +68,8 @@ apply_wallpaper() {
         --transition-type "$transition" \
         --transition-step "$TRANSITION_STEP" \
         --transition-fps "$TRANSITION_FPS" \
-        --transition-duration "$TRANSITION_DURATION"
+        --transition-duration "$TRANSITION_DURATION" \
+        --transition-bezier "$TRANSITION_BEZIER"
 }
 
 set_wallpaper() {
@@ -118,19 +120,22 @@ case "${1:-}" in
         ((${#images[@]})) || exit 0
         THUMBNAIL_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/hype-niri/wallpapers"
         mkdir -p "$THUMBNAIL_DIR"
+        flock -u 9
+        # 64px chrome plus six 96px rows.
         choice="$(
             for index in "${!images[@]}"; do
                 label="${images[index]//$'\n'/\\n}"
                 label="${label//$'\r'/\\r}"
                 label="${label//$'\t'/\\t}"
-                printf '%s\t%s' "$index" "$label"
                 if thumbnail="$(wallpaper_thumbnail "${images[index]}")"; then
-                    printf '\0icon\x1f%s' "$thumbnail"
+                    printf 'img:%s:text:%s\n' "$thumbnail" "$label"
+                else
+                    printf '%s\n' "$label"
                 fi
-                printf '\n'
-            done | fuzzel --dmenu -p "Wallpaper: " --only-match --with-nth 2 --accept-nth 1 --match-nth 2 \
-                --line-height 80 --lines 6 --width 50 --override main.icons-enabled=yes
+            done | wofi --dmenu -p "Wallpaper: " --no-custom-entry --allow-images \
+                --height 640 --width 640 --define image_size=96 --define dmenu-print_line_num=true
         )" || exit 0
+        flock -w 2 9 || exit 0
         [[ "$choice" =~ ^[0-9]+$ ]] && ((choice < ${#images[@]})) || exit 0
         set_wallpaper "${images[choice]}"
         ;;

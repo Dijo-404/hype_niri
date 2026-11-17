@@ -1,5 +1,4 @@
 niri
-wlogout
 xdg-desktop-portal-gnome
 xdg-utils
 wl-clipboard
@@ -21,7 +20,7 @@ tree-sitter-cli
 kate
 
 waybar
-fuzzel-git
+wofi
 mako
 hyprlock
 hypridle
@@ -67,6 +66,7 @@ docker-buildx
 imagemagick
 cliphist
 bemoji
+wtype
 ripgrep
 unzip
 zip
@@ -128,8 +128,6 @@ bibata-cursor-theme-bin
 brightnessctl
 power-profiles-daemon
 upower
-python
-python-gobject
 lm_sensors
 intel-media-driver
 

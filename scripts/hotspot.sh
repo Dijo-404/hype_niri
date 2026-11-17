@@ -94,8 +94,10 @@ stop_hotspot() {
 change_password() {
     [[ -n "$uuid" ]] || fail "Start the hotspot once to create its saved profile."
     local password LC_ALL=C
-    password="$(fuzzel --dmenu --password --lines 0 -p 'New hotspot password: ' \
-        --mesg 'Use 8–63 ASCII characters or 64 hexadecimal digits. Connected devices will need to reconnect.' </dev/null)" || return 0
+    notify "New hotspot password" "Use 8–63 ASCII characters or 64 hexadecimal digits. Connected devices will need to reconnect."
+    # Keep an empty entry so Wofi can submit a prompt without menu results.
+    password="$(printf '\n' |
+        wofi --dmenu --password --height 64 --cache-file /dev/null -p 'New hotspot password: ')" || return 0
     [[ -n "$password" ]] || return 0
     if ! { [[ ${#password} -ge 8 && ${#password} -le 63 && "$password" != *[![:print:]]* ]] ||
         [[ "$password" =~ ^[[:xdigit:]]{64}$ ]]; }; then
@@ -118,8 +120,7 @@ command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is not installed."
 
 if [[ "$action" == menu ]]; then
     action="$(printf '%s\n' 'Start hotspot' 'Stop hotspot' 'Show credentials' 'Change password' 'Edit hotspot' |
-        fuzzel --dmenu --only-match -p 'Hotspot: ' \
-            --mesg 'Starting a hotspot may disconnect Wi-Fi on the same adapter.')" || exit 0
+        wofi --dmenu --no-custom-entry --cache-file /dev/null -p 'Hotspot (start may disconnect Wi-Fi): ')" || exit 0
     case "$action" in
         'Start hotspot') action=start ;;
         'Stop hotspot') action=stop ;;

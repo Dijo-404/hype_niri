@@ -58,9 +58,7 @@ is_inhibitor_pid() {
         [[ "$arg" != '--who=Caffeine Mode' ]] || found_who=1
         [[ "$arg" != --what=* ]] || INHIBITOR_WHAT="${arg#--what=}"
     done
-    if ((${#cmdline[@]} >= 2)); then
-        [[ "${cmdline[-2]}" != sleep || "${cmdline[-1]}" != infinity ]] || found_holder=1
-    fi
+    [[ "${cmdline[-2]}" != sleep || "${cmdline[-1]}" != infinity ]] || found_holder=1
     if ((${#cmdline[@]} >= 5)) && [[ "${cmdline[-5]}" == -- && "${cmdline[-4]}" == bash && "${cmdline[-3]}" == "$SCRIPT_FILE" && "${cmdline[-2]}" == hold && "${cmdline[-1]}" == "$RUNTIME_DIR"/caffeine-ready.* ]]; then
         INHIBITOR_READY_FILE="${cmdline[-1]}"
         found_holder=1

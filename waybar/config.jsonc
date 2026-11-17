@@ -30,7 +30,7 @@
   "custom/launcher": {
     "format": "󰣇",
     "tooltip": false,
-    "on-click": "fuzzel"
+    "on-click": "pkill -x wofi || wofi --show drun --allow-images --prompt ''"
   },
 
   "niri/workspaces": {
@@ -182,7 +182,7 @@
     "format": "",
     "tooltip": true,
     "tooltip-format": "Power Menu",
-    "on-click": "wlogout --protocol layer-shell -b 5 --margin-top 350 --margin-bottom 350 --margin-left 200 --margin-right 300 -l ~/.config/wlogout/layout -C ~/.config/wlogout/style.css",
-    "on-click-right": "wlogout --protocol layer-shell -b 5 --margin-top 350 --margin-bottom 350 --margin-left 200 --margin-right 300 -l ~/.config/wlogout/layout -C ~/.config/wlogout/style.css"
+    "on-click": "~/.config/scripts/power-menu.sh",
+    "on-click-right": "~/.config/scripts/power-menu.sh"
   }
 }

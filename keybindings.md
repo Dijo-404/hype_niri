@@ -12,6 +12,7 @@ These are the primary default keybindings for the Hype Niri environment.
 | `Super + Q`                          | `close-window`                 | Close active window                                                                        |
 | `Ctrl + Q`                           | `close-window`                 | Close active window                                                                        |
 | `Alt + F4`                           | `close-window`                 | Close active window                                                                        |
+| `Super + Shift + Delete`             | `power-menu`                   | Open the power menu (lock, sleep, logout, shutdown, reboot)                                |
 | `Super + Delete`                     | `quit`                         | Exit Niri completely                                                                       |
 | `Super + W`                          | `toggle-column-tabbed-display` | Toggle tabbed column view                                                                  |
 | `Super + Shift + S`                  | `opacity-toggle`               | Toggle window transparency (95%/90% or fully opaque)                                       |
@@ -72,7 +73,7 @@ These are the primary default keybindings for the Hype Niri environment.
 | `Super + Copilot`    | `copilot-shortcut` | Open VS Code after a 400ms double-press window                     |
 | `Super + B`          | `brave`            | Launch Browser (Brave, also the default web browser)               |
 | `Ctrl + Shift + Esc` | `htop`             | Launch System Monitor                                              |
-| `Super + A`          | `fuzzel`           | Launch Application Menu                                            |
+| `Super + A`          | `wofi`             | Toggle Application Menu                                            |
 | `Super + Tab`        | `toggle-overview`  | Open Window Overview                                               |
 | `Super + .`          | `bemoji`           | Open Emoji Picker                                                  |
 | `Super + V`          | `cliphist`         | Open Clipboard History List                                        |
@@ -121,12 +122,12 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even
 
 ## Miscellaneous
 
-| Keybinding              | Action              | Description                                 |
-| :---------------------- | :------------------ | :------------------------------------------ |
-| `Super + Alt + ←` / `→` | `wallpaper random`  | Cycle random wallpaper next/prev            |
-| `Super + Shift + W`     | `wallpaper select`  | Open wallpaper selector with image previews |
+| Keybinding              | Action              | Description                                                 |
+| :---------------------- | :------------------ | :---------------------------------------------------------- |
+| `Super + Alt + ←` / `→` | `wallpaper random`  | Cycle random wallpaper next/prev                            |
+| `Super + Shift + W`     | `wallpaper select`  | Open wallpaper selector with image previews                 |
 | `Super + Shift + H`     | `hotspot menu`      | Start/stop hotspot, show credentials, change password, edit |
-| `Super + Alt + ↑`       | `waybar show`       | Show/restart Waybar                         |
-| `Super + Alt + ↓`       | `waybar hide`       | Hide Waybar                                 |
-| `Super + Esc`           | `inhibit-shortcuts` | Toggle Niri keyboard shortcut override      |
-| `Power Button`          | `suspend`           | Stop caffeine mode, then suspend the system |
+| `Super + Alt + ↑`       | `waybar show`       | Show/restart Waybar                                         |
+| `Super + Alt + ↓`       | `waybar hide`       | Hide Waybar                                                 |
+| `Super + Esc`           | `inhibit-shortcuts` | Toggle Niri keyboard shortcut override                      |
+| `Power Button`          | `suspend`           | Stop caffeine mode, then suspend the system                 |

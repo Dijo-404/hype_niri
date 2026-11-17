@@ -72,9 +72,9 @@ class RuntimeTests(unittest.TestCase):
             'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"\nread -r _ < "$RUNTIME_TEST_HOLD"',
         )
 
-    def start_script(self, name):
+    def start_script(self, name, *args):
         process = subprocess.Popen(
-            ["bash", str(self.scripts / name)],
+            ["bash", str(self.scripts / name), *args],
             env=self.environment,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -777,10 +777,11 @@ printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
             'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n'
         )
         self.environment["RUNTIME_TEST_CHOICES"] = str(self.root / "choices")
-        (self.root / "choices").write_text("DP-2\n2560x1440@165\n")
+        (self.root / "choices").write_text("1\n0\n")
         self.mock(
-            "fuzzel",
+            "wofi",
             """
+printf '%s\\n' "$*" >> "$XDG_RUNTIME_DIR/menu-args"
 cat >/dev/null
 choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
 sed -i 1d "$RUNTIME_TEST_CHOICES"
@@ -798,15 +799,18 @@ printf '%s\\n' "$choice"
             (niri_dir / "config.kdl").read_text(), 'include "outputs.kdl"\n'
         )
         self.assertIn("niri msg output DP-2 mode 2560x1440@165", self.log.read_text())
+        menus = (self.runtime / "menu-args").read_text()
+        self.assertEqual(menus.count("--width 599 --height 369"), 2)
+        self.assertNotIn("--lines", menus)
 
     def test_monitor_refresh_rejects_compact_output_before_live_changes(self):
         original = 'output "DP-2" { mode "2560x1440@59.951"; scale 1.0; }\n'
         niri_dir = self.outputs_fixture(original)
         choices = self.root / "choices"
-        choices.write_text("DP-2\n2560x1440@165\n")
+        choices.write_text("1\n0\n")
         self.environment["RUNTIME_TEST_CHOICES"] = str(choices)
         self.mock(
-            "fuzzel",
+            "wofi",
             """
 cat >/dev/null
 choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
@@ -839,7 +843,7 @@ printf '%s\\n' "$choice"
         choices = self.root / "choices"
         self.environment["RUNTIME_TEST_CHOICES"] = str(choices)
         self.mock(
-            "fuzzel",
+            "wofi",
             """
 cat >/dev/null
 choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
@@ -849,7 +853,7 @@ printf '%s\\n' "$choice"
 """,
         )
         self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        for selections in ("", "DP-2\n"):
+        for selections in ("", "1\n"):
             with self.subTest(selections=selections):
                 choices.write_text(selections)
                 self.run_script("monitor-refresh.sh")
@@ -861,7 +865,7 @@ printf '%s\\n' "$choice"
     def test_monitor_refresh_reports_broken_launcher_without_changing_display(self):
         original = 'output "DP-2" {\n    scale 1.5\n}\n'
         niri_dir = self.outputs_fixture(original)
-        self.mock("fuzzel", "cat >/dev/null; exit 127")
+        self.mock("wofi", "cat >/dev/null; exit 127")
         self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
         result = subprocess.run(
             ["bash", str(self.scripts / "monitor-refresh.sh")],
@@ -875,6 +879,34 @@ printf '%s\\n' "$choice"
         self.assertIn("Display menu unavailable", self.log.read_text())
         self.assertNotIn("niri msg output", self.log.read_text())
         self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+
+    def test_monitor_refresh_treats_menu_closed_by_launcher_toggle_as_cancel(self):
+        original = 'output "DP-2" {\n    scale 1.5\n}\n'
+        niri_dir = self.outputs_fixture(original)
+        self.mock("wofi", "cat >/dev/null; exit 143")
+        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.run_script("monitor-refresh.sh")
+        self.assertFalse(self.log.exists())
+        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+
+    def test_monitor_refresh_rejects_invalid_wofi_indices_without_live_changes(self):
+        original = 'output "DP-2" {\n    scale 1.5\n}\n'
+        niri_dir = self.outputs_fixture(original)
+        self.mock("wofi", "cat >/dev/null; printf '%s\\n' \"$MENU_INDEX\"")
+        for index in ("DP-2", "-1", "999"):
+            with self.subTest(index=index):
+                subprocess.run(
+                    ["bash", str(self.scripts / "monitor-refresh.sh")],
+                    env=self.environment | {"MENU_INDEX": index},
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
+                self.assertFalse(
+                    self.log.exists(), "Invalid choice changed a live output"
+                )
 
     def test_display_scale_rejects_compact_output_without_adding_duplicate(self):
         original = 'output "DP-2" { scale 1.5; }\n'
@@ -946,7 +978,7 @@ fi""",
         )
         self.mock("udisksctl", "exit 90")
         self.mock("udevadm", "exit 0")
-        self.mock("fuzzel", "exit 1")
+        self.mock("wofi", "exit 1")
         self.mock(
             "nautilus",
             '''
@@ -1082,6 +1114,48 @@ source "$1"
         self.assertFalse(self.log.exists())
         self.assertFalse(list(current.parent.glob(".current-wallpaper.*")))
 
+    def test_power_menu_runs_only_the_chosen_action(self):
+        for helper in ("lock-screen.sh", "suspend-now.sh", "caffeine-control.sh"):
+            (self.scripts / helper).write_text(
+                f'#!/usr/bin/env bash\nprintf "%s\\n" "{helper} $*" >> "$RUNTIME_TEST_LOG"\n'
+            )
+        for command in ("niri", "systemctl"):
+            self.mock(command, f'printf "%s\\n" "{command} $*" >> "$RUNTIME_TEST_LOG"')
+        self.mock(
+            "wofi",
+            'cat > "$XDG_RUNTIME_DIR/menu"\n'
+            'printf "%s\\n" "$*" > "$XDG_RUNTIME_DIR/menu-args"\n'
+            '[[ -n "$MENU_CHOICE" ]] || exit 1\n'
+            'printf "%s\\n" "$MENU_CHOICE"',
+        )
+        stop = "caffeine-control.sh stop"
+        for choice, expected in (
+            ("0", ["lock-screen.sh"]),
+            ("1", ["suspend-now.sh"]),
+            ("2", [stop, "niri msg action quit --skip-confirmation"]),
+            ("3", [stop, "systemctl poweroff"]),
+            ("4", [stop, "systemctl reboot"]),
+            ("", []),
+        ):
+            with self.subTest(choice=choice):
+                self.log.unlink(missing_ok=True)
+                self.run_script(
+                    "power-menu.sh",
+                    environment=self.environment | {"MENU_CHOICE": choice},
+                )
+                logged = self.log.read_text() if self.log.exists() else ""
+                self.assertEqual(
+                    [line.strip() for line in logged.splitlines()], expected
+                )
+        entries = (self.runtime / "menu").read_text().splitlines()
+        self.assertEqual(
+            [entry.split()[-1] for entry in entries],
+            ["Lock", "Sleep", "Logout", "Shutdown", "Reboot"],
+        )
+        arguments = (self.runtime / "menu-args").read_text()
+        self.assertIn("--no-custom-entry", arguments)
+        self.assertIn("--cache-file /dev/null", arguments)
+
     def test_lock_requests_keep_single_instance(self):
         self.hold_mock("hyprlock")
         self.start_script("lock.sh")
@@ -1215,13 +1289,26 @@ read -r _ < "$RUNTIME_TEST_HOLD"''',
         wallpapers.mkdir(parents=True)
         image = wallpapers / "one\ntwo.jpg"
         image.touch()
-        self.mock("fuzzel", "cat >/dev/null\nprintf '0\\n'")
+        self.mock("wofi", "cat >/dev/null\nprintf '0\\n'")
         self.mock("pgrep", '[[ "${!#}" == awww-daemon ]]')
         self.mock("awww", "exit 0")
         self.run_script("wallpaper.sh", "select")
         self.assertEqual(
             (self.user_home / ".local/state/niri/current_wallpaper").resolve(), image
         )
+
+    def test_wallpaper_menu_does_not_block_other_wallpaper_requests(self):
+        wallpapers = self.user_home / "pictures/wallpapers"
+        wallpapers.mkdir(parents=True)
+        (wallpapers / "one.jpg").touch()
+        self.mock("magick", "exit 1")
+        self.hold_mock("wofi")
+        picker = self.start_script("wallpaper.sh", "select")
+        started = time.monotonic()
+        self.run_script("wallpaper.sh", "ensure")
+        self.assertLess(time.monotonic() - started, 1)
+        (self.root / "wofi-hold").write_text("\n")
+        self.assertEqual(picker.wait(timeout=3), 0)
 
     def test_wallpaper_previews_cache_refresh_and_cancel(self):
         wallpapers = self.user_home / "pictures/wallpapers"
@@ -1236,7 +1323,7 @@ output="${!#}"
 printf 'PNG' > "${output#PNG:}"''',
         )
         self.mock(
-            "fuzzel",
+            "wofi",
             """
 cat > "$XDG_CACHE_HOME/menu"
 [[ "${CANCEL_MENU:-0}" != 1 ]] || exit 1
@@ -1246,8 +1333,9 @@ printf '0\n' """,
         self.mock("awww", "exit 0")
         self.run_script("wallpaper.sh", "select")
         menu = (self.user_home / ".cache/menu").read_bytes()
-        self.assertIn(b"one\\ntwo.jpg\0icon\x1f", menu)
-        thumbnail = Path(menu.split(b"\x1f")[1].rstrip(b"\n").decode())
+        self.assertIn(b":text:", menu)
+        self.assertTrue(menu.endswith(b"one\\ntwo.jpg\n"))
+        thumbnail = Path(menu.removeprefix(b"img:").split(b":text:", 1)[0].decode())
         self.assertEqual(thumbnail.read_text(), "PNG")
         self.run_script("wallpaper.sh", "select")
         self.assertEqual(self.log.read_text().count("thumbnail"), 1)
@@ -1353,7 +1441,8 @@ esac
         commands = self.log.read_text()
         self.assertIn("802-11-wireless.band a 802-11-wireless.channel 36", commands)
         self.assertIn(
-            "wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pmf optional", commands
+            "wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pmf optional",
+            commands,
         )
         self.assertIn("wifi-sec.pairwise ccmp wifi-sec.group ccmp", commands)
         self.assertLess(
@@ -1391,7 +1480,7 @@ esac
 
     def test_hotspot_menu_cancel_does_not_change_network(self):
         self.hotspot_fixture()
-        self.mock("fuzzel", "cat >/dev/null; exit 1")
+        self.mock("wofi", "cat >/dev/null; exit 1")
         self.run_script("hotspot.sh", "menu")
         self.assertFalse(self.log.exists())
 
@@ -1420,10 +1509,10 @@ esac
 
     def password_prompt(self):
         self.mock(
-            "fuzzel",
+            "wofi",
             r"""
 cat >/dev/null
-printf 'fuzzel %s\n' "$*" >> "$RUNTIME_TEST_LOG"
+printf 'wofi %s\n' "$*" >> "$RUNTIME_TEST_LOG"
 if [[ "$*" != *--password* ]]; then printf 'Change password\n'; exit 0; fi
 [[ "${CANCEL_PASSWORD:-0}" == 0 ]] || exit 1
 printf '%s\n' "$NEW_PASSWORD"
@@ -1435,7 +1524,9 @@ printf '%s\n' "$NEW_PASSWORD"
         profile.touch()
         self.password_prompt()
         for password, running in (
-            ("pa ss$()`word", False), ("a" * 63, True), ("f" * 64, False)
+            ("pa ss$()`word", False),
+            ("a" * 63, True),
+            ("f" * 64, False),
         ):
             with self.subTest(length=len(password), active=running):
                 self.log.unlink(missing_ok=True)
@@ -1450,17 +1541,20 @@ printf '%s\n' "$NEW_PASSWORD"
                 )
                 self.assertEqual((self.root / "hotspot.password").read_text(), password)
                 commands = self.log.read_text()
-                self.assertIn("--dmenu --password --lines 0", commands)
+                self.assertIn("--dmenu --password --height 64", commands)
+                self.assertIn("--cache-file /dev/null", commands)
                 self.assertEqual("connection down uuid" in commands, running)
                 self.assertEqual("connection up uuid" in commands, running)
                 self.assertEqual(active.exists(), running)
                 self.assertNotIn("connection add ", commands)
                 if running:
                     self.assertLess(
-                        commands.index("connection modify"), commands.index("connection down")
+                        commands.index("connection modify"),
+                        commands.index("connection down"),
                     )
                     self.assertLess(
-                        commands.index("connection down"), commands.index("connection up")
+                        commands.index("connection down"),
+                        commands.index("connection up"),
                     )
 
     def test_hotspot_password_cancel_and_invalid_input_never_change_network(self):
@@ -1469,8 +1563,13 @@ printf '%s\n' "$NEW_PASSWORD"
         active.touch()
         self.password_prompt()
         for password, cancel in (
-            ("valid-password", "1"), ("", "0"), ("short", "0"),
-            ("g" * 64, "0"), ("a" * 65, "0"), ("pass\tword", "0"), ("passwörd", "0"),
+            ("valid-password", "1"),
+            ("", "0"),
+            ("short", "0"),
+            ("g" * 64, "0"),
+            ("a" * 65, "0"),
+            ("pass\tword", "0"),
+            ("passwörd", "0"),
         ):
             with self.subTest(length=len(password), cancel=cancel):
                 self.log.unlink(missing_ok=True)
@@ -1512,7 +1611,8 @@ printf '%s\n' "$NEW_PASSWORD"
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn(password, result.stdout + result.stderr)
                 notifications = [
-                    line for line in self.log.read_text().splitlines()
+                    line
+                    for line in self.log.read_text().splitlines()
                     if line.startswith("notify ")
                 ]
                 self.assertTrue(notifications)
@@ -1522,7 +1622,9 @@ printf '%s\n' "$NEW_PASSWORD"
                     self.assertFalse((self.root / "hotspot.password").exists())
                     self.assertTrue(active.exists())
                 else:
-                    self.assertEqual((self.root / "hotspot.password").read_text(), password)
+                    self.assertEqual(
+                        (self.root / "hotspot.password").read_text(), password
+                    )
                     self.assertFalse(active.exists())
                     self.assertIn("Password saved", result.stderr)
 
@@ -1615,7 +1717,11 @@ case "$*" in
 esac""",
         )
         self.mock("findmnt", "exit 1")
-        self.mock("fuzzel", "printf 'test-only-passphrase'")
+        self.mock(
+            "wofi",
+            'printf "%s\\n" "$*" > "$XDG_RUNTIME_DIR/prompt-args"\n'
+            "printf 'test-only-passphrase'",
+        )
         program = """
 import os
 from pathlib import Path
@@ -1663,6 +1769,9 @@ function [ {
         key_file = Path(marker.read_text())
         self.assertEqual(key_file.read_text(), "test-only-passphrase")
         self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+        prompt = (self.runtime / "prompt-args").read_text()
+        self.assertIn("--password", prompt)
+        self.assertIn("--cache-file /dev/null", prompt)
         os.killpg(process.pid, signal.SIGTERM)
         process.communicate(timeout=3)
         self.assertFalse(key_file.exists())

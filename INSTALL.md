@@ -59,7 +59,7 @@ Back up the desktop, scripts, theme settings, shell files, and any existing Stea
 BACKUP_DIR="$(mktemp -d "$HOME/.config-backup-$(date +%Y%m%d-%H%M%S).XXXXXX")"
 for target in \
     .config/niri .config/waybar .config/scripts .config/alacritty \
-    .config/fuzzel .config/mako .config/fastfetch .config/wlogout .config/hypr \
+    .config/wofi .config/mako .config/fastfetch .config/hypr \
     .config/gtk-3.0 .config/gtk-4.0 .config/autostart .config/fontconfig \
     .config/mimeapps.list \
     .config/systemd/user .config/wireplumber \
@@ -81,7 +81,7 @@ mkdir -p ~/.config ~/.cache/cliphist
 bash -c 'source ./install.sh; setup_user_dirs'
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
-cp -r niri waybar scripts alacritty fuzzel mako fastfetch wlogout hypr ~/.config/
+cp -r niri waybar scripts alacritty wofi mako fastfetch hypr ~/.config/
 touch ~/.config/niri/outputs.kdl
 
 [ -d wallpapers ] && cp -an wallpapers/. ~/pictures/wallpapers/
@@ -190,7 +190,7 @@ The user service follows charger and battery events without polling:
 Hardware without Performance support falls back to Balanced. Manual Waybar selections last until the next charger or battery-threshold change. The service stops with the graphical session.
 
 ```bash
-/usr/bin/python3 ~/.config/scripts/auto-power-profile.py --check
+~/.config/scripts/auto-power-profile.sh --check
 systemctl --user status hype-auto-power-profile.service
 ```
 
@@ -368,7 +368,7 @@ yay -S --needed ntfs-3g gvfs udisks2 lvm2 libblockdev-lvm
 - `udisks2` — the mount daemon Nautilus talks to.
 - `lvm2` and `libblockdev-lvm` — let encrypted LUKS drives reveal and mount LVM-backed filesystems.
 
-The `Super+U` keybinding runs `~/.config/scripts/open-drives.sh` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks GVFS to unlock encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
+The `Super+U` keybinding runs `~/.config/scripts/open-drives.sh` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks for the passphrase of locked encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
 
 **2. Disable Windows Fast Startup** (this is the cause ~90% of the time).
 

@@ -1,0 +1,55 @@
+* {
+  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+  font-size: 11pt;
+  box-shadow: none;
+  text-shadow: none;
+  transition: none;
+}
+
+window {
+  background-color: rgba(20, 20, 20, 0.87);
+  color: #d4d4d4;
+  border: 2px solid #ffffff;
+  border-radius: 4px;
+}
+
+#outer-box {
+  margin: 0;
+}
+
+#input {
+  margin: 15px 20px 8px;
+  min-height: 22px;
+  padding: 0 6px 0 26px;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4YThhOGEiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICA8IS0tIERlcml2ZWQgZnJvbSBMdWNpZGUgSWNvbnM7IHNlZSAuLi8uLi93YXliYXIvaWNvbnMvTElDRU5TRS5sdWNpZGUudHh0LiAtLT4KICA8cGF0aCBkPSJtOSAxOCA2LTYtNi02Ii8+Cjwvc3ZnPgo=");
+  background-repeat: no-repeat;
+  background-position: 4px center;
+  background-size: 16px 16px;
+  color: #d4d4d4;
+  border: none;
+  outline: none;
+}
+
+/* The 45px input and 19px inset leave twelve complete 22px rows in 328px. */
+#scroll {
+  margin: 0 20px 19px;
+}
+
+#entry {
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+}
+
+#entry:selected {
+  background-color: #404040;
+}
+
+#text:selected {
+  color: #ffffff;
+}
+
+#img {
+  margin-right: 8px;
+}
