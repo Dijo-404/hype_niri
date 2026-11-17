@@ -1560,7 +1560,10 @@ esac
         profile, active = self.hotspot_fixture()
         profile.touch()
         active.touch()
-        self.mock("alacritty", 'printf "terminal %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        self.mock(
+            "alacritty",
+            'printf "terminal %s\\nlocale %s\\n" "$*" "$LC_ALL" >> "$RUNTIME_TEST_LOG"',
+        )
         self.mock(
             "nm-connection-editor", 'printf "editor %s\\n" "$*" >> "$RUNTIME_TEST_LOG"'
         )
@@ -1568,8 +1571,10 @@ esac
         self.run_script("hotspot.sh", "edit")
         commands = self.log.read_text()
         self.assertIn(
-            "terminal --hold -e nmcli device wifi show-password ifname wlan0", commands
+            "terminal --hold -e nmcli --colors yes device wifi show-password ifname wlan0",
+            commands,
         )
+        self.assertIn("locale C.UTF-8\n", commands)
         self.assertIn("editor --edit=hotspot-uuid", commands)
 
     def password_prompt(self):
