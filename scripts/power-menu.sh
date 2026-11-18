@@ -8,7 +8,7 @@ stop_caffeine() {
     "$SCRIPT_DIR/caffeine-control.sh" stop >/dev/null 2>&1 || true
 }
 
-choice="$(printf "<span size='x-large'>%s</span>   %s\n" \
+choice="$(printf "<span font_family='JetBrainsMono Nerd Font'>%s</span>  %s\n" \
     $'\U000f033e' Lock $'\U000f04b2' Sleep $'\U000f0343' Logout \
     $'\U000f0425' Shutdown $'\U000f0709' Reboot |
     wofi --dmenu --no-custom-entry --cache-file /dev/null --allow-markup \

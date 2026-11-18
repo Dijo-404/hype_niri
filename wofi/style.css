@@ -20,11 +20,11 @@ window {
 #input {
   margin: 15px 20px 8px;
   min-height: 22px;
-  padding: 0 6px 0 26px;
+  padding: 0 6px 0 34px;
   background-color: transparent;
-  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4YThhOGEiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICA8IS0tIERlcml2ZWQgZnJvbSBMdWNpZGUgSWNvbnM7IHNlZSAuLi8uLi93YXliYXIvaWNvbnMvTElDRU5TRS5sdWNpZGUudHh0LiAtLT4KICA8cGF0aCBkPSJtOSAxOCA2LTYtNi02Ii8+Cjwvc3ZnPgo=");
+  background-image: -gtk-icontheme("lucide-chevron-right-symbolic");
   background-repeat: no-repeat;
-  background-position: 4px center;
+  background-position: 6px center;
   background-size: 16px 16px;
   color: #d4d4d4;
   border: none;
@@ -40,14 +40,30 @@ window {
   min-height: 22px;
   padding: 0 6px;
   border-radius: 4px;
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  outline: none;
+  color: #d4d4d4;
+  transition:
+    background-color 100ms ease-out,
+    color 100ms ease-out;
 }
 
 #entry:selected {
   background-color: #404040;
+  color: #ffffff;
 }
 
-#text:selected {
+#entry:hover:not(:selected) {
+  background-color: #303030;
   color: #ffffff;
+}
+
+#text {
+  margin: 0;
+  padding: 0;
+  color: inherit;
 }
 
 #img {

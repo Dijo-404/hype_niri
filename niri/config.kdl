@@ -70,7 +70,6 @@ animations {
         curve "cubic-bezier" 0.33 1.0 0.67 1.0
         custom-shader r"
             vec4 open_color(vec3 coords_geo, vec3 size_geo) {
-                // Slides down from its own top edge.
                 float p = clamp(niri_clamped_progress, 0.0, 1.0);
                 if (p <= 0.0 || (p < 1.0 && coords_geo.y < 0.0))
                     return vec4(0.0);
@@ -87,7 +86,6 @@ animations {
         curve "cubic-bezier" 0.33 1.0 0.67 1.0
         custom-shader r"
             vec4 close_color(vec3 coords_geo, vec3 size_geo) {
-                // Slides back up into its own top edge.
                 float p = 1.0 - clamp(niri_clamped_progress, 0.0, 1.0);
                 if (p <= 0.0 || (p < 1.0 && coords_geo.y < 0.0))
                     return vec4(0.0);
@@ -266,7 +264,7 @@ binds {
     Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
-    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "pkill -x wofi || wofi --show drun --allow-images --prompt ''"; }
+    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "pkill -x wofi || exec wofi --show drun --allow-images"; }
     Mod+Tab { toggle-overview; }
     Mod+Period { spawn "env" "BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry" "bemoji" "-t"; }
     Mod+V repeat=false { spawn-sh "entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf '%s' \"$entry\" | cliphist decode | wl-copy"; }

@@ -110,7 +110,7 @@ unlock_luks_volumes() {
         name="$(luks_prompt_name "$dev")"
         # Keep an empty entry so Wofi can submit a prompt without menu results.
         pw="$(printf '\n' |
-            wofi --dmenu --password --height 64 --cache-file /dev/null --prompt "Unlock $name: " 2>/dev/null)" || continue
+            "${BASH_SOURCE[0]%/*}/password-prompt.sh" --prompt "Unlock $name: " 2>/dev/null)" || continue
         [ -n "$pw" ] || continue
 
         keyfile="$(mktemp "$RUNTIME_DIR/hype-unlock.XXXXXX")" || continue

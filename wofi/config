@@ -14,3 +14,6 @@ gtk_dark=true
 close_on_focus_loss=false
 key_exit=Escape
 use_search_box=false
+prompt=Search
+filter_rate=10
+single_click=true

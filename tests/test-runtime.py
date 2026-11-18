@@ -24,6 +24,7 @@ class RuntimeTests(unittest.TestCase):
         self.user_home = self.root / "home"
         self.scripts = self.user_home / ".config/scripts"
         self.scripts.mkdir(parents=True)
+        shutil.copytree(REPO / "wofi", self.user_home / ".config/wofi")
         for source in (REPO / "scripts").glob("*.sh"):
             (self.scripts / source.name).write_text(
                 source.read_text().replace("$HOME", "$RUNTIME_TEST_HOME")
@@ -1371,6 +1372,9 @@ case "$*" in
     '-g WIFI-PROPERTIES.5GHZ device show wlan0') printf '%s\n' "${BAND_SUPPORT:-yes}" ;;
     '-g 802-11-wireless.band,802-11-wireless.channel,802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pmf,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show uuid hotspot-uuid')
         if [[ -e "$MOCK_HOTSPOT.settings" ]]; then cat "$MOCK_HOTSPOT.settings"; fi ;;
+    'connection modify uuid hotspot-uuid 802-11-wireless.band bg '*)
+        [[ "${FAIL_MODIFY:-0}" == 0 ]] || exit 4
+        printf 'bg\n1\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
     'connection modify uuid hotspot-uuid 802-11-wireless.band a '*)
         [[ "${FAIL_MODIFY:-0}" == 0 ]] || { printf 'save failed\n' >&2; exit 4; }
         printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
@@ -1379,9 +1383,16 @@ case "$*" in
         printf '%s' "$6" > "$MOCK_HOTSPOT.password" ;;
     'connection add '*)
         touch "$MOCK_HOTSPOT.profile"
-        printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
-    '--wait 20 connection up uuid hotspot-uuid')
+        if [[ "$*" == *'802-11-wireless.band bg '* ]]; then
+            printf 'bg\n1\nwpa-psk\nrsn\n2\nccmp\nccmp\n'
+        else
+            printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n'
+        fi > "$MOCK_HOTSPOT.settings" ;;
+    '--wait 20 connection up uuid hotspot-uuid' | '--wait 35 connection up uuid hotspot-uuid')
         [[ "${FAIL_UP:-0}" == 0 ]] || { printf 'activation failed\n' >&2; exit 4; }
+        if [[ "${FAIL_5GHZ:-0}" == 1 && "$(head -n1 "$MOCK_HOTSPOT.settings")" == a ]]; then
+            printf '5 GHz AP unavailable\n' >&2; exit 4
+        fi
         touch "$MOCK_HOTSPOT.active" ;;
     '--wait 15 connection down uuid hotspot-uuid') rm -f "$MOCK_HOTSPOT.active" ;;
     *) printf 'Unexpected nmcli call: %s\n' "$*" >&2; exit 99 ;;
@@ -1416,7 +1427,6 @@ esac
         _profile, active = self.hotspot_fixture()
         for scenario in (
             {"AP_SUPPORT": "no"},
-            {"BAND_SUPPORT": "no"},
             {"FAIL_UP": "1"},
             {"PROFILE_MODE": "infrastructure"},
         ):
@@ -1432,6 +1442,61 @@ esac
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(active.exists())
         self.assertNotIn("connection down", self.log.read_text())
+
+    def test_hotspot_uses_24ghz_when_adapter_lacks_5ghz(self):
+        _profile, active = self.hotspot_fixture()
+        self.run_script(
+            "hotspot.sh",
+            "start",
+            environment=self.environment | {"BAND_SUPPORT": "no"},
+        )
+        self.assertTrue(active.exists())
+        self.assertEqual(
+            (self.root / "hotspot.settings").read_text().splitlines()[:2], ["bg", "1"]
+        )
+
+    def test_hotspot_failed_5ghz_falls_back_and_reuses_working_band(self):
+        profile, active = self.hotspot_fixture()
+        self.run_script(
+            "hotspot.sh",
+            "start",
+            environment=self.environment | {"FAIL_5GHZ": "1"},
+        )
+        self.assertTrue(active.exists())
+        self.assertEqual(
+            (self.root / "hotspot.settings").read_text().splitlines()[:2], ["bg", "1"]
+        )
+        commands = self.log.read_text()
+        self.assertEqual(commands.count("connection up uuid hotspot-uuid"), 2)
+        self.assertEqual(commands.count("connection add "), 1)
+        self.assertTrue(profile.exists())
+        self.run_script("hotspot.sh", "stop")
+        self.log.unlink()
+        self.run_script("hotspot.sh", "start")
+        self.assertTrue(active.exists())
+        self.assertNotIn("connection modify", self.log.read_text())
+        self.assertNotIn("connection add ", self.log.read_text())
+
+    def test_hotspot_failed_24ghz_does_not_retry_or_replace_password(self):
+        profile, active = self.hotspot_fixture()
+        profile.touch()
+        (self.root / "hotspot.settings").write_text(
+            "bg\n1\nwpa-psk\nrsn\n2\nccmp\nccmp\n"
+        )
+        result = subprocess.run(
+            ["bash", str(self.scripts / "hotspot.sh"), "start"],
+            env=self.environment | {"FAIL_UP": "1"},
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(active.exists())
+        self.assertEqual(
+            self.log.read_text().count("connection up uuid hotspot-uuid"), 1
+        )
+        self.assertNotIn("connection modify", self.log.read_text())
 
     def test_hotspot_upgrades_saved_profile_without_changing_password(self):
         profile, active = self.hotspot_fixture()
@@ -1518,6 +1583,25 @@ if [[ "$*" != *--password* ]]; then printf 'Change password\n'; exit 0; fi
 printf '%s\n' "$NEW_PASSWORD"
 """,
         )
+
+    def test_password_prompt_uses_seekable_style_and_cleans_up(self):
+        self.mock(
+            "wofi",
+            r"""
+while (( $# )); do
+    if [[ "$1" == --style ]]; then
+        [[ -f "$2" && -s "$2" ]] || exit 41
+        printf '%s\n' "$2" > "$RUNTIME_TEST_LOG"
+        break
+    fi
+    shift
+done
+printf 'entered-password\n'
+""",
+        )
+        result = self.run_script("password-prompt.sh", "-p", "Password")
+        self.assertEqual(result.stdout, "entered-password\n")
+        self.assertFalse(Path(self.log.read_text().strip()).exists())
 
     def test_hotspot_password_updates_saved_profile_and_restarts_only_when_active(self):
         profile, active = self.hotspot_fixture()
