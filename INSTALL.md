@@ -277,6 +277,8 @@ warp-cli --accept-tos status
 
 Disconnect anytime with `warp-cli disconnect`. Inspect logs with `journalctl -u warp-svc`.
 
+Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
+
 #### Stealth Tor routing
 
 The installer asks whether to install Stealth. Choosing Yes installs its packages, stages the commands in `~/.local/share/stealth/`, and installs the system service. Choosing No skips those steps. It does not start Tor or change your network until you run `stealth-start`. For a manual install from this repository:

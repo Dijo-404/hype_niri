@@ -119,7 +119,7 @@
 
   "group/connectivity": {
     "orientation": "horizontal",
-    "modules": ["custom/hotspot", "tray", "image#stealth"]
+    "modules": ["custom/hotspot", "tray", "custom/warp", "image#stealth"]
   },
   "custom/hotspot": {
     "exec": "~/.config/scripts/hotspot.sh status",
@@ -129,6 +129,12 @@
     "on-click": "~/.config/scripts/hotspot.sh toggle",
     "on-click-right": "~/.config/scripts/hotspot.sh menu",
     "signal": 17
+  },
+  "custom/warp": {
+    "exec": "~/.config/scripts/warp-indicator.sh",
+    "return-type": "json",
+    "interval": 10,
+    "format": "{}"
   },
   "image#stealth": {
     "exec": "~/.config/scripts/stealth-indicator.sh",
