@@ -19,7 +19,7 @@ INSTALL_PHASES=(
 )
 PHASE_TOTAL=$((${#INSTALL_PHASES[@]} + 1))
 PHASE_CURRENT=0
-DESKTOP_CONFIG_DIRS=(niri waybar scripts alacritty fuzzel mako fastfetch wlogout hypr)
+DESKTOP_CONFIG_DIRS=(niri waybar scripts alacritty wofi mako fastfetch hypr)
 XDG_USER_DIRS=(
     DESKTOP:desktop DOWNLOAD:downloads TEMPLATES:templates PUBLICSHARE:public
     DOCUMENTS:documents MUSIC:music PICTURES:pictures VIDEOS:videos PROJECTS:projects
@@ -334,6 +334,7 @@ preflight() {
     local required_files=(
         pkglist.txt zsh/.zshrc zsh/.p10k.zsh
         niri/config.kdl niri/opacity.kdl waybar/config.jsonc waybar/style.css
+        wofi/config wofi/style.css
         fontconfig/60-hype-niri-fonts.conf
         waybar/icons/16x16/panel/blueman-tray.svg
         waybar/icons/16x16/panel/blueman-disabled.svg
@@ -344,10 +345,9 @@ preflight() {
         waybar/icons/16x16/panel/nm-signal-75.svg
         waybar/icons/16x16/panel/nm-signal-100.svg
         waybar/icons/16x16/panel/nm-no-connection.svg
-        scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/niri-outputs.sh scripts/runtime-dir.sh scripts/auto-power-profile.py
-        scripts/blueman-manager.py scripts/hotspot.sh
+        scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/niri-outputs.sh scripts/runtime-dir.sh scripts/auto-power-profile.sh
+        scripts/power-menu.sh scripts/hotspot.sh scripts/password-prompt.sh
         systemd/user/hype-auto-power-profile.service
-        systemd/user/blueman-manager.service.d/hype-niri.conf
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf
         systemd/setup-oomd.sh systemd/user@.service.d/60-hype-niri-oomd.conf
         polkit/49-udisks2.rules polkit/50-network-manager.rules
@@ -873,36 +873,31 @@ remove_stale_audio_service() {
 }
 
 configure_file_indexing() {
-    /usr/bin/python3 - <<'PY'
-from gi.repository import Gio
-
-source = Gio.SettingsSchemaSource.get_default()
-schema = source.lookup("org.freedesktop.Tracker3.Miner.Files", True) if source else None
-if schema and schema.has_key("ignored-directories"):
-    settings = Gio.Settings.new_full(schema, None, None)
-    current = settings.get_strv("ignored-directories")
-    excluded = ["node_modules", ".venv", "venv", "miniconda3", "__pycache__", "target",
-                ".mypy_cache", ".pytest_cache", ".ruff_cache"]
-    updated = list(dict.fromkeys(current + excluded))
-    if updated != current and not settings.set_strv("ignored-directories", updated):
-        raise SystemExit("Could not update file indexing exclusions")
-    Gio.Settings.sync()
-PY
+    local schema=org.freedesktop.Tracker3.Miner.Files key=ignored-directories
+    local current directory updated
+    command -v gsettings &>/dev/null || return 0
+    current="$(gsettings get "$schema" "$key" 2>/dev/null)" || return 0
+    updated="${current#@as }"
+    for directory in node_modules .venv venv miniconda3 __pycache__ target \
+        .mypy_cache .pytest_cache .ruff_cache; do
+        [[ "$updated" == *"'$directory'"* ]] && continue
+        if [ "$updated" = "[]" ]; then
+            updated="['$directory']"
+        else
+            updated="${updated%]}, '$directory']"
+        fi
+    done
+    [ "$updated" = "${current#@as }" ] || gsettings set "$schema" "$key" "$updated"
 }
 
-install_blueman_desktop_entry() {
-    local source=/usr/share/applications/blueman-manager.desktop
-    local destination="$HOME/.local/share/applications/blueman-manager.desktop" tmp
-    if [ ! -f "$source" ]; then
-        print_warn "Blueman desktop entry not found; skipped launcher override"
-        return 0
+remove_blueman_wrapper() {
+    local entry="$HOME/.local/share/applications/blueman-manager.desktop"
+    local dropin="$HOME/.config/systemd/user/blueman-manager.service.d"
+    if [ -f "$entry" ] && grep -q '^Exec=.*/\.config/scripts/blueman-manager\.py' "$entry"; then
+        rm -f -- "$entry"
     fi
-    prepare_generated_config_dir "$HOME/.local/share/applications" || return 1
-    tmp="$(mktemp "${destination}.XXXXXX")"
-    _tmp_resources+=("$tmp")
-    sed "s|^Exec=.*|Exec=/usr/bin/python3 \"$HOME/.config/scripts/blueman-manager.py\"|" "$source" >"$tmp"
-    chmod 644 "$tmp"
-    mv -fT -- "$tmp" "$destination"
+    rm -f -- "$dropin/hype-niri.conf"
+    rmdir -- "$dropin" 2>/dev/null || true
 }
 
 set_default_browser() {
@@ -943,15 +938,14 @@ set_default_browser() {
 }
 
 setup_desktop_integrations() {
-    print_header "Desktop Integration Setup" "audio routing, Bluetooth manager, default browser and automatic power profiles"
+    print_header "Desktop Integration Setup" "audio routing, default browser and automatic power profiles"
 
     local dir file tmp destination
     for dir in systemd systemd/user systemd/user/graphical-session.target.wants \
-        systemd/user/blueman-manager.service.d wireplumber wireplumber/wireplumber.conf.d; do
+        wireplumber wireplumber/wireplumber.conf.d; do
         prepare_generated_config_dir "$HOME/.config/$dir"
     done
     for file in systemd/user/hype-auto-power-profile.service \
-        systemd/user/blueman-manager.service.d/hype-niri.conf \
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf; do
         destination="$HOME/.config/$file"
         tmp="$(mktemp "${destination}.XXXXXX")"
@@ -965,14 +959,14 @@ setup_desktop_integrations() {
     _tmp_resources+=("$tmp")
     ln -sfT -- ../hype-auto-power-profile.service "$tmp"
     mv -fT -- "$tmp" "$destination"
-    install_blueman_desktop_entry || return 1
+    remove_blueman_wrapper
     set_default_browser || print_warn "Could not set Brave as the default browser"
     remove_stale_audio_service
     configure_file_indexing || print_warn "Could not configure file indexing exclusions"
     if systemctl --user show-environment >/dev/null 2>&1; then
         systemctl --user daemon-reload
     fi
-    print_done "Installed audio policy, Bluetooth manager, Brave default browser and automatic power service"
+    print_done "Installed audio policy, Brave default browser and automatic power service"
 }
 
 enable_system_service_now() {
@@ -1125,13 +1119,6 @@ setup_system() {
         sudo install -Dm644 "$rule" "/etc/polkit-1/rules.d/${rule##*/}" || return 1
     done
     print_done "Polkit rules applied"
-
-    if [ ! -f /etc/pam.d/hyprlock ]; then
-        printf '#%%PAM-1.0\nauth include login\n' | sudo tee /etc/pam.d/hyprlock >/dev/null || return 1
-        print_done "Created /etc/pam.d/hyprlock"
-    else
-        print_done "hyprlock PAM config present"
-    fi
 
     print_step "Enabling system services..."
 
@@ -1406,12 +1393,11 @@ validate() {
     local required_commands=(
         "niri"
         "waybar"
-        "wlogout"
         "hyprlock"
         "hypridle"
         "swayidle"
         "mako"
-        "fuzzel"
+        "wofi"
         "wl-paste"
         "cliphist"
         "gnome-keyring-daemon"
@@ -1427,7 +1413,6 @@ validate() {
         "brightnessctl"
         "powerprofilesctl"
         "loginctl"
-        "python3"
     )
     local optional_commands=(
         "pavucontrol"
@@ -1490,10 +1475,9 @@ validate() {
         "$HOME/.config/scripts/monitor-refresh.sh"
         "$HOME/.config/scripts/open-drives.sh"
         "$HOME/.config/scripts/opacity-toggle.sh"
-        "$HOME/.config/scripts/power-menu-action.sh"
+        "$HOME/.config/scripts/power-menu.sh"
         "$HOME/.config/scripts/power-profile.sh"
-        "$HOME/.config/scripts/auto-power-profile.py"
-        "$HOME/.config/scripts/blueman-manager.py"
+        "$HOME/.config/scripts/auto-power-profile.sh"
         "$HOME/.config/scripts/runtime-dir.sh"
         "$HOME/.config/scripts/prepare-sleep.sh"
         "$HOME/.config/scripts/start-tray-applets.sh"
@@ -1505,23 +1489,16 @@ validate() {
         "$HOME/.config/alacritty/alacritty.toml"
         "$HOME/.config/nvim/init.lua"
         "$HOME/.config/nvim/lua/config/lazy.lua"
-        "$HOME/.config/fuzzel/fuzzel.ini"
+        "$HOME/.config/wofi/config"
+        "$HOME/.config/wofi/style.css"
         "$HOME/.config/mako/config"
         "$HOME/.config/fastfetch/config.jsonc"
         "$HOME/.config/hypr/hyprlock.conf"
         "$HOME/.config/hypr/hypridle.conf"
-        "$HOME/.config/wlogout/layout"
-        "$HOME/.config/wlogout/style.css"
-        "$HOME/.config/wlogout/icons/lock.png"
-        "$HOME/.config/wlogout/icons/logout.png"
-        "$HOME/.config/wlogout/icons/reboot.png"
-        "$HOME/.config/wlogout/icons/shutdown.png"
-        "$HOME/.config/wlogout/icons/suspend.png"
         "$HOME/.config/gtk-3.0/settings.ini"
         "$HOME/.config/gtk-4.0/settings.ini"
         "$HOME/.config/fontconfig/conf.d/60-hype-niri-fonts.conf"
         "$HOME/.config/systemd/user/hype-auto-power-profile.service"
-        "$HOME/.config/systemd/user/blueman-manager.service.d/hype-niri.conf"
         "$HOME/.config/wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf"
         "$HOME/.zshrc"
         "$HOME/.p10k.zsh"
@@ -1553,21 +1530,6 @@ validate() {
             all_ok=false
         fi
     done
-
-    if /usr/bin/python3 - "$HOME/.config/scripts/auto-power-profile.py" \
-        "$HOME/.config/scripts/blueman-manager.py" <<'PY'
-import ast
-from pathlib import Path
-import sys
-for path in sys.argv[1:]:
-    ast.parse(Path(path).read_text())
-PY
-    then
-        print_done "Python helper syntax valid"
-    else
-        print_error "Python helper syntax invalid"
-        all_ok=false
-    fi
 
     if command -v fc-match &>/dev/null; then
         local font_match

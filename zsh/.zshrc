@@ -196,3 +196,11 @@ fi
 
 [[ -f "$HOME/.local/share/stealth/stealth.zsh" ]] && \
     source "$HOME/.local/share/stealth/stealth.zsh"
+
+backward-delete-one-word() {
+    local WORDCHARS=''
+    zle backward-kill-word
+}
+zle -N backward-delete-one-word
+bindkey -M emacs $'\e\x7f' backward-delete-one-word
+bindkey -M viins $'\e\x7f' backward-delete-one-word

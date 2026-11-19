@@ -6,7 +6,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=3
 
 [Service]
-ExecStart=/usr/bin/python3 %h/.config/scripts/auto-power-profile.py
+ExecStart=/usr/bin/bash %h/.config/scripts/auto-power-profile.sh
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=5

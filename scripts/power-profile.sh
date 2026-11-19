@@ -56,9 +56,9 @@ set_profile() {
 }
 
 if [[ "${1:-}" == "menu" ]]; then
-    command -v fuzzel >/dev/null 2>&1 || exit 0
+    command -v wofi >/dev/null 2>&1 || exit 0
     options="󰓅 Performance\n󰾅 Balanced\n󰾆 Power Saver"
-    choice=$(echo -e "$options" | fuzzel --dmenu -p "Power Profile") || true
+    choice=$(echo -e "$options" | wofi --dmenu --no-custom-entry --cache-file /dev/null -p "Power Profile") || true
 
     case "$choice" in
         *"Performance"*)

@@ -1,7 +1,7 @@
 {
   "layer": "top",
   "position": "top",
-  "height": 51,
+  "height": 44,
   "margin-top": 2,
   "margin-left": 2,
   "margin-right": 2,
@@ -30,7 +30,7 @@
   "custom/launcher": {
     "format": "󰣇",
     "tooltip": false,
-    "on-click": "fuzzel"
+    "on-click": "pkill -x wofi || wofi --show drun --allow-images --prompt ''"
   },
 
   "niri/workspaces": {
@@ -57,7 +57,7 @@
 
   "clock": {
     "interval": 30,
-    "format": "<span line_height='0.8'>{:%H:%M<span size='1pt'>\n</span><span size='9pt' color='#aaaaaa'>%A, %d/%m</span>}</span>",
+    "format": "<span line_height='0.8'>{:%H:%M<span size='1pt'>\n</span><span size='8.4pt' color='#aaaaaa'>%A, %d/%m</span>}</span>",
     "tooltip-format": "<big>{:%A, %B %d}</big>\n<tt><small>{calendar}</small></tt>"
   },
 
@@ -70,6 +70,7 @@
   },
   "cpu": {
     "interval": 3,
+    "states": { "single-digit": 0, "multi-digit": 10 },
     "format": "{usage}%",
     "tooltip-format": "CPU load: {usage}%",
     "align": 0.5
@@ -112,14 +113,14 @@
   },
 
   "tray": {
-    "icon-size": 16,
-    "spacing": 8,
+    "icon-size": 15,
+    "spacing": 5,
     "orders": { "nm-applet": -1 }
   },
 
   "group/connectivity": {
     "orientation": "horizontal",
-    "modules": ["custom/hotspot", "tray", "image#stealth"]
+    "modules": ["custom/hotspot", "tray", "custom/warp", "image#stealth"]
   },
   "custom/hotspot": {
     "exec": "~/.config/scripts/hotspot.sh status",
@@ -130,10 +131,16 @@
     "on-click-right": "~/.config/scripts/hotspot.sh menu",
     "signal": 17
   },
+  "custom/warp": {
+    "exec": "~/.config/scripts/warp-indicator.sh",
+    "return-type": "json",
+    "interval": 10,
+    "format": "{}"
+  },
   "image#stealth": {
     "exec": "~/.config/scripts/stealth-indicator.sh",
     "interval": 10,
-    "size": 16
+    "size": 15
   },
 
   "pulseaudio": {
@@ -182,7 +189,7 @@
     "format": "",
     "tooltip": true,
     "tooltip-format": "Power Menu",
-    "on-click": "wlogout --protocol layer-shell -b 5 --margin-top 350 --margin-bottom 350 --margin-left 200 --margin-right 300 -l ~/.config/wlogout/layout -C ~/.config/wlogout/style.css",
-    "on-click-right": "wlogout --protocol layer-shell -b 5 --margin-top 350 --margin-bottom 350 --margin-left 200 --margin-right 300 -l ~/.config/wlogout/layout -C ~/.config/wlogout/style.css"
+    "on-click": "~/.config/scripts/power-menu.sh",
+    "on-click-right": "~/.config/scripts/power-menu.sh"
   }
 }

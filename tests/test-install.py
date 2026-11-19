@@ -527,10 +527,9 @@ install_packages
             "waybar",
             "scripts",
             "alacritty",
-            "fuzzel",
+            "wofi",
             "mako",
             "fastfetch",
-            "wlogout",
             "hypr",
             "wallpapers",
         ):
@@ -557,10 +556,9 @@ install_packages
             "waybar",
             "scripts",
             "alacritty",
-            "fuzzel",
+            "wofi",
             "mako",
             "fastfetch",
-            "wlogout",
             "hypr",
         ):
             (fixture / directory).mkdir(parents=True)
@@ -622,10 +620,9 @@ install_packages
             "waybar",
             "scripts",
             "alacritty",
-            "fuzzel",
+            "wofi",
             "mako",
             "fastfetch",
-            "wlogout",
             "hypr",
         ):
             (fixture / directory).mkdir(parents=True)
@@ -1195,37 +1192,65 @@ setup_user_dirs
         self.assertTrue(external.is_dir())
         self.assertTrue((self.user_home / "pictures").is_dir())
 
-    def test_blueman_launches_use_escape_wrapper(self):
-        desktop = self.root / "blueman-manager.desktop"
-        desktop.write_text(
-            "[Desktop Entry]\nName=Bluetooth Manager\nExec=blueman-manager\nIcon=blueman\n"
+    def test_old_blueman_wrapper_overrides_are_removed(self):
+        entry = self.user_home / ".local/share/applications/blueman-manager.desktop"
+        dropin = self.user_home / ".config/systemd/user/blueman-manager.service.d"
+        entry.parent.mkdir(parents=True)
+        dropin.mkdir(parents=True)
+        entry.write_text(
+            "[Desktop Entry]\nName=Bluetooth Manager\n"
+            f'Exec=/usr/bin/python3 "{self.user_home}/.config/scripts/blueman-manager.py"\n'
         )
-        self.source.write_text(
-            self.source.read_text().replace(
-                "/usr/share/applications/blueman-manager.desktop", str(desktop)
-            )
-        )
+        (dropin / "hype-niri.conf").write_text("[Service]\nExecStart=\n")
         self.run_installer("""
 configure_file_indexing() { :; }
 setup_desktop_integrations
 """)
-        entry = (
-            self.user_home / ".local/share/applications/blueman-manager.desktop"
-        ).read_text()
-        self.assertIn(
-            f'Exec=/usr/bin/python3 "{self.user_home}/.config/scripts/blueman-manager.py"',
-            entry,
-        )
-        self.assertIn("Icon=blueman", entry)
+        self.assertFalse(entry.exists())
+        self.assertFalse(dropin.exists())
+
+    def test_blueman_cleanup_keeps_user_overrides(self):
+        entry = self.user_home / ".local/share/applications/blueman-manager.desktop"
+        dropin = self.user_home / ".config/systemd/user/blueman-manager.service.d"
+        entry.parent.mkdir(parents=True)
+        dropin.mkdir(parents=True)
+        entry.write_text("[Desktop Entry]\nExec=blueman-manager --custom\n")
+        (dropin / "hype-niri.conf").write_text("[Service]\nExecStart=\n")
+        (dropin / "mine.conf").write_text("[Service]\nNice=5\n")
+        self.run_installer("remove_blueman_wrapper")
         self.assertEqual(
-            (
-                self.user_home
-                / ".config/systemd/user/blueman-manager.service.d/hype-niri.conf"
-            ).read_bytes(),
-            (
-                REPO / "systemd/user/blueman-manager.service.d/hype-niri.conf"
-            ).read_bytes(),
+            entry.read_text(), "[Desktop Entry]\nExec=blueman-manager --custom\n"
         )
+        self.assertEqual([path.name for path in dropin.iterdir()], ["mine.conf"])
+
+    def test_file_indexing_adds_only_missing_exclusions(self):
+        wanted = (
+            "'node_modules', '.venv', 'venv', 'miniconda3', '__pycache__', 'target', "
+            "'.mypy_cache', '.pytest_cache', '.ruff_cache'"
+        )
+        setting = "org.freedesktop.Tracker3.Miner.Files ignored-directories"
+        without_venv = wanted.replace("'venv', ", "", 1)
+        for current, written in (
+            ("@as []", f"[{wanted}]"),
+            ("['po', 'venv']", f"['po', 'venv', {without_venv}]"),
+            (f"['po', {wanted}]", None),
+            ("", None),
+        ):
+            with self.subTest(current=current):
+                self.log.unlink(missing_ok=True)
+                self.run_installer(f"""
+gsettings() {{
+    if [[ $1 == get ]]; then
+        [[ -n {shlex.quote(current)} ]] || return 1
+        printf '%s\\n' {shlex.quote(current)}
+    else
+        printf '%s\\n' "$*" >> "$INSTALL_TEST_LOG"
+    fi
+}}
+configure_file_indexing
+""")
+                expected = [] if written is None else [f"set {setting} {written}"]
+                self.assertEqual(self.commands(), expected)
 
     def docker_fixture(self, containers="", *, query_status=0):
         return f"""

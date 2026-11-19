@@ -22,7 +22,7 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 | **Shell**             | [Zsh](https://www.zsh.org/) + [Powerlevel10k](https://github.com/romkatv/powerlevel10k) |
 | **Text Font**         | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)                            |
 | **Waybar Font**       | Roboto with Material Design Icons                                                       |
-| **Launcher**          | [Fuzzel](https://codeberg.org/dnkl/fuzzel)                                              |
+| **Launcher**          | [Wofi](https://hg.sr.ht/~scoopta/wofi)                                                  |
 | **Notifications**     | [Mako](https://github.com/emersion/mako)                                                |
 | **Lock Screen**       | [Hyprlock](https://github.com/hyprwm/hyprlock)                                          |
 | **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                                          |
@@ -32,7 +32,6 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 | **Recording**         | [OBS Studio](https://obsproject.com/)                                                   |
 | **Login Manager**     | [Ly](https://github.com/fairyglade/ly)                                                  |
 | **Fetch App**         | [Fastfetch](https://github.com/fastfetch-cli/fastfetch)                                 |
-| **Logout Menu**       | [Wlogout](https://github.com/ArtsyMacaw/wlogout)                                        |
 
 <br/>
 
@@ -74,11 +73,11 @@ Power profiles switch automatically: Performance on AC, Balanced on battery at 3
 
 Docker starts on demand, idle audio devices suspend after five seconds, and file indexing skips dependency/cache directories. Startup and control scripts use locks and atomic writes to prevent duplicate processes and partial configurations.
 
-`Super+Shift+W` opens a wallpaper picker with cached image previews. Animations use Niri’s default effects, curves, and springs with `slowdown 0.8`, reducing their duration by 20%. See [Niri animations](https://niri-wm.github.io/niri/Configuration%3A-Animations.html).
+`Super+Shift+W` opens a wallpaper picker with cached image previews. Niri animations move instead of fading: each runs for 200 ms on one smooth ease-out curve, `cubic-bezier(0.33, 1, 0.67, 1)`, with no overshoot. A new window slides down from its own top edge, and closing one (`Super+Q`) slides it back up into that edge, with no opacity change. Maximizing or restoring a column (`Super+F`) and other resizes show the new contents at once instead of crossfading. The same timing covers window movement, view scrolling, workspace switching, overview and compositor dialogs. Niri can only fade the screenshot UI and the recent-windows switcher, so those switch instantly. Three-finger swipes scroll horizontally or switch workspaces vertically; four-finger vertical swipes open and close overview. Gesture motion follows your fingers; the 200 ms timing applies to settling after release. App startup and shutdown delays are separate from animation duration. `Super+A` opens and closes Wofi, and `Esc` also dismisses it, with the same window animations. Search updates every 10 ms; rows use a 100 ms hover transition and one click activates them. The search chevron uses GTK’s symbolic icon renderer. Hyprlock supports only fades, so locking and unlocking fade for 200 ms on the same curve, and the lock screen shows the wallpaper without blur. The lock taken just before sleep stays instant. The power menu (`Super+Shift+Delete`) is a Wofi list, so Niri animates it like the other menus. Wallpaper changes grow from the centre of the screen in 200 ms. Wofi runs as a normal floating window so Niri also animates utility menus, clipboard history, emoji and password prompts. The app launcher keeps the previous 394 × 328 logical-pixel size. Password prompts center text vertically in their compact window. Password prompts and clipboard menus disable Wofi caching. Waybar retains its own animation settings. See [Niri animations](https://niri-wm.github.io/niri/Configuration%3A-Animations.html).
 
-Click the hotspot icon beside the tray to start or stop sharing. Right-click it, or press `Super+Shift+H`, for credentials, **Change password**, and connection settings. Password entry is masked and accepts 8–63 ASCII characters or 64 hexadecimal digits (raw keys support WPA2 only). Changing an active hotspot's password restarts that hotspot; connected devices must reconnect. The first start creates a 5 GHz hotspot named `Hype-Niri` on channel 36 with a random password. Security uses NetworkManager’s WPA2/WPA3 Personal setting, RSN, AES/CCMP, and optional protected management frames; WPA3 negotiation requires compatible adapter, supplicant, and client support. Starting an older saved hotspot upgrades these settings without changing its password and restarts it if needed. Starting it may disconnect Wi-Fi on the same adapter. Internet sharing requires an upstream connection, such as Ethernet, USB tethering, or another Wi-Fi adapter. The installer includes `dnsmasq` and configures DHCP/DNS access on hotspot-capable Wi-Fi interfaces when enabling UFW.
+Click the hotspot icon beside the tray to start or stop sharing. Right-click it, or press `Super+Shift+H`, for credentials, **Change password**, and connection settings. Password entry is masked and accepts 8–63 ASCII characters or 64 hexadecimal digits (raw keys support WPA2 only). Changing an active hotspot's password restarts that hotspot; connected devices must reconnect. The first start creates a hotspot named `Hype-Niri` with a random password. It prefers 5 GHz on channel 36, uses 2.4 GHz on adapters without 5 GHz, and retries on 2.4 GHz if 5 GHz activation fails. The saved profile keeps the working band for later starts. Each activation attempt allows 35 seconds for NetworkManager to finish; busy actions show a notification. Security uses NetworkManager’s WPA2/WPA3 Personal setting, RSN, AES/CCMP, and optional protected management frames; WPA3 negotiation requires compatible adapter, supplicant, and client support. Starting an older saved hotspot upgrades these settings without changing its password and restarts it if needed. Starting it may disconnect Wi-Fi on the same adapter. Internet sharing requires an upstream connection, such as Ethernet, USB tethering, or another Wi-Fi adapter. The installer includes `dnsmasq` and configures DHCP/DNS access on hotspot-capable Wi-Fi interfaces when enabling UFW.
 
-Display refresh selection (`Super+Shift+D`) and hotspot menus require a working Fuzzel. If menus stop opening after an upgrade, run `fuzzel --version`. A missing `libresvg.so` means the installed `fuzzel-git` needs rebuilding against the new `resvg`; rebuild it with `yay -S --rebuild fuzzel-git`.
+Launcher and utility menus use Wofi. If menus stop opening, run `wofi --version` and check `~/.config/wofi/config` and `~/.config/wofi/style.css`. Keep `normal_window=true` so Niri controls opening and closing animations. Menus stay open when they lose focus; pick an entry or press `Esc` to close them.
 
 Installation includes OBS Studio and the [LazyVim starter](https://www.lazyvim.org/installation). Existing LazyVim settings are retained; other Neovim configurations are backed up before replacement. Open `nvim` to download plugins on first launch, then run `:LazyHealth`.
 
@@ -92,7 +91,7 @@ A `swayidle -w` watcher holds a sleep delay inhibitor while the lock helper conf
 .
 ├── alacritty/       # Fast, GPU-accelerated terminal configuration
 ├── fastfetch/       # System information fetch utility with custom logo
-├── fuzzel/          # Application launcher styled for Monochrome
+├── wofi/            # Application launcher styled for Monochrome
 ├── hypr/            # Hypridle + Hyprlock configuration
 ├── mako/            # Notification daemon configuration
 ├── niri/            # Core Niri compositor settings and rules
@@ -103,7 +102,6 @@ A `swayidle -w` watcher holds a sleep delay inhibitor while the lock helper conf
 ├── stealth/         # Optional transparent Tor service and installer
 ├── tests/           # Installer, runtime and power-policy regression checks
 ├── waybar/          # Comprehensive status bar configuration
-├── wlogout/         # Power menu configuration
 ├── wireplumber/     # Audio routing and idle suspension
 ├── zsh/             # Shell config, Stealth commands, and Powerlevel10k theme
 ├── install.sh       # Automated installation script
@@ -130,15 +128,16 @@ python3 tests/test-runtime.py
 python3 tests/test-sleep.py
 python3 tests/test-caffeine.py
 python3 tests/test-auto-power-profile.py
+python3 tests/test-warp-indicator.py
 bash stealth/test-stealth.sh
 bash stealth/test-install-stealth.sh
 shellcheck install.sh scripts/*.sh stealth/*.sh systemd/*.sh
 shfmt -l install.sh scripts/*.sh stealth/*.sh systemd/*.sh
 prettier --check . --ignore-unknown
-ruff check scripts tests
-ruff format --check scripts tests
+ruff check tests
+ruff format --check tests
 ```
 
 Static checks require ShellCheck, shfmt, Prettier, and Ruff. Shell formatting
 uses the four-space indentation in `.editorconfig`; `ruff.toml` also checks
-import placement while allowing the required PyGObject initialization order.
+import placement.

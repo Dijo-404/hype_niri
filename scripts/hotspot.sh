@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+export LC_ALL=C
 
 PROFILE="Hype Hotspot"
 SSID="Hype-Niri"
@@ -38,6 +39,7 @@ load_profile() {
 
 start_hotspot() {
     local device type interface="" capability password output configured
+    local -a saved
     local -a settings=(
         802-11-wireless.band a 802-11-wireless.channel 36
         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pmf optional
@@ -49,12 +51,15 @@ start_hotspot() {
             capability="$(nmcli -g WIFI-PROPERTIES.AP device show "$device")"
             if [[ "$capability" == yes ]]; then
                 capability="$(nmcli -g WIFI-PROPERTIES.5GHZ device show "$device")"
-                [[ "$capability" == yes ]] || continue
+                if [[ "$capability" != yes ]]; then
+                    settings[1]="bg"
+                    settings[3]=1
+                fi
                 interface="$device"
                 break
             fi
         done < <(nmcli -t -f DEVICE,TYPE device status)
-        [[ -n "$interface" ]] || fail "No Wi-Fi adapter supports 5 GHz hotspot mode."
+        [[ -n "$interface" ]] || fail "No Wi-Fi adapter supports hotspot mode."
         password="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
         if ! output="$(nmcli connection add type wifi ifname "$interface" \
             con-name "$PROFILE" autoconnect no ssid "$SSID" \
@@ -65,7 +70,12 @@ start_hotspot() {
         load_profile
     else
         configured="$(nmcli -g 802-11-wireless.band,802-11-wireless.channel,802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pmf,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show uuid "$uuid")"
-        if [[ "$configured" != $'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp' ]]; then
+        mapfile -t saved <<<"$configured"
+        if [[ "${saved[0]:-}" == bg ]]; then
+            settings[1]="bg"
+            settings[3]="${saved[1]:-1}"
+        fi
+        if [[ "$configured" != "${settings[1]}"$'\n'"${settings[3]}"$'\nwpa-psk\nrsn\n2\nccmp\nccmp' ]]; then
             if ! output="$(nmcli connection modify uuid "$uuid" "${settings[@]}" 2>&1)"; then
                 fail "$output"
             fi
@@ -76,8 +86,15 @@ start_hotspot() {
         fi
     fi
     $active && return 0
-    if ! output="$(nmcli --wait 20 connection up uuid "$uuid" 2>&1)"; then
-        fail "$output"
+    # Let the supplicant finish its 25s activation timeout before retrying.
+    if ! output="$(nmcli --wait 35 connection up uuid "$uuid" 2>&1)"; then
+        [[ "${settings[1]}" == a ]] || fail "$output"
+        # Some adapters advertise 5 GHz but cannot start an AP on that band.
+        if ! output="$(nmcli connection modify uuid "$uuid" \
+            802-11-wireless.band bg 802-11-wireless.channel 1 2>&1)" ||
+            ! output="$(nmcli --wait 35 connection up uuid "$uuid" 2>&1)"; then
+            fail "$output"
+        fi
     fi
     notify "Hotspot started" "Right-click the hotspot button to show credentials or edit the network."
 }
@@ -94,8 +111,10 @@ stop_hotspot() {
 change_password() {
     [[ -n "$uuid" ]] || fail "Start the hotspot once to create its saved profile."
     local password LC_ALL=C
-    password="$(fuzzel --dmenu --password --lines 0 -p 'New hotspot password: ' \
-        --mesg 'Use 8–63 ASCII characters or 64 hexadecimal digits. Connected devices will need to reconnect.' </dev/null)" || return 0
+    notify "New hotspot password" "Use 8–63 ASCII characters or 64 hexadecimal digits. Connected devices will need to reconnect."
+    # Keep an empty entry so Wofi can submit a prompt without menu results.
+    password="$(printf '\n' |
+        "${BASH_SOURCE[0]%/*}/password-prompt.sh" -p 'New hotspot password: ')" || return 0
     [[ -n "$password" ]] || return 0
     if ! { [[ ${#password} -ge 8 && ${#password} -le 63 && "$password" != *[![:print:]]* ]] ||
         [[ "$password" =~ ^[[:xdigit:]]{64}$ ]]; }; then
@@ -107,7 +126,7 @@ change_password() {
     unset password
     if $active; then
         if ! nmcli --wait 15 connection down uuid "$uuid" >/dev/null 2>&1 ||
-            ! nmcli --wait 20 connection up uuid "$uuid" >/dev/null 2>&1; then
+            ! nmcli --wait 35 connection up uuid "$uuid" >/dev/null 2>&1; then
             fail "Password saved, but the hotspot could not restart. Start it again from the hotspot menu."
         fi
     fi
@@ -118,8 +137,7 @@ command -v nmcli >/dev/null 2>&1 || fail "NetworkManager is not installed."
 
 if [[ "$action" == menu ]]; then
     action="$(printf '%s\n' 'Start hotspot' 'Stop hotspot' 'Show credentials' 'Change password' 'Edit hotspot' |
-        fuzzel --dmenu --only-match -p 'Hotspot: ' \
-            --mesg 'Starting a hotspot may disconnect Wi-Fi on the same adapter.')" || exit 0
+        wofi --dmenu --no-custom-entry --cache-file /dev/null -p 'Hotspot')" || exit 0
     case "$action" in
         'Start hotspot') action=start ;;
         'Stop hotspot') action=stop ;;
@@ -134,7 +152,10 @@ case "$action" in
     start | stop | toggle | password)
         source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
         exec 9>"$RUNTIME_DIR/hype-hotspot.lock"
-        flock -n 9 || exit 0
+        flock -n 9 || {
+            notify "Hotspot busy" "Another hotspot action is still running."
+            exit 0
+        }
         ;;
 esac
 
@@ -156,7 +177,10 @@ case "$action" in
     credentials)
         $active || fail "Start the hotspot before showing its credentials."
         interface="$(nmcli -g GENERAL.DEVICES connection show uuid "$uuid")"
-        exec alacritty --hold -e nmcli device wifi show-password ifname "$interface"
+        # nmcli needs UTF-8 and colors to render its QR code.
+        LC_ALL=C.UTF-8 exec alacritty --class hype-hotspot-credentials \
+            --title "Hotspot credentials" --hold \
+            -e nmcli --colors yes device wifi show-password ifname "$interface"
         ;;
     edit)
         [[ -n "$uuid" ]] || fail "Start the hotspot once to create its saved profile."

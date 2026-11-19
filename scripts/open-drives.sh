@@ -97,8 +97,8 @@ luks_prompt_name() {
 unlock_luks_volumes() {
     local dev name pw
 
-    command -v fuzzel >/dev/null 2>&1 || {
-        notify "Cannot unlock encrypted drives" "fuzzel is needed for the passphrase prompt."
+    command -v wofi >/dev/null 2>&1 || {
+        notify "Cannot unlock encrypted drives" "wofi is needed for the passphrase prompt."
         return 0
     }
 
@@ -108,7 +108,9 @@ unlock_luks_volumes() {
         [ -n "$(luks_cleartext "$dev")" ] && continue
 
         name="$(luks_prompt_name "$dev")"
-        pw="$(fuzzel --dmenu --password --prompt "Unlock $name: " </dev/null 2>/dev/null)" || continue
+        # Keep an empty entry so Wofi can submit a prompt without menu results.
+        pw="$(printf '\n' |
+            "${BASH_SOURCE[0]%/*}/password-prompt.sh" --prompt "Unlock $name: " 2>/dev/null)" || continue
         [ -n "$pw" ] || continue
 
         keyfile="$(mktemp "$RUNTIME_DIR/hype-unlock.XXXXXX")" || continue

@@ -65,7 +65,102 @@ layout {
 }
 
 animations {
-    slowdown 0.8
+    window-open {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        custom-shader r"
+            vec4 open_color(vec3 coords_geo, vec3 size_geo) {
+                float p = clamp(niri_clamped_progress, 0.0, 1.0);
+                if (p <= 0.0 || (p < 1.0 && coords_geo.y < 0.0))
+                    return vec4(0.0);
+                vec3 coords_tex = niri_geo_to_tex * vec3(coords_geo.x, coords_geo.y + 1.0 - p, 1.0);
+                if (any(lessThan(coords_tex.st, vec2(0.0))) || any(greaterThan(coords_tex.st, vec2(1.0))))
+                    return vec4(0.0);
+                return texture2D(niri_tex, coords_tex.st);
+            }
+        "
+    }
+
+    window-close {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        custom-shader r"
+            vec4 close_color(vec3 coords_geo, vec3 size_geo) {
+                float p = 1.0 - clamp(niri_clamped_progress, 0.0, 1.0);
+                if (p <= 0.0 || (p < 1.0 && coords_geo.y < 0.0))
+                    return vec4(0.0);
+                vec3 coords_tex = niri_geo_to_tex * vec3(coords_geo.x, coords_geo.y + 1.0 - p, 1.0);
+                if (any(lessThan(coords_tex.st, vec2(0.0))) || any(greaterThan(coords_tex.st, vec2(1.0))))
+                    return vec4(0.0);
+                return texture2D(niri_tex, coords_tex.st);
+            }
+        "
+    }
+
+    horizontal-view-movement {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+    }
+
+    window-movement {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+    }
+
+    window-resize {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        custom-shader r"
+            vec4 resize_color(vec3 coords_curr_geo, vec3 size_curr_geo) {
+                // Niri's stretch_or_crop_next example: no crossfade.
+                vec3 coords_next_geo = niri_curr_geo_to_next_geo * coords_curr_geo;
+                vec3 coords_stretch = niri_geo_to_tex_next * coords_curr_geo;
+                vec3 coords_crop = niri_geo_to_tex_next * coords_next_geo;
+                bool can_crop_by_x = niri_curr_geo_to_next_geo[0][0] <= 1.0;
+                bool can_crop_by_y = niri_curr_geo_to_next_geo[1][1] <= 1.0;
+                vec3 coords = coords_stretch;
+                if (can_crop_by_x)
+                    coords.x = coords_crop.x;
+                if (can_crop_by_y)
+                    coords.y = coords_crop.y;
+                vec4 color = texture2D(niri_tex_next, coords.st);
+                if (can_crop_by_x && (coords_curr_geo.x < 0.0 || 1.0 < coords_curr_geo.x))
+                    color = vec4(0.0);
+                if (can_crop_by_y && (coords_curr_geo.y < 0.0 || 1.0 < coords_curr_geo.y))
+                    color = vec4(0.0);
+                return color;
+            }
+        "
+    }
+
+    workspace-switch {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+    }
+
+    overview-open-close {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+    }
+
+    config-notification-open-close {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+    }
+
+    exit-confirmation-open-close {
+        duration-ms 200
+        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+    }
+
+    // Niri can only fade these two, so they switch instantly.
+    screenshot-ui-open {
+        off
+    }
+
+    recent-windows-close {
+        off
+    }
 }
 
 prefer-no-csd
@@ -83,6 +178,13 @@ window-rule {
 
 include "opacity.kdl"
 
+window-rule {
+    match app-id="^wofi$"
+    open-floating true
+    open-focused true
+    border { off; }
+}
+
 layer-rule {
     match namespace="^waybar$"
     geometry-corner-radius 6
@@ -94,6 +196,14 @@ window-rule {
     open-floating true
     default-column-width { fixed 595; }
     default-window-height { fixed 365; }
+}
+
+window-rule {
+    match app-id="^hype-hotspot-credentials$"
+    open-floating true
+    open-focused true
+    default-column-width { fixed 325; }
+    default-window-height { fixed 460; }
 }
 
 spawn-sh-at-startup "~/.config/scripts/start-waybar.sh"
@@ -118,7 +228,7 @@ binds {
     Ctrl+Q repeat=false { close-window; }
     Alt+F4 repeat=false { close-window; }
     Mod+Delete { quit; }
-    Mod+Shift+Delete { spawn-sh "~/.config/scripts/wallpaper.sh current; wlogout --protocol layer-shell -b 5 --margin-top 350 --margin-bottom 350 --margin-left 200 --margin-right 300 -l ~/.config/wlogout/layout -C ~/.config/wlogout/style.css"; }
+    Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/power-menu.sh"; }
 
     Mod+W { toggle-column-tabbed-display; }
     Mod+Shift+S repeat=false hotkey-overlay-title="Toggle Window Opacity" { spawn-sh "~/.config/scripts/opacity-toggle.sh"; }
@@ -162,10 +272,10 @@ binds {
     Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
-    Mod+A hotkey-overlay-title="App Launcher: fuzzel" { spawn "fuzzel"; }
+    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "pkill -x wofi || exec wofi --show drun --allow-images"; }
     Mod+Tab { toggle-overview; }
-    Mod+Period { spawn-sh "bemoji -t"; }
-    Mod+V { spawn-sh "cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"; }
+    Mod+Period { spawn "env" "BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry" "bemoji" "-t"; }
+    Mod+V repeat=false { spawn-sh "entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf '%s' \"$entry\" | cliphist decode | wl-copy"; }
 
     Mod+R { switch-preset-column-width; }
     Mod+Shift+R { switch-preset-window-height; }

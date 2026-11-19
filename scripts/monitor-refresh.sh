@@ -24,7 +24,7 @@ missing_commands() {
     local missing=()
     local cmd
 
-    for cmd in niri jq fuzzel awk mktemp; do
+    for cmd in niri jq wofi awk mktemp; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
 
@@ -224,27 +224,25 @@ choose_line() {
     local status
 
     choice="$(
-        printf '%s\n' "$options" |
-            fuzzel --dmenu \
+        printf '%s\n' "$options" | cut -f2- |
+            wofi --dmenu \
                 --prompt "$prompt: " \
-                --width 58 \
-                --lines 14 \
-                --no-sort \
-                --only-match \
-                --with-nth 2 \
-                --accept-nth 1 \
-                --match-nth 2
+                --width 599 \
+                --height 369 \
+                --no-custom-entry \
+                --define dmenu-print_line_num=true
     )" || {
         status=$?
-        if [ "$status" -gt 2 ]; then
-            notify "Display menu unavailable" "Fuzzel could not start. Run fuzzel --version in a terminal; rebuild fuzzel-git after library upgrades."
+        if [ "$status" -gt 2 ] && [ "$status" -ne 143 ]; then
+            notify "Display menu unavailable" "Wofi could not start. Run wofi --version in a terminal and check ~/.config/wofi."
             return "$status"
         fi
         return 0
     }
     [ -n "$choice" ] || exit 0
+    [[ "$choice" =~ ^[0-9]+$ ]] || return 1
 
-    printf '%s' "$choice"
+    awk -F '\t' -v selected="$choice" 'NR == selected + 1 { printf "%s", $1 }' <<<"$options"
 }
 
 apply_mode() {
