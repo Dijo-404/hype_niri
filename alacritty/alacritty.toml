@@ -72,4 +72,4 @@ chars = "\u001B\r"
 [[keyboard.bindings]]
 key = "Back"
 mods = "Control"	
-chars = "\u0017"
+chars = "\u001B\u007F"
