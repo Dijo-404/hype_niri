@@ -198,6 +198,14 @@ window-rule {
     default-window-height { fixed 365; }
 }
 
+window-rule {
+    match app-id="^hype-hotspot-credentials$"
+    open-floating true
+    open-focused true
+    default-column-width { fixed 325; }
+    default-window-height { fixed 460; }
+}
+
 spawn-sh-at-startup "~/.config/scripts/start-waybar.sh"
 
 spawn-sh-at-startup "~/.config/scripts/start-tray-applets.sh"

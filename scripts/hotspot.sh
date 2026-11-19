@@ -178,7 +178,9 @@ case "$action" in
         $active || fail "Start the hotspot before showing its credentials."
         interface="$(nmcli -g GENERAL.DEVICES connection show uuid "$uuid")"
         # nmcli needs UTF-8 and colors to render its QR code.
-        LC_ALL=C.UTF-8 exec alacritty --hold -e nmcli --colors yes device wifi show-password ifname "$interface"
+        LC_ALL=C.UTF-8 exec alacritty --class hype-hotspot-credentials \
+            --title "Hotspot credentials" --hold \
+            -e nmcli --colors yes device wifi show-password ifname "$interface"
         ;;
     edit)
         [[ -n "$uuid" ]] || fail "Start the hotspot once to create its saved profile."

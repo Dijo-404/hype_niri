@@ -1571,7 +1571,8 @@ esac
         self.run_script("hotspot.sh", "edit")
         commands = self.log.read_text()
         self.assertIn(
-            "terminal --hold -e nmcli --colors yes device wifi show-password ifname wlan0",
+            "terminal --class hype-hotspot-credentials --title Hotspot credentials "
+            "--hold -e nmcli --colors yes device wifi show-password ifname wlan0",
             commands,
         )
         self.assertIn("locale C.UTF-8\n", commands)
