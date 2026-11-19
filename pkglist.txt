@@ -129,6 +129,8 @@ brightnessctl
 power-profiles-daemon
 upower
 lm_sensors
+mesa
+vulkan-intel
 intel-media-driver
 
 libnotify
