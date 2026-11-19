@@ -1,7 +1,7 @@
 {
   "layer": "top",
   "position": "top",
-  "height": 51,
+  "height": 44,
   "margin-top": 2,
   "margin-left": 2,
   "margin-right": 2,
@@ -57,7 +57,7 @@
 
   "clock": {
     "interval": 30,
-    "format": "<span line_height='0.8'>{:%H:%M<span size='1pt'>\n</span><span size='9pt' color='#aaaaaa'>%A, %d/%m</span>}</span>",
+    "format": "<span line_height='0.8'>{:%H:%M<span size='1pt'>\n</span><span size='8.4pt' color='#aaaaaa'>%A, %d/%m</span>}</span>",
     "tooltip-format": "<big>{:%A, %B %d}</big>\n<tt><small>{calendar}</small></tt>"
   },
 
@@ -70,6 +70,7 @@
   },
   "cpu": {
     "interval": 3,
+    "states": { "single-digit": 0, "multi-digit": 10 },
     "format": "{usage}%",
     "tooltip-format": "CPU load: {usage}%",
     "align": 0.5
@@ -112,8 +113,8 @@
   },
 
   "tray": {
-    "icon-size": 16,
-    "spacing": 6,
+    "icon-size": 15,
+    "spacing": 5,
     "orders": { "nm-applet": -1 }
   },
 
@@ -139,7 +140,7 @@
   "image#stealth": {
     "exec": "~/.config/scripts/stealth-indicator.sh",
     "interval": 10,
-    "size": 16
+    "size": 15
   },
 
   "pulseaudio": {
