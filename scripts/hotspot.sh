@@ -70,7 +70,7 @@ start_hotspot() {
         load_profile
     else
         configured="$(nmcli -g 802-11-wireless.band,802-11-wireless.channel,802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pmf,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show uuid "$uuid")"
-        mapfile -t saved <<< "$configured"
+        mapfile -t saved <<<"$configured"
         if [[ "${saved[0]:-}" == bg ]]; then
             settings[1]="bg"
             settings[3]="${saved[1]:-1}"

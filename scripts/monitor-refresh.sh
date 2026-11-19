@@ -223,7 +223,6 @@ choose_line() {
     local choice
     local status
 
-    # Outer size of the Bluetooth manager window: 595x365 plus its 2px border.
     choice="$(
         printf '%s\n' "$options" | cut -f2- |
             wofi --dmenu \

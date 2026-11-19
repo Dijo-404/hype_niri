@@ -23,7 +23,10 @@ class WarpIndicatorTests(unittest.TestCase):
         }
         self.mock("systemctl", '[[ "$*" == "is-active --quiet warp-svc.service" ]]')
         self.mock("pgrep", "exit 1")
-        self.mock("warp-cli", 'printf called > "$WARP_TEST_LOG"\nprintf \'%s\\n\' \'{"status":"Connected"}\'')
+        self.mock(
+            "warp-cli",
+            'printf called > "$WARP_TEST_LOG"\nprintf \'%s\\n\' \'{"status":"Connected"}\'',
+        )
 
     def mock(self, name, body):
         path = self.root / name
@@ -37,6 +40,7 @@ class WarpIndicatorTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=4,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
@@ -58,7 +62,7 @@ class WarpIndicatorTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
 
     def test_disconnected_daemon_stays_visible(self):
-        self.mock("warp-cli", 'printf \'%s\\n\' \'{"status":"Disconnected"}\'')
+        self.mock("warp-cli", "printf '%s\\n' '{\"status\":\"Disconnected\"}'")
         result = self.indicator()
         self.assertTrue(result["text"])
         self.assertEqual(result["class"], "running")

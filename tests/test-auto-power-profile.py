@@ -41,7 +41,9 @@ case "$*" in
             exit 1
         fi
         printf '%s' "$target" > "$state/active"
-        printf '   string "ActiveProfile"\n' > "$state/events"
+        if [[ -e "$state/monitor.ready" ]]; then
+            printf '   string "ActiveProfile"\n' > "$state/events"
+        fi
         ;;
     *) exit 64 ;;
 esac
@@ -73,6 +75,8 @@ class PowerProfileTests(unittest.TestCase):
         self.mock(
             "dbus-monitor",
             'printf "%s\\n" "$@" > "$POWER_TEST_STATE/monitor.args"\n'
+            'touch "$POWER_TEST_STATE/monitor.ready"\n'
+            "printf 'signal sender=org.freedesktop.DBus member=NameAcquired\\n'\n"
             'exec cat "$POWER_TEST_STATE/events"',
         )
         os.mkfifo(self.state / "events")
@@ -218,6 +222,24 @@ class PowerProfileTests(unittest.TestCase):
                 for line in writes
             )
         )
+
+    def test_initial_profile_change_refreshes_waybar(self):
+        self.start()
+        self.assertEqual(self.calls(), ["balanced"])
+        self.assertEqual(len(self.lines("pkill.log")), 2)
+
+    def test_charger_change_during_initial_apply_is_not_lost(self):
+        self.mock(
+            "busctl",
+            BUSCTL.replace(
+                'printf \'%s\' "$target" > "$state/active"',
+                'printf \'%s\' "$target" > "$state/active"\n'
+                '        printf false > "$state/on_battery"',
+            ),
+        )
+        self.start()
+        self.assertEqual(self.calls(), ["balanced", "performance"])
+        self.assertEqual((self.state / "active").read_text(), "performance")
 
     def test_monitor_watches_power_objects_and_service_restarts(self):
         self.start()

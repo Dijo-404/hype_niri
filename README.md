@@ -128,6 +128,7 @@ python3 tests/test-runtime.py
 python3 tests/test-sleep.py
 python3 tests/test-caffeine.py
 python3 tests/test-auto-power-profile.py
+python3 tests/test-warp-indicator.py
 bash stealth/test-stealth.sh
 bash stealth/test-install-stealth.sh
 shellcheck install.sh scripts/*.sh stealth/*.sh systemd/*.sh

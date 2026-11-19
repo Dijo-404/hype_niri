@@ -104,7 +104,7 @@ source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
 exec 9>"$RUNTIME_DIR/hype-auto-power-profile.lock"
 flock -n 9 || exit 0
 
-apply
+# NameAcquired arrives after dbus-monitor installs its signal subscriptions.
 while IFS= read -r line; do
     dirty=0
     while :; do
@@ -112,7 +112,7 @@ while IFS= read -r line; do
             *'"OnBattery"'* | *'"IsPresent"'* | *'"Type"'* | *'"Percentage"'* | *'"ActiveProfile"'* | *'"Profiles"'*)
                 dirty=1
                 ;;
-            *member=NameOwnerChanged*)
+            *member=NameAcquired* | *member=NameOwnerChanged*)
                 dirty=1
                 last_key=""
                 ;;

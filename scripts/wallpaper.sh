@@ -121,7 +121,6 @@ case "${1:-}" in
         THUMBNAIL_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/hype-niri/wallpapers"
         mkdir -p "$THUMBNAIL_DIR"
         flock -u 9
-        # 64px chrome plus six 96px rows.
         choice="$(
             for index in "${!images[@]}"; do
                 label="${images[index]//$'\n'/\\n}"

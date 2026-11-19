@@ -31,7 +31,6 @@ window {
   outline: none;
 }
 
-/* The 45px input and 19px inset leave twelve complete 22px rows in 328px. */
 #scroll {
   margin: 0 20px 19px;
 }
