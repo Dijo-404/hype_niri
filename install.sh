@@ -346,7 +346,7 @@ preflight() {
         waybar/icons/16x16/panel/nm-signal-100.svg
         waybar/icons/16x16/panel/nm-no-connection.svg
         scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/niri-outputs.sh scripts/runtime-dir.sh scripts/auto-power-profile.sh
-        scripts/power-menu.sh scripts/hotspot.sh scripts/password-prompt.sh
+        scripts/power-menu.sh scripts/hotspot.sh scripts/password-prompt.sh scripts/menu-toggle.sh
         systemd/user/hype-auto-power-profile.service
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf
         systemd/setup-oomd.sh systemd/user@.service.d/60-hype-niri-oomd.conf
@@ -1472,6 +1472,7 @@ validate() {
         "$HOME/.config/scripts/lock-screen.sh"
         "$HOME/.config/scripts/lock.sh"
         "$HOME/.config/scripts/mic-control.sh"
+        "$HOME/.config/scripts/menu-toggle.sh"
         "$HOME/.config/scripts/monitor-refresh.sh"
         "$HOME/.config/scripts/open-drives.sh"
         "$HOME/.config/scripts/opacity-toggle.sh"

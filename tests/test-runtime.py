@@ -1285,6 +1285,72 @@ read -r _ < "$RUNTIME_TEST_HOLD"''',
         self.run_script("volume-control.sh")
         self.assertIn("Muted", self.log.read_text().splitlines()[-1])
 
+    def test_menu_toggle_closes_existing_menu_and_reopens_after_cancel(self):
+        pid_file = self.root / "menu-pid"
+        self.environment["RUNTIME_TEST_MENU_PID"] = str(pid_file)
+        self.mock(
+            "pkill",
+            '[[ -s "$RUNTIME_TEST_MENU_PID" ]] && '
+            'kill -TERM "$(cat "$RUNTIME_TEST_MENU_PID")" 2>/dev/null',
+        )
+        self.mock(
+            "pgrep",
+            '[[ -s "$RUNTIME_TEST_MENU_PID" ]] && '
+            'kill -0 "$(cat "$RUNTIME_TEST_MENU_PID")" 2>/dev/null',
+        )
+        program = """
+import os
+from pathlib import Path
+import signal
+import time
+with Path(os.environ["RUNTIME_TEST_LOG"]).open("a") as log:
+    log.write("launched\\n")
+time.sleep(0.2)
+Path(os.environ["RUNTIME_TEST_MENU_PID"]).write_text(str(os.getpid()))
+signal.pause()
+"""
+        self.mock("wofi", f"exec python3 -c {shlex.quote(program)}")
+        for expected_launches in (1, 2):
+            process = subprocess.Popen(
+                ["bash", str(self.scripts / "menu-toggle.sh"), "wofi", "--dmenu"],
+                env=self.environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                text=True,
+            )
+            self.addCleanup(self.stop_process_group, process)
+            deadline = time.monotonic() + 3
+            while (
+                not self.log.exists()
+                or len(self.log.read_text().splitlines()) < expected_launches
+            ):
+                self.assertIsNone(process.poll())
+                self.assertLess(time.monotonic(), deadline, "menu did not launch")
+                time.sleep(0.01)
+            self.run_script("menu-toggle.sh", "wofi", "--dmenu")
+            stdout, stderr = process.communicate(timeout=3)
+            self.assertEqual(process.returncode, 143, stderr)
+            self.assertEqual(stdout, "")
+            self.assertEqual(
+                self.log.read_text().splitlines(), ["launched"] * expected_launches
+            )
+
+    def test_menu_toggle_preserves_command_arguments_output_and_failure(self):
+        self.mock("pkill", "exit 1")
+        self.mock("pgrep", "exit 1")
+        result = self.run_script("menu-toggle.sh", "printf", "%s", "two words")
+        self.assertEqual(result.stdout, "two words")
+        result = subprocess.run(
+            ["bash", str(self.scripts / "menu-toggle.sh"), "sh", "-c", "exit 7"],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 7)
+
     def test_wallpaper_menu_preserves_newline_filename(self):
         wallpapers = self.user_home / "pictures/wallpapers"
         wallpapers.mkdir(parents=True)

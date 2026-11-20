@@ -53,7 +53,7 @@ window#waybar.hidden {
   margin-left: 2px;
   margin-right: 2px;
   font-weight: 500;
-  transition: all 0.15s cubic-bezier(0.19, 1, 0.22, 1);
+  transition: all 0.2s cubic-bezier(0.333333, 0.666667, 0.666667, 1);
 }
 
 #connectivity #tray {
@@ -201,7 +201,8 @@ window#waybar.hidden {
 }
 
 #workspaces button {
-  transition: background-color 0.25s cubic-bezier(0.25, 0.9, 0.25, 1);
+  transition: background-color 0.2s
+    cubic-bezier(0.333333, 0.666667, 0.666667, 1);
   background: transparent;
   border-radius: 50%;
   min-width: 0;
@@ -336,7 +337,7 @@ menu {
 menu menuitem {
   border-radius: 4px;
   padding: 4px 8px;
-  transition: all 0.15s cubic-bezier(0.19, 1, 0.22, 1);
+  transition: all 0.2s cubic-bezier(0.333333, 0.666667, 0.666667, 1);
 }
 
 menu menuitem:hover {

@@ -30,7 +30,7 @@
   "custom/launcher": {
     "format": "󰣇",
     "tooltip": false,
-    "on-click": "pkill -x wofi || wofi --show drun --allow-images --prompt ''"
+    "on-click": "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images --prompt ''"
   },
 
   "niri/workspaces": {
@@ -51,7 +51,7 @@
     "interval": "once",
     "format": "{icon}",
     "format-icons": ["󰾆", "󰾅", "󰓅"],
-    "on-click": "~/.config/scripts/power-profile.sh menu",
+    "on-click": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-profile.sh menu",
     "signal": 16
   },
 
@@ -128,7 +128,7 @@
     "interval": 5,
     "format": "{}",
     "on-click": "~/.config/scripts/hotspot.sh toggle",
-    "on-click-right": "~/.config/scripts/hotspot.sh menu",
+    "on-click-right": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/hotspot.sh menu",
     "signal": 17
   },
   "custom/warp": {
@@ -189,7 +189,7 @@
     "format": "",
     "tooltip": true,
     "tooltip-format": "Power Menu",
-    "on-click": "~/.config/scripts/power-menu.sh",
-    "on-click-right": "~/.config/scripts/power-menu.sh"
+    "on-click": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh",
+    "on-click-right": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh"
   }
 }

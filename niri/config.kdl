@@ -67,7 +67,7 @@ layout {
 animations {
     window-open {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
         custom-shader r"
             vec4 open_color(vec3 coords_geo, vec3 size_geo) {
                 float p = clamp(niri_clamped_progress, 0.0, 1.0);
@@ -83,7 +83,7 @@ animations {
 
     window-close {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
         custom-shader r"
             vec4 close_color(vec3 coords_geo, vec3 size_geo) {
                 float p = 1.0 - clamp(niri_clamped_progress, 0.0, 1.0);
@@ -99,17 +99,17 @@ animations {
 
     horizontal-view-movement {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
     }
 
     window-movement {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
     }
 
     window-resize {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
         custom-shader r"
             vec4 resize_color(vec3 coords_curr_geo, vec3 size_curr_geo) {
                 // Niri's stretch_or_crop_next example: no crossfade.
@@ -135,22 +135,22 @@ animations {
 
     workspace-switch {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
     }
 
     overview-open-close {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
     }
 
     config-notification-open-close {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
     }
 
     exit-confirmation-open-close {
         duration-ms 200
-        curve "cubic-bezier" 0.33 1.0 0.67 1.0
+        curve "ease-out-quad"
     }
 
     // Niri can only fade these two, so they switch instantly.
@@ -228,7 +228,7 @@ binds {
     Ctrl+Q repeat=false { close-window; }
     Alt+F4 repeat=false { close-window; }
     Mod+Delete { quit; }
-    Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/power-menu.sh"; }
+    Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh"; }
 
     Mod+W { toggle-column-tabbed-display; }
     Mod+Shift+S repeat=false hotkey-overlay-title="Toggle Window Opacity" { spawn-sh "~/.config/scripts/opacity-toggle.sh"; }
@@ -262,7 +262,7 @@ binds {
 
     Mod+T hotkey-overlay-title="Terminal: alacritty" { spawn "alacritty"; }
     Mod+E { spawn "nautilus" "-w"; }
-    Mod+Shift+D hotkey-overlay-title="Display Refresh Rate" { spawn-sh "~/.config/scripts/monitor-refresh.sh"; }
+    Mod+Shift+D repeat=false hotkey-overlay-title="Display Refresh Rate" { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/monitor-refresh.sh"; }
     Mod+U { spawn-sh "~/.config/scripts/open-drives.sh"; }
     Mod+C { spawn-sh "alacritty -e nvim"; }
     Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
@@ -272,10 +272,10 @@ binds {
     Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
-    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "pkill -x wofi || exec wofi --show drun --allow-images"; }
+    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images"; }
     Mod+Tab { toggle-overview; }
-    Mod+Period { spawn "env" "BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry" "bemoji" "-t"; }
-    Mod+V repeat=false { spawn-sh "entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf '%s' \"$entry\" | cliphist decode | wl-copy"; }
+    Mod+Period repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh env 'BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry' bemoji -t"; }
+    Mod+V repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh sh -c 'entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf \"%s\" \"$entry\" | cliphist decode | wl-copy'"; }
 
     Mod+R { switch-preset-column-width; }
     Mod+Shift+R { switch-preset-window-height; }
@@ -309,8 +309,8 @@ binds {
 
     Mod+Alt+Right { spawn-sh "~/.config/scripts/wallpaper.sh random"; }
     Mod+Alt+Left { spawn-sh "~/.config/scripts/wallpaper.sh random"; }
-    Mod+Shift+W { spawn-sh "~/.config/scripts/wallpaper.sh select"; }
-    Mod+Shift+H hotkey-overlay-title="Hotspot controls" { spawn-sh "~/.config/scripts/hotspot.sh menu"; }
+    Mod+Shift+W repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/wallpaper.sh select"; }
+    Mod+Shift+H repeat=false hotkey-overlay-title="Hotspot controls" { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/hotspot.sh menu"; }
 
     Mod+Alt+Up { spawn-sh "pkill waybar; ~/.config/scripts/start-waybar.sh"; }
     Mod+Alt+Down { spawn-sh "pkill waybar"; }
