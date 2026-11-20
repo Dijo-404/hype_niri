@@ -45,8 +45,8 @@ window {
   outline: none;
   color: #d4d4d4;
   transition:
-    background-color 200ms cubic-bezier(0.333333, 0.666667, 0.666667, 1),
-    color 200ms cubic-bezier(0.333333, 0.666667, 0.666667, 1);
+    background-color 160ms cubic-bezier(0.333333, 0.666667, 0.666667, 1),
+    color 160ms cubic-bezier(0.333333, 0.666667, 0.666667, 1);
 }
 
 #entry:selected {
