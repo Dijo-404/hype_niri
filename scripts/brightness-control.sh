@@ -47,7 +47,7 @@ case "${1:-}" in
     up)
         current=$(brightnessctl get)
         max=$(brightnessctl max)
-        step=$((max / 100))
+        step=$(((max + 50) / 100))
         [ "$step" -lt 1 ] && step=1
         target=$((current + step))
         [ "$target" -gt "$max" ] && target=$max
@@ -56,15 +56,15 @@ case "${1:-}" in
     down)
         current=$(brightnessctl get)
         max=$(brightnessctl max)
-        step=$((max / 100))
+        step=$(((max + 50) / 100))
         [ "$step" -lt 1 ] && step=1
-        min=$step
+        min=$(((max + 99) / 100))
         if [ "$current" -le "$min" ]; then
             target=$current
         else
             target=$((current - step))
+            [ "$target" -lt "$min" ] && target=$min
         fi
-        [ "$target" -lt "$min" ] && target=$min
         smooth_set "$current" "$target"
         ;;
     *)
@@ -80,6 +80,7 @@ if [ "$max" -gt 0 ]; then
 else
     percent=0
 fi
+exec 9>&-
 
 if [ "$percent" -lt 30 ]; then
     icon="󰃞"

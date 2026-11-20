@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run isolated runtime regressions with mocked desktop commands."""
 
+import fcntl
 import json
 import os
 import shlex
@@ -963,6 +964,96 @@ esac""",
                 self.run_script("brightness-control.sh", action)
                 self.assertEqual(int(value.read_text()), expected)
                 self.assertIn(f"Brightness: {percent}%", self.log.read_text())
+
+    def test_brightness_ramps_precisely_and_respects_limits(self):
+        value = self.root / "brightness"
+        self.environment["RUNTIME_TEST_BRIGHTNESS"] = str(value)
+        self.mock(
+            "brightnessctl",
+            """
+case "$*" in
+    get) cat "$RUNTIME_TEST_BRIGHTNESS" ;;
+    max) printf '%s\\n' "$RUNTIME_TEST_MAX" ;;
+    '-q set '*)
+        printf '%s\\n' "$3" > "$RUNTIME_TEST_BRIGHTNESS"
+        printf '%s\\n' "$3" >> "$RUNTIME_TEST_LOG" ;;
+    *) exit 90 ;;
+esac""",
+        )
+        for maximum, current, action, target in (
+            (400, 120, "up", 124),
+            (400, 120, "down", 116),
+            (255, 100, "up", 103),
+            (255, 100, "down", 97),
+            (255, 4, "down", 3),
+            (400, 399, "up", 400),
+            (400, 400, "up", 400),
+            (400, 5, "down", 4),
+            (400, 4, "down", 4),
+            (400, 1, "down", 1),
+            (400, 0, "down", 0),
+            (1, 0, "up", 1),
+            (1, 1, "down", 1),
+        ):
+            with self.subTest(maximum=maximum, current=current, action=action):
+                self.environment["RUNTIME_TEST_MAX"] = str(maximum)
+                value.write_text(str(current))
+                self.log.unlink(missing_ok=True)
+                self.run_script("brightness-control.sh", action)
+                self.assertEqual(int(value.read_text()), target)
+                writes = (
+                    list(map(int, self.log.read_text().splitlines()))
+                    if self.log.exists()
+                    else []
+                )
+                self.assertEqual(writes, sorted(writes, reverse=action == "down"))
+                self.assertTrue(
+                    all(
+                        min(current, target) <= v <= max(current, target)
+                        for v in writes
+                    )
+                )
+
+    def test_volume_drops_busy_input_instead_of_queueing(self):
+        self.mock("wpctl", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
+        with (self.runtime / "hype-volume-control.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = subprocess.run(
+                ["bash", str(self.scripts / "volume-control.sh"), "up"],
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(self.log.exists())
+
+    def test_control_notifications_do_not_hold_input_locks(self):
+        self.mock("wpctl", "printf 'Volume: 0.65\\n'")
+        self.mock(
+            "brightnessctl",
+            'case "$1" in get) echo 120 ;; max) echo 400 ;; esac',
+        )
+        self.mock(
+            "notify-send",
+            """
+exec 8>"$XDG_RUNTIME_DIR/$RUNTIME_TEST_CONTROL_LOCK"
+if flock -n 8; then
+    echo unlocked >> "$RUNTIME_TEST_LOG"
+else
+    echo locked >> "$RUNTIME_TEST_LOG"
+fi""",
+        )
+        for script, lock in (
+            ("volume-control.sh", "hype-volume-control.lock"),
+            ("brightness-control.sh", "brightness-control.lock"),
+        ):
+            with self.subTest(script=script):
+                self.log.unlink(missing_ok=True)
+                self.environment["RUNTIME_TEST_CONTROL_LOCK"] = lock
+                self.run_script(script, "up")
+                self.assertEqual(self.log.read_text().strip(), "unlocked")
 
     def test_drive_links_decode_source_and_target_before_opening_nautilus(self):
         self.environment["USER"] = "runtime-test"

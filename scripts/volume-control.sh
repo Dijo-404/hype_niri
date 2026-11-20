@@ -5,7 +5,8 @@ set -euo pipefail
 command -v wpctl >/dev/null 2>&1 || exit 0
 source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
 exec 9>"$RUNTIME_DIR/hype-volume-control.lock"
-flock -w 1 9 || exit 0
+# Do not queue scroll events after the gesture has stopped.
+flock -n 9 || exit 0
 
 ID=2001
 
@@ -26,6 +27,7 @@ read -r _ volume _ <<<"$vol_info"
 [[ "$volume" =~ ^([0-9]+)([.]([0-9]+))?$ ]] || exit 0
 fraction="${BASH_REMATCH[3]:-}00"
 vol=$((10#${BASH_REMATCH[1]} * 100 + 10#${fraction:0:2}))
+exec 9>&-
 
 command -v notify-send >/dev/null 2>&1 || exit 0
 

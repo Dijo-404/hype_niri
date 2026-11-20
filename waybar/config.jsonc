@@ -105,6 +105,7 @@
   },
 
   "backlight": {
+    "smooth-scrolling-threshold": 1.0,
     "format": "{icon}  {percent}%",
     "format-icons": ["󰃞", "󰃝", "󰃟", "󰃠"],
     "tooltip-format": "Brightness: {percent}%",
@@ -144,6 +145,7 @@
   },
 
   "pulseaudio": {
+    "smooth-scrolling-threshold": 1.0,
     "format": "{icon}",
     "format-muted": "󰝟",
     "format-icons": {
