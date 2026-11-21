@@ -127,6 +127,9 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even
 | `Super + Alt + ←` / `→` | `wallpaper random`  | Cycle random wallpaper next/prev                             |
 | `Super + Shift + W`     | `wallpaper select`  | Toggle wallpaper selector with image previews                |
 | `Super + Shift + H`     | `hotspot menu`      | Toggle hotspot controls, credentials, password, and settings |
+| `Super + N`             | `notch`             | Pin or close the notch (search, weather, media, timers)      |
+| `Super + Ctrl + Space`  | `Hype Flow`         | Start dictation, then press again to transcribe and paste    |
+| `Super + Ctrl + Esc`    | `Hype Flow`         | Cancel the current dictation                                 |
 | `Super + Alt + ↑`       | `waybar show`       | Show/restart Waybar                                          |
 | `Super + Alt + ↓`       | `waybar hide`       | Hide Waybar                                                  |
 | `Super + Esc`           | `inhibit-shortcuts` | Toggle Niri keyboard shortcut override                       |
