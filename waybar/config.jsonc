@@ -21,7 +21,6 @@
     "clock",
     "pulseaudio#microphone",
     "pulseaudio",
-    "backlight",
     "battery",
     "group/connectivity",
     "custom/power"
@@ -102,15 +101,6 @@
     "interval": 5,
     "format": "{text}",
     "align": 0.5
-  },
-
-  "backlight": {
-    "smooth-scrolling-threshold": 1.0,
-    "format": "{icon}  {percent}%",
-    "format-icons": ["󰃞", "󰃝", "󰃟", "󰃠"],
-    "tooltip-format": "Brightness: {percent}%",
-    "on-scroll-up": "~/.config/scripts/brightness-control.sh up",
-    "on-scroll-down": "~/.config/scripts/brightness-control.sh down"
   },
 
   "tray": {

@@ -206,7 +206,16 @@ window-rule {
     default-window-height { fixed 460; }
 }
 
+window-rule {
+    match app-id="^dev[.]hype[.]Flow$"
+    open-floating true
+    default-column-width { fixed 960; }
+    default-window-height { fixed 680; }
+}
+
 spawn-sh-at-startup "~/.config/scripts/start-waybar.sh"
+spawn-sh-at-startup "~/.config/scripts/notch.sh"
+spawn-sh-at-startup "if command -v hype-flow >/dev/null 2>&1; then hype-flow --background; fi"
 
 spawn-sh-at-startup "~/.config/scripts/start-tray-applets.sh"
 spawn-at-startup "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"
@@ -273,6 +282,9 @@ binds {
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
     Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images"; }
+    Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn-sh "~/.config/scripts/notch.sh --toggle"; }
+    Mod+Ctrl+Space repeat=false hotkey-overlay-title="Dictate offline" { spawn "hype-flow" "--toggle"; }
+    Mod+Ctrl+Escape repeat=false hotkey-overlay-title="Cancel dictation" { spawn "hype-flow" "--cancel"; }
     Mod+Tab { toggle-overview; }
     Mod+Period repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh env 'BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry' bemoji -t"; }
     Mod+V repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh sh -c 'entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf \"%s\" \"$entry\" | cliphist decode | wl-copy'"; }
