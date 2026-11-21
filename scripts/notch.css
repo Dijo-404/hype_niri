@@ -1,0 +1,304 @@
+@define-color notch_bg rgba(0, 0, 0, 0.55);
+@define-color notch_border rgba(200, 200, 200, 0.45);
+@define-color notch_fill rgba(255, 255, 255, 0.15);
+@define-color notch_hover rgba(255, 255, 255, 0.24);
+@define-color notch_text #ffffff;
+@define-color notch_label #e0e0e0;
+@define-color notch_muted #b0b0b0;
+@define-color notch_active #e0e0e0;
+@define-color notch_active_text #121212;
+@define-color notch_good #98c379;
+
+#niri-notch {
+  background: transparent;
+  color: @notch_text;
+  font-family: "Roboto", "Material Design Icons", sans-serif;
+  font-size: 12.6px;
+  font-weight: 500;
+}
+
+#niri-notch * {
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+  outline: 1px solid rgba(255, 255, 255, 0.5);
+  outline-offset: -2px;
+}
+
+#notch-morph {
+  background-color: @notch_bg;
+  border: 2px solid @notch_border;
+  margin-top: 2px;
+}
+
+#niri-notch #notch-header {
+  background: transparent;
+  border: none;
+  border-radius: 18px;
+  box-shadow: none;
+  padding: 8px 14px;
+  min-height: 24px;
+}
+
+#niri-notch .chip {
+  background-color: @notch_fill;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+
+#notch-body {
+  padding: 2px 14px 12px;
+}
+
+#niri-notch .card {
+  background-color: @notch_fill;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+}
+
+#niri-notch .glance {
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+
+#niri-notch .temp {
+  font-size: 20px;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+
+#niri-notch button {
+  background: transparent;
+  background-image: none;
+  color: @notch_text;
+  border: none;
+  border-radius: 50%;
+  box-shadow: none;
+  padding: 6px;
+  min-width: 22px;
+  min-height: 22px;
+  transition:
+    background-color 0.15s cubic-bezier(0.32, 0.72, 0, 1),
+    color 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+#niri-notch button:hover {
+  background-color: @notch_hover;
+}
+
+#niri-notch button:active {
+  background-color: rgba(255, 255, 255, 0.32);
+}
+
+/* GTK draws the outline only for keyboard focus, not after a click. */
+#niri-notch button {
+  outline: 1px solid rgba(255, 255, 255, 0.5);
+  outline-offset: -2px;
+  -gtk-outline-radius: 50%;
+}
+
+#niri-notch #notch-dictation {
+  -gtk-outline-radius: 999px;
+}
+
+#niri-notch stackswitcher button {
+  -gtk-outline-radius: 8px;
+}
+
+#niri-notch button:disabled {
+  color: #666666;
+  background: transparent;
+}
+
+#niri-notch #notch-dictation {
+  background-color: @notch_bg;
+  border: 2px solid @notch_border;
+  border-radius: 999px;
+  box-shadow: none;
+  /* 3px left keeps the 30px icon concentric with the capsule's end. */
+  padding: 3px 16px 3px 3px;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+#niri-notch #notch-dictation:hover {
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.06)
+  );
+}
+
+#niri-notch #notch-dictation label {
+  color: @notch_text;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#niri-notch button.primary {
+  background-color: @notch_active;
+  color: @notch_active_text;
+  padding: 8px;
+}
+
+#niri-notch button.primary.large {
+  padding: 6px;
+}
+
+#niri-notch button.primary:hover {
+  background-color: #ffffff;
+}
+
+#niri-notch button.primary:active {
+  background-color: #c4c4c4;
+}
+
+#niri-notch button.primary:disabled {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #666666;
+}
+
+#niri-notch entry {
+  background-color: @notch_fill;
+  color: @notch_text;
+  caret-color: @notch_text;
+  border: none;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  padding: 6px 10px;
+  min-height: 24px;
+  transition:
+    background-color 0.15s cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+#niri-notch entry:focus {
+  background-color: @notch_hover;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+#niri-notch entry image {
+  color: @notch_muted;
+}
+
+#niri-notch entry selection {
+  background-color: @notch_active;
+  color: @notch_active_text;
+}
+
+#niri-notch list {
+  background: transparent;
+}
+
+#niri-notch list row {
+  border-radius: 8px;
+  padding: 6px 8px;
+  transition:
+    background-color 0.15s cubic-bezier(0.32, 0.72, 0, 1),
+    color 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+#niri-notch list row:hover {
+  background-color: @notch_fill;
+}
+
+#niri-notch list row:selected {
+  background-color: @notch_active;
+  color: @notch_active_text;
+}
+
+#niri-notch stackswitcher {
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+#niri-notch stackswitcher button {
+  border-radius: 8px;
+  padding: 3px 14px;
+  min-height: 0;
+  font-weight: 600;
+  color: @notch_label;
+}
+
+#niri-notch stackswitcher button:checked {
+  background-color: @notch_active;
+  color: @notch_active_text;
+}
+
+#niri-notch .muted {
+  color: @notch_muted;
+  font-size: 11.5px;
+}
+
+#niri-notch .strong {
+  font-weight: 700;
+}
+
+#niri-notch .track-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+#niri-notch .ring-time {
+  font-size: 21px;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+
+#niri-notch .ring {
+  color: @notch_active;
+}
+
+#niri-notch .break {
+  color: @notch_good;
+}
+
+#niri-notch scale {
+  padding: 6px 0;
+}
+
+#niri-notch scale trough {
+  background-color: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 4px;
+  min-height: 6px;
+}
+
+#niri-notch scale highlight {
+  background-color: @notch_active;
+  border: none;
+  border-radius: 4px;
+}
+
+#niri-notch scale slider {
+  background-color: #ffffff;
+  background-image: none;
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  min-width: 14px;
+  min-height: 14px;
+  margin: -5px 0;
+  transition: box-shadow 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+#niri-notch scale slider:hover {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.4),
+    0 0 0 4px rgba(255, 255, 255, 0.15);
+}
+
+#niri-notch .level-value {
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
