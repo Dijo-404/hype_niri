@@ -66,7 +66,7 @@ layout {
 
 animations {
     window-open {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
         custom-shader r"
             vec4 open_color(vec3 coords_geo, vec3 size_geo) {
@@ -82,7 +82,7 @@ animations {
     }
 
     window-close {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
         custom-shader r"
             vec4 close_color(vec3 coords_geo, vec3 size_geo) {
@@ -98,17 +98,17 @@ animations {
     }
 
     horizontal-view-movement {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
     }
 
     window-movement {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
     }
 
     window-resize {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
         custom-shader r"
             vec4 resize_color(vec3 coords_curr_geo, vec3 size_curr_geo) {
@@ -134,22 +134,22 @@ animations {
     }
 
     workspace-switch {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
     }
 
     overview-open-close {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
     }
 
     config-notification-open-close {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
     }
 
     exit-confirmation-open-close {
-        duration-ms 160
+        duration-ms 180
         curve "ease-out-quad"
     }
 

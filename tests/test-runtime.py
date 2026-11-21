@@ -1342,29 +1342,39 @@ printf 'power off\\n' >> "$RUNTIME_TEST_LOG"
 
     def test_tray_launcher_keeps_single_instance_without_process_discovery(self):
         self.hold_mock("nm-applet")
-        pid_file = self.root / "applet-pid"
-        self.environment["RUNTIME_TEST_APPLET_PID"] = str(pid_file)
-        self.mock(
-            "nm-applet",
-            '''
-printf '%s' "$$" > "$RUNTIME_TEST_APPLET_PID"
-printf 'nm-applet\\n' >> "$RUNTIME_TEST_LOG"
+        pid_files = [self.root / name for name in ("nm-applet", "warp-taskbar")]
+        for pid_file in pid_files:
+            self.mock(
+                pid_file.name,
+                f'''printf '%s' "$$" > {shlex.quote(str(pid_file))}
+printf '{pid_file.name}\\n' >> "$RUNTIME_TEST_LOG"
 read -r _ < "$RUNTIME_TEST_HOLD"''',
-        )
+            )
         self.mock("blueman-applet", "exit 0")
         self.run_script("start-tray-applets.sh")
         deadline = time.monotonic() + 3
-        while not pid_file.exists():
-            self.assertLess(time.monotonic(), deadline, "applet did not start")
-            time.sleep(0.01)
-        self.addCleanup(self.terminate_pid, int(pid_file.read_text()))
+        for pid_file in pid_files:
+            while not pid_file.exists():
+                self.assertLess(time.monotonic(), deadline, "applet did not start")
+                time.sleep(0.01)
+            self.addCleanup(self.terminate_pid, int(pid_file.read_text()))
         with ThreadPoolExecutor(max_workers=6) as executor:
             list(
                 executor.map(
                     lambda _: self.run_script("start-tray-applets.sh"), range(6)
                 )
             )
-        self.assertEqual(self.log.read_text().splitlines(), ["nm-applet"])
+        self.assertCountEqual(
+            self.log.read_text().splitlines(), ["nm-applet", "warp-taskbar"]
+        )
+
+    def test_tray_launcher_does_not_restart_existing_warp_client(self):
+        self.mock("nm-applet", "exit 0")
+        self.mock("blueman-applet", "exit 0")
+        self.mock("pgrep", '[[ "$*" == "-u $UID -x warp-taskbar" ]]')
+        self.mock("warp-taskbar", 'printf started > "$RUNTIME_TEST_LOG"')
+        self.run_script("start-tray-applets.sh")
+        self.assertFalse(self.log.exists())
 
     def test_volume_parser_preserves_percentage_and_mute_notifications(self):
         self.mock("notify-send", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')

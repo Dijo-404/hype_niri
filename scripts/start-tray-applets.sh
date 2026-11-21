@@ -25,3 +25,4 @@ start_once() {
 
 start_once "nm-applet" nm-applet --indicator
 start_once "blueman-applet" blueman-applet
+start_once "warp-taskbar" warp-taskbar
