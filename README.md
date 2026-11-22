@@ -85,6 +85,8 @@ Waybar volume scrolling filters small touchpad movements with a `1.0` smooth-scr
 
 Installation includes OBS Studio and the [LazyVim starter](https://www.lazyvim.org/installation). Existing LazyVim settings are retained; other Neovim configurations are backed up before replacement. Open `nvim` to download plugins on first launch, then run `:LazyHealth`.
 
+Installation configures Blueman to use its [built-in dialogs](https://github.com/blueman-project/blueman/wiki/Integrations#desktop-notifications) for Bluetooth notifications, including pairing PIN codes, passkeys and confirmation buttons. To pair a keyboard, open **Bluetooth Devices** from the tray, put the keyboard in pairing mode, search for it, select it and choose **Pair** (the key button). Type the displayed code on the Bluetooth keyboard and press **Enter**. Devices that request a code instead show an entry dialog; devices that use numeric comparison show confirmation buttons.
+
 A `swayidle -w` watcher holds a sleep delay inhibitor while the lock helper confirms the session is locked. Explicit suspend requests abort if that confirmation fails. Lid-close and other external requests remain subject to logind's five-second delay limit; see the [swayidle documentation](https://github.com/swaywm/swayidle/blob/master/swayidle.1.scd).
 
 <br/>

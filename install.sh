@@ -961,6 +961,11 @@ setup_desktop_integrations() {
     ln -sfT -- ../hype-auto-power-profile.service "$tmp"
     mv -fT -- "$tmp" "$destination"
     remove_blueman_wrapper
+    if gsettings set org.blueman.general notification-daemon false 2>/dev/null; then
+        print_done "Enabled Bluetooth pairing dialogs for PIN codes and confirmation"
+    else
+        print_warn "Could not enable Bluetooth pairing dialogs; run: gsettings set org.blueman.general notification-daemon false"
+    fi
     set_default_browser || print_warn "Could not set Brave as the default browser"
     remove_stale_audio_service
     configure_file_indexing || print_warn "Could not configure file indexing exclusions"

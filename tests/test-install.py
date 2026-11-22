@@ -51,6 +51,7 @@ sleep() {{ :; }}
 curl() {{ return 99; }}
 sudo() {{ printf '%s\\n' "$*" >> "$INSTALL_TEST_LOG"; return 1; }}
 systemctl() {{ return 1; }}
+gsettings() {{ return 1; }}
 stdbuf() {{ shift 2; "$@"; }}
 xdg-user-dir() {{ printf '%s/\\n' "$INSTALL_TEST_HOME"; }}
 xdg-user-dirs-update() {{ printf 'xdg-user-dirs-update %s\\n' "$*" >> "$INSTALL_TEST_LOG"; }}
@@ -1208,6 +1209,25 @@ setup_desktop_integrations
 """)
         self.assertFalse(entry.exists())
         self.assertFalse(dropin.exists())
+
+    def test_bluetooth_pairing_uses_builtin_dialogs(self):
+        self.run_installer("""
+gsettings() { printf 'gsettings %s\\n' "$*" >> "$INSTALL_TEST_LOG"; }
+configure_file_indexing() { :; }
+setup_desktop_integrations
+""")
+        self.assertIn(
+            "gsettings set org.blueman.general notification-daemon false",
+            self.commands(),
+        )
+
+    def test_bluetooth_pairing_setting_failure_warns_and_continues(self):
+        result = self.run_installer("""
+print_warn() { printf '%s\\n' "$*"; }
+configure_file_indexing() { :; }
+setup_desktop_integrations
+""")
+        self.assertIn("Could not enable Bluetooth pairing dialogs", result.stdout)
 
     def test_blueman_cleanup_keeps_user_overrides(self):
         entry = self.user_home / ".local/share/applications/blueman-manager.desktop"
