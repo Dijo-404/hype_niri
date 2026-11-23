@@ -26,3 +26,11 @@ pub mod drives;
 pub mod stealth;
 
 pub mod stealth_client;
+
+pub mod media;
+
+pub mod clipboard;
+pub mod emoji;
+pub mod keyboard;
+
+pub mod launcher;

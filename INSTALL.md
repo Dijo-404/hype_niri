@@ -4,7 +4,7 @@
 
 The automated installer can refresh mirrors, performs a required Arch keyring and full system upgrade, installs packages, backs up and copies configurations, sets up Zsh and GTK theming, enables desktop services and memory pressure protection with `systemd-oomd`, and offers optional firewall, Cloudflare WARP, and Stealth configuration.
 
-The installer builds the native Rust desktop controls, GTK4 notch and privileged Stealth backend before replacing configurations. Packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell`, `libpulse`, OBS Studio, Neovim, and LazyVim dependencies. The installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
+The installer builds the native Rust desktop controls, GTK4 notch and privileged Stealth backend before replacing configurations. Core packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell` and `libpulse`. OBS Studio and Neovim/LazyVim require the `media` and `editor-neovim` optional groups. When `editor-neovim` is selected, the installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
@@ -23,10 +23,10 @@ cd hype_niri
 Run the installer as your regular user with sudo access. It asks before refreshing mirrors, upgrading the system, replacing existing configurations, switching the display manager, setting lid-switch behavior, configuring networking, or changing your login shell. Declining the required system upgrade or a required backup stops the installation.
 
 > [!TIP]
-> The Powerlevel10k prompt theme is pre-configured. Run `p10k configure` if you want to customize it.
+> Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.
 
 > [!NOTE]
-> The installer uses `pacman` for official repository packages and `yay` only for AUR packages. Install `yay` first with your preferred method; this installer does not clone AUR repos to bootstrap it.
+> The installer uses `pacman` for official repository packages and `yay` only for AUR packages. Install `yay` with your preferred method only when selected missing packages require the AUR; this installer does not clone AUR repos to bootstrap it.
 
 ---
 
@@ -36,7 +36,7 @@ If you prefer to selectively apply configurations, follow these manual steps. Ba
 
 ### 1. Install Required Packages
 
-`pkglist.txt` contains the base desktop packages, including ufw and Cloudflare WARP. Their configuration is optional. Stealth packages are installed separately when you choose that option.
+`pkglist.txt` contains core desktop/build requirements. The installer offers named groups from `optional-packages.txt`; Enter selects no extras. For example, choose `browser-firefox editor-neovim bluetooth` to add those features. Firewall, Docker, Bluetooth, VPNs, Stealth, Ly, compatibility packages and Intel-specific drivers are optional. See [Dependencies and Services](DEPENDENCIES.md). Existing packages are retained; deselecting a group does not remove packages or disable existing services.
 
 For smoother downloads, refresh mirrors before installing packages. If `reflector` is already installed, use it:
 
@@ -90,11 +90,11 @@ cargo build --workspace --bins --release --locked
 ./target/release/hype-control --check
 ./target/release/hype-notch --check
 
-mkdir -p ~/.config ~/.cache/cliphist
+mkdir -p ~/.config
 ./target/release/hype-install --source "$PWD" --phase user-dirs
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
-cp -r niri waybar scripts alacritty wofi mako fastfetch hypr ~/.config/
+cp -r niri waybar scripts alacritty mako fastfetch hypr ~/.config/
 install -m 755 target/release/hype-control target/release/hype-notch ~/.config/scripts/
 mkdir -p ~/.config/systemd/user
 cp systemd/user/hype-auto-power-profile.service ~/.config/systemd/user/
@@ -107,7 +107,8 @@ cp zsh/.zshrc ~/
 cp zsh/.p10k.zsh ~/
 
 ./target/release/hype-install --source "$PWD" --phase desktop-integrations
-./target/release/hype-install --source "$PWD" --phase lazyvim
+# Optional: explicitly install/configure the LazyVim starter
+# ./target/release/hype-install --source "$PWD" --phase lazyvim
 ```
 
 When editing `~/.config/niri/outputs.kdl`, keep each output block's opening
@@ -125,7 +126,7 @@ cat > ~/.config/gtk-3.0/settings.ini << 'EOF'
 [Settings]
 gtk-theme-name=Adwaita-dark
 gtk-icon-theme-name=Papirus-Dark
-gtk-cursor-theme-name=Bibata-Modern-Ice
+gtk-cursor-theme-name=Adwaita
 gtk-cursor-theme-size=24
 gtk-font-name=JetBrains Mono 10
 gtk-application-prefer-dark-theme=true
@@ -136,7 +137,7 @@ cp ~/.config/gtk-3.0/settings.ini ~/.config/gtk-4.0/settings.ini
 dconf write /org/gnome/desktop/interface/color-scheme   "'prefer-dark'"
 dconf write /org/gnome/desktop/interface/gtk-theme      "'Adwaita-dark'"
 dconf write /org/gnome/desktop/interface/icon-theme     "'Papirus-Dark'"
-dconf write /org/gnome/desktop/interface/cursor-theme   "'Bibata-Modern-Ice'"
+dconf write /org/gnome/desktop/interface/cursor-theme   "'Adwaita'"
 dconf write /org/gnome/desktop/interface/cursor-size    "24"
 dconf write /org/gnome/desktop/interface/font-name      "'JetBrains Mono 10'"
 dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10'"
@@ -161,9 +162,12 @@ sudo sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 6/' /etc/pacman.conf
 
 sudo cp polkit/*.rules /etc/polkit-1/rules.d/
 
-sudo systemctl enable --now NetworkManager bluetooth power-profiles-daemon
-./target/release/hype-install --source "$PWD" --phase docker-socket
-sudo usermod -aG docker "$USER"   # log out/in before using docker without sudo
+sudo systemctl enable --now NetworkManager power-profiles-daemon
+# Optional, after selecting/installing bluetooth:
+# sudo systemctl enable --now bluetooth
+# Optional, after selecting/installing docker:
+# ./target/release/hype-install --source "$PWD" --phase docker-socket
+# sudo usermod -aG docker "$USER"   # log out/in before using docker without sudo
 
 systemctl --user enable --now pipewire.socket pipewire-pulse.socket wireplumber.service gnome-keyring-daemon.socket
 systemctl --user enable --now hype-auto-power-profile.service
@@ -210,7 +214,7 @@ Hardware without Performance support falls back to Balanced. Manual Waybar selec
 systemctl --user status hype-auto-power-profile.service
 ```
 
-Docker starts on demand through `docker.socket`; an existing service with running containers is preserved. WirePlumber handles headphone routing and suspends idle audio devices after five seconds. The installer removes the old audio-jack unit only when its expected script is missing, and excludes dependency/cache directories from file indexing while retaining existing exclusions.
+With `docker` selected, Docker starts on demand through `docker.socket`; an existing service with running containers is preserved. WirePlumber handles headphone routing and suspends idle audio devices after five seconds. The installer removes the old audio-jack unit only when its expected script is missing, and excludes dependency/cache directories from file indexing while retaining existing exclusions.
 
 #### Memory pressure protection (systemd-oomd)
 
@@ -293,11 +297,11 @@ warp-cli --accept-tos status
 
 Disconnect anytime with `warp-cli disconnect`. Inspect logs with `journalctl -u warp-svc`.
 
-Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
+When `warp` is selected, Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
 
 #### Stealth Tor routing
 
-The installer asks whether to install Stealth. Choosing Yes installs its packages, stages the commands in `~/.local/share/stealth/`, and installs the system service. Choosing No skips those steps. It does not start Tor or change your network until you run `stealth-start`. For a manual install from this repository:
+Select the `stealth` group to install Stealth. The installer then asks before installing its privileged configuration. Choosing Yes installs its packages, stages the commands in `~/.local/share/stealth/`, and installs the system service. Choosing No skips those steps. It does not start Tor or change your network until you run `stealth-start`. For a manual install from this repository:
 
 ```bash
 mkdir -p ~/.local/share/stealth
@@ -377,7 +381,7 @@ If `reflector` is not installed, rerun `./install.sh` and allow the mirror refre
 
 If your Windows partition doesn't appear in Nautilus, or appears but won't open / mounts read-only:
 
-**1. Install the prerequisites** (already in `pkglist.txt`):
+**1. Install the prerequisites** (the extra filesystem tools belong to `compatibility`):
 
 ```bash
 yay -S --needed ntfs-3g gvfs udisks2 lvm2 libblockdev-lvm

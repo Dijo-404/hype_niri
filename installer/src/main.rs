@@ -100,7 +100,7 @@ fn entry() -> Result<()> {
     let options = parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
     if options.mode == Mode::Help {
         println!(
-            "Usage: hype-install [--source REPOSITORY] [--phase NAME]\n       hype-install --setup-oomd REPOSITORY\n       sudo hype-install --install-stealth PAYLOAD\n\nPhases: packages user-dirs desktop-integrations lazyvim tray-icons docker-socket backup configs gtk shell system logind firewall warp stealth validate\nRun interactively as a regular Arch Linux user with sudo and yay installed."
+            "Usage: hype-install [--source REPOSITORY] [--phase NAME]\n       hype-install --setup-oomd REPOSITORY\n       sudo hype-install --install-stealth PAYLOAD\n\nPhases: packages user-dirs desktop-integrations lazyvim tray-icons docker-socket backup configs gtk shell system logind firewall warp stealth validate\nRun interactively as a regular Arch Linux user with sudo. yay is needed only for missing AUR packages."
         );
         return Ok(());
     }
@@ -137,6 +137,7 @@ fn entry() -> Result<()> {
         root: PathBuf::from("/"),
         backup: None,
         build_dir: None,
+        optional_groups: None,
         runner: Box::new(ProcessRunner),
     };
     match options.mode {
@@ -148,8 +149,33 @@ fn entry() -> Result<()> {
         Mode::Stealth(payload) => installer.install_stealth(&payload),
         Mode::Phase(name) => {
             let _lock = InstallLock::acquire(&runtime_directory()?)?;
+            if name != "packages" {
+                let persisted = installer.user(".config/hype-niri/optional-groups");
+                let contents = match std::fs::read_to_string(&persisted) {
+                    Ok(contents) => contents,
+                    Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => String::new(),
+                    Err(cause) => return Err(cause.into()),
+                };
+                let mut groups: Vec<String> = contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                match name.as_str() {
+                    "lazyvim" => groups.push("editor-neovim".into()),
+                    "warp" => groups.push("warp".into()),
+                    "stealth" => groups.push("stealth".into()),
+                    "firewall" => groups.push("firewall".into()),
+                    _ => {}
+                }
+                installer.optional_groups = Some(groups);
+            }
             match name.as_str() {
-                "packages" => installer.install_packages(),
+                "packages" => {
+                    installer.install_packages()?;
+                    installer.save_optional_groups()
+                }
                 "user-dirs" => installer.setup_user_dirs(),
                 "desktop-integrations" => installer.setup_desktop_integrations(),
                 "lazyvim" => installer.setup_lazyvim(),

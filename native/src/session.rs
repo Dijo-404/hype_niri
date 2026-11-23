@@ -450,11 +450,7 @@ async fn copilot_shortcut() -> Result<()> {
             if !matches!(locked_hint(&conn).await, Ok(false)) {
                 return Ok(());
             }
-            Command::new("code")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
+            crate::launcher::launch_default("editor").await?;
             return Ok(());
         }
     }
@@ -575,6 +571,8 @@ async fn watch_sleep() -> Result<()> {
 
 pub async fn run(command: &str, args: &[String]) -> Result<()> {
     match command {
+        "monitors" if args == ["on"] => ipc::action(json!({"PowerOnMonitors": {}})),
+        "monitors" if args == ["off"] => ipc::action(json!({"PowerOffMonitors": {}})),
         "prepare-sleep" if args == ["--watch"] => watch_sleep().await,
         "prepare-sleep" if args.is_empty() => ensure_locked(&bus::system().await?).await,
         "suspend-now" if args.is_empty() => {

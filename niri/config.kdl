@@ -5,7 +5,7 @@ environment {
 }
 
 cursor {
-    xcursor-theme "Bibata-Modern-Ice"
+    xcursor-theme "Adwaita"
     xcursor-size 24
     hide-when-typing
 }
@@ -233,8 +233,7 @@ spawn-at-startup "~/.config/scripts/hype-control" "display-scale"
 spawn-sh-at-startup "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_ID NIRI_SOCKET; systemctl --user restart hypridle.service || hypridle"
 spawn-at-startup "~/.config/scripts/hype-control" "prepare-sleep" "--watch"
 
-spawn-sh-at-startup "wl-paste --type text --watch cliphist store"
-spawn-sh-at-startup "wl-paste --type image --watch cliphist store"
+spawn-at-startup "~/.config/scripts/hype-control" "clipboard" "watch"
 
 binds {
 
@@ -242,7 +241,7 @@ binds {
     Ctrl+Q repeat=false { close-window; }
     Alt+F4 repeat=false { close-window; }
     Mod+Delete { quit; }
-    Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/hype-control menu-toggle ~/.config/scripts/hype-control power-menu"; }
+    Mod+Shift+Delete repeat=false { spawn "~/.config/scripts/hype-control" "power-menu"; }
 
     Mod+W { toggle-column-tabbed-display; }
     Mod+Shift+S repeat=false hotkey-overlay-title="Toggle Window Opacity" { spawn "~/.config/scripts/hype-control" "opacity-toggle"; }
@@ -278,21 +277,21 @@ binds {
     Mod+E { spawn "nautilus" "-w"; }
     Mod+Shift+D repeat=false hotkey-overlay-title="Display Refresh Rate" { spawn "~/.config/scripts/hype-control" "monitor-refresh"; }
     Mod+U { spawn "~/.config/scripts/hype-control" "open-drives"; }
-    Mod+C { spawn-sh "alacritty -e nvim"; }
-    Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    Mod+C { spawn "~/.config/scripts/hype-control" "launch-default" "editor"; }
+    Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: default editor / double press: lock displays or show password prompt" { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+F23 repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
-    Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
-    Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
+    Mod+B hotkey-overlay-title="Default Browser" { spawn "~/.config/scripts/hype-control" "launch-default" "browser"; }
+    Ctrl+Shift+Escape { spawn "~/.config/scripts/hype-control" "launch-default" "monitor"; }
 
-    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn "~/.config/scripts/hype-control" "menu-toggle" "wofi" "--show" "drun" "--allow-images"; }
+    Mod+A repeat=false hotkey-overlay-title="Application Launcher" { spawn "~/.config/scripts/hype-control" "app-launcher"; }
     Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn "~/.config/scripts/hype-notch" "--toggle"; }
     Mod+Ctrl+Space repeat=false hotkey-overlay-title="Dictate offline" { spawn "hype-flow" "--toggle"; }
     Mod+Ctrl+Escape repeat=false hotkey-overlay-title="Cancel dictation" { spawn "hype-flow" "--cancel"; }
     Mod+Tab { toggle-overview; }
-    Mod+Period repeat=false { spawn-sh "~/.config/scripts/hype-control menu-toggle env 'BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry' bemoji -t"; }
-    Mod+V repeat=false { spawn-sh "~/.config/scripts/hype-control menu-toggle sh -c 'entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf \"%s\" \"$entry\" | cliphist decode | wl-copy'"; }
+    Mod+Period repeat=false { spawn "~/.config/scripts/hype-control" "emoji"; }
+    Mod+V repeat=false { spawn "~/.config/scripts/hype-control" "clipboard" "pick"; }
 
     Mod+R { switch-preset-column-width; }
     Mod+Shift+R { switch-preset-window-height; }
@@ -311,10 +310,10 @@ binds {
     XF86AudioLowerVolume allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "down"; }
     XF86AudioRaiseVolume allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "up"; }
 
-    XF86AudioPlay allow-when-locked=true { spawn-sh "playerctl play-pause"; }
-    XF86AudioPause allow-when-locked=true { spawn-sh "playerctl play-pause"; }
-    XF86AudioNext allow-when-locked=true { spawn-sh "playerctl next"; }
-    XF86AudioPrev allow-when-locked=true { spawn-sh "playerctl previous"; }
+    XF86AudioPlay allow-when-locked=true { spawn "~/.config/scripts/hype-control" "media" "play-pause"; }
+    XF86AudioPause allow-when-locked=true { spawn "~/.config/scripts/hype-control" "media" "play-pause"; }
+    XF86AudioNext allow-when-locked=true { spawn "~/.config/scripts/hype-control" "media" "next"; }
+    XF86AudioPrev allow-when-locked=true { spawn "~/.config/scripts/hype-control" "media" "previous"; }
 
     XF86MonBrightnessUp allow-when-locked=true { spawn "~/.config/scripts/hype-control" "brightness" "up"; }
     XF86MonBrightnessDown allow-when-locked=true { spawn "~/.config/scripts/hype-control" "brightness" "down"; }
@@ -322,7 +321,7 @@ binds {
     Print { screenshot; }
     Ctrl+Print { screenshot-screen; }
     Alt+Print { screenshot-window; }
-    Mod+Shift+P { spawn-sh "hyprpicker -a"; }
+    Mod+Shift+P { spawn "~/.config/scripts/hype-control" "launch-default" "color-picker"; }
 
     Mod+Alt+Right { spawn "~/.config/scripts/hype-control" "wallpaper" "random"; }
     Mod+Alt+Left { spawn "~/.config/scripts/hype-control" "wallpaper" "random"; }
@@ -330,7 +329,7 @@ binds {
     Mod+Shift+H repeat=false hotkey-overlay-title="Hotspot controls" { spawn "~/.config/scripts/hype-control" "hotspot" "menu"; }
 
     Mod+Alt+Up { spawn "~/.config/scripts/hype-control" "start-waybar" "--restart"; }
-    Mod+Alt+Down { spawn-sh "pkill waybar"; }
+    Mod+Alt+Down { spawn "~/.config/scripts/hype-control" "stop-waybar"; }
 
     Mod+1 { focus-workspace 1; }
     Mod+2 { focus-workspace 2; }

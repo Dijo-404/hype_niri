@@ -1,5 +1,6 @@
 """Isolate native desktop launcher tests from the user's processes and services."""
 
+import concurrent.futures
 import json
 import os
 import shutil
@@ -7,6 +8,7 @@ import socketserver
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -208,7 +210,7 @@ class RuntimeFixture(unittest.TestCase):
         self.runtime.mkdir(mode=0o700)
         self.home = self.root / "home"
         self.home.mkdir()
-        shutil.copytree(self.repo / "wofi", self.home / ".config/wofi")
+        (self.home / ".config").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
         for utility in ("cat", "cp", "printf", "rm", "sh", "sleep", "touch", "wc"):
@@ -231,6 +233,8 @@ class RuntimeFixture(unittest.TestCase):
             "XDG_STATE_HOME": str(self.home / ".local/state"),
             "XDG_CACHE_HOME": str(self.home / ".cache"),
             "XDG_RUNTIME_DIR": str(self.runtime),
+            "XDG_DATA_HOME": str(self.home / ".local/share"),
+            "XDG_DATA_DIRS": str(self.root / "empty-data"),
             "XDG_SESSION_ID": "test-session",
             "DBUS_SYSTEM_BUS_ADDRESS": self.bus.address,
             "DBUS_SESSION_BUS_ADDRESS": self.bus.address,
@@ -244,6 +248,7 @@ class RuntimeFixture(unittest.TestCase):
         }
         self.environment.pop("GTK_THEME", None)
         self.environment.pop("WAYBAR_CONFIG", None)
+        self.environment.pop("WAYLAND_SOCKET", None)
         self.launch = [
             shutil.which("bwrap"),
             "--die-with-parent",
@@ -271,6 +276,117 @@ class RuntimeFixture(unittest.TestCase):
             "/usr/bin/bash",
             "-euc",
         ]
+
+    def native_gui(self):
+        """Use a private headless compositor; never connect test input to the desktop."""
+        if hasattr(self, "gui_environment"):
+            return self.gui_environment
+        prefix = Path.home() / ".cache/hype-niri/notch-build-deps/usr"
+        sway = shutil.which("sway") or str(prefix / "bin/sway")
+        swaymsg = shutil.which("swaymsg") or str(prefix / "bin/swaymsg")
+        wtype = shutil.which("wtype")
+        if not Path(sway).is_file() or not Path(swaymsg).is_file() or not wtype:
+            self.skipTest(
+                "Native GTK tests require headless Sway, swaymsg and test-only wtype"
+            )
+        config = self.root / "sway.conf"
+        config.write_text(
+            "output HEADLESS-1 resolution 1280x800\ninput * xkb_layout us\n"
+        )
+        gui_env = self.environment | {
+            "WLR_BACKENDS": "headless",
+            "WLR_HEADLESS_OUTPUTS": "1",
+            "WLR_RENDERER": "pixman",
+            "GDK_BACKEND": "wayland",
+            "GSK_RENDERER": "cairo",
+            "GTK_A11Y": "none",
+            "LD_LIBRARY_PATH": str(prefix / "lib")
+            + ":"
+            + os.environ.get("LD_LIBRARY_PATH", ""),
+        }
+        gui_env.pop("SWAYSOCK", None)
+        gui_env.pop("WAYLAND_DISPLAY", None)
+        log = (self.root / "sway.log").open("w")
+        self.addCleanup(log.close)
+        compositor = subprocess.Popen(
+            [sway, "--unsupported-gpu", "-c", str(config)],
+            env=gui_env,
+            stdout=log,
+            stderr=log,
+        )
+
+        def stop():
+            if compositor.poll() is None:
+                compositor.terminate()
+            compositor.wait(timeout=5)
+
+        self.addCleanup(stop)
+        for _ in range(100):
+            sockets = list(self.runtime.glob("sway-ipc.*.sock"))
+            displays = [
+                path for path in self.runtime.glob("wayland-*") if path.is_socket()
+            ]
+            if sockets and displays:
+                break
+            if compositor.poll() is not None:
+                self.fail((self.root / "sway.log").read_text())
+            time.sleep(0.03)
+        self.assertTrue(sockets and displays, "Private compositor did not start")
+        gui_env["SWAYSOCK"] = str(sockets[0])
+        gui_env["WAYLAND_DISPLAY"] = displays[0].name
+        self.gui_environment = gui_env
+        self.gui_swaymsg = swaymsg
+        self.gui_wtype = wtype
+        return gui_env
+
+    def gui_control(
+        self, *args, keys=(), text=None, title=None, status=0, toggle=False
+    ):
+        gui_env = self.native_gui()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            running = executor.submit(
+                self.control, *args, extra_env=gui_env, status=status
+            )
+            for _ in range(150):
+                if running.done():
+                    result = running.result()
+                    self.fail(
+                        "Native dialog exited before becoming visible: " + result.stderr
+                    )
+                tree = subprocess.check_output(
+                    [self.gui_swaymsg, "-t", "get_tree"],
+                    env=gui_env,
+                    text=True,
+                )
+
+                def windows(node):
+                    yield node
+                    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                        yield from windows(child)
+
+                visible = [
+                    node
+                    for node in windows(json.loads(tree))
+                    if node.get("app_id") == "dev.hype_niri.Control"
+                ]
+                if visible:
+                    if title:
+                        self.assertEqual(visible[0]["name"], title)
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("Native dialog did not become visible")
+            if toggle:
+                self.control(*args, extra_env=gui_env)
+                return running.result(timeout=10)
+            # The virtual keyboard must exist before GTK receives focus on a headless seat.
+            command = [self.gui_wtype, "-s", "100", "-d", "5"]
+            if text is not None:
+                command += [text]
+            for key in keys:
+                command += ["-k", key]
+            subprocess.run(command, env=gui_env, check=True, timeout=3)
+            return running.result(timeout=10)
 
     def tearDown(self):
         if hasattr(self, "bus"):

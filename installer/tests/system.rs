@@ -18,6 +18,7 @@ struct Calls {
     log: Vec<String>,
     overrides: HashMap<String, VecDeque<(i32, String)>>,
     answer: String,
+    unavailable: Vec<String>,
 }
 
 struct Fake {
@@ -112,8 +113,13 @@ impl Runner for Fake {
         Ok(self.calls.borrow().answer.clone())
     }
 
-    fn available(&self, _: &str) -> bool {
-        true
+    fn available(&self, program: &str) -> bool {
+        !self
+            .calls
+            .borrow()
+            .unavailable
+            .iter()
+            .any(|name| name == program)
     }
 }
 
@@ -137,6 +143,22 @@ impl Fixture {
                 fixture: dir.path().into(),
             }),
             build_dir: None,
+            optional_groups: Some(
+                [
+                    "bluetooth",
+                    "docker",
+                    "warp",
+                    "stealth",
+                    "editor-neovim",
+                    "browser-brave",
+                    "theme-extras",
+                    "login-manager-ly",
+                    "firewall",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            ),
         };
         Self {
             _dir: dir,
@@ -667,6 +689,29 @@ fn validation_checks_required_services_and_live_oom_settings() {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
     f.installer.validate().unwrap();
+    // A core installation validates without any bundled applications or retired helpers.
+    f.installer.optional_groups = Some(Vec::new());
+    f.calls.borrow_mut().unavailable = [
+        "nvim",
+        "obs",
+        "tree-sitter",
+        "blueman-applet",
+        "wofi",
+        "wl-paste",
+        "cliphist",
+        "playerctl",
+        "magick",
+        "notify-send",
+        "powerprofilesctl",
+        "pavucontrol",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    for optional in [".config/nvim", ".config/wofi", ".config/fastfetch"] {
+        fs::remove_dir_all(f.installer.user(optional)).unwrap();
+    }
+    f.installer.validate().unwrap();
     assert!(
         !f.log()
             .iter()
@@ -778,5 +823,31 @@ fn stealth_publishes_only_rust_payload_after_elevated_install_succeeds() {
         f.log()
             .iter()
             .any(|call| call == "sudo pacman -S --needed --noconfirm tor nftables polkit")
+    );
+}
+
+#[test]
+fn core_selection_never_configures_installed_optional_services() {
+    let mut f = Fixture::new();
+    f.prepare_system();
+    f.installer.optional_groups = Some(Vec::new());
+    f.installer.setup_system().unwrap();
+    f.installer.setup_cloudflare().unwrap();
+    f.installer.setup_stealth().unwrap();
+    f.installer.setup_firewall().unwrap();
+    let calls = &f.calls.borrow().log;
+    assert!(
+        !calls.iter().any(|call| call.contains("bluetooth")
+            || call.contains("docker")
+            || call.contains("warp")
+            || call.contains("tor")
+            || call.contains("ufw")
+            || call.contains("ly@")),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.contains("NetworkManager.service"))
     );
 }

@@ -1,11 +1,11 @@
-use crate::{Result, bus, caffeine, err, ipc, runtime, session};
+use crate::{Result, bus, caffeine, dialog, err, ipc, launcher, runtime, session};
 use gtk::{glib, prelude::*};
 use serde_json::{Value, json};
 use std::{
     env,
     ffi::OsString,
     fs,
-    io::{self, Read, Seek, Write},
+    io::{Read, Seek},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::process::{CommandExt, ExitStatusExt},
@@ -109,36 +109,22 @@ fn menu_toggle(args: &[OsString]) -> Result<i32> {
 }
 
 fn password_prompt(args: &[OsString]) -> Result<i32> {
-    let config = match env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
-        Some(path) => path.into(),
-        None => runtime::home()?.join(".config"),
+    let title = match args {
+        [] => "Password",
+        [flag, title] if flag == "-p" || flag == "--prompt" => title
+            .to_str()
+            .ok_or_else(|| err("Password prompt must be UTF-8"))?,
+        [flag] => flag
+            .to_str()
+            .and_then(|flag| flag.strip_prefix("--prompt="))
+            .ok_or_else(|| err("Usage: password-prompt [-p|--prompt TITLE]"))?,
+        _ => return Err(err("Usage: password-prompt [-p|--prompt TITLE]")),
     };
-    let style = config.join("wofi/style.css");
-    let mut prompt_style = tempfile::Builder::new()
-        .prefix("wofi-password.")
-        .suffix(".css")
-        .tempfile_in(runtime::dir()?)?;
-    io::copy(&mut fs::File::open(style)?, &mut prompt_style)?;
-    prompt_style.write_all(
-        br#"#input { margin: 2px 20px; min-height: 60px; font-feature-settings: "liga=0,calt=0"; }
-#scroll, #inner-box { margin: 0; padding: 0; min-height: 0; }
-#entry { margin: 0; padding: 0; min-height: 0; font-size: 0; }
-"#,
-    )?;
-    let status = Command::new("wofi")
-        .args([
-            "--dmenu",
-            "--password",
-            "--height",
-            "64",
-            "--cache-file",
-            "/dev/null",
-            "--style",
-        ])
-        .arg(prompt_style.path())
-        .args(args)
-        .status()?;
-    Ok(exit_code(status))
+    let Some(password) = dialog::prompt(title, true)? else {
+        return Ok(1);
+    };
+    println!("{password}");
+    Ok(0)
 }
 
 async fn logind_power(method: &str) -> Result<()> {
@@ -156,52 +142,21 @@ async fn logind_power(method: &str) -> Result<()> {
 }
 
 async fn power_menu() -> Result<()> {
-    let mut picker = Command::new("wofi")
-        .args([
-            "--dmenu",
-            "--no-custom-entry",
-            "--cache-file",
-            "/dev/null",
-            "--allow-markup",
-            "--define",
-            "dmenu-print_line_num=true",
-            "-p",
-            "Power",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let options = [
-        ("\u{f033e}", "Lock"),
-        ("\u{f04b2}", "Sleep"),
-        ("\u{f0343}", "Logout"),
-        ("\u{f0425}", "Shutdown"),
-        ("\u{f0709}", "Reboot"),
-    ];
-    let mut input = picker.stdin.take().expect("Wofi stdin is piped");
-    let feed = options.into_iter().try_for_each(|(icon, label)| {
-        writeln!(
-            input,
-            "<span font_family='JetBrainsMono Nerd Font'>{icon}</span>  {label}"
-        )
-    });
-    drop(input);
-    let picked = picker.wait_with_output()?;
-    if feed.is_err() || !picked.status.success() {
+    let choices = ["Lock", "Sleep", "Logout", "Shutdown", "Reboot"].map(str::to_owned);
+    let Some(choice) = dialog::choose("Power", &choices)? else {
         return Ok(());
-    }
-    let choice = picked.stdout.trim_ascii_end();
+    };
     match choice {
-        b"0" => return session::run("lock-screen", &[]).await,
-        b"1" => return session::run("suspend-now", &[]).await,
-        b"2" | b"3" | b"4" => {
+        0 => return session::run("lock-screen", &[]).await,
+        1 => return session::run("suspend-now", &[]).await,
+        2..=4 => {
             let _ = caffeine::run("caffeine", &["stop".into()]).await;
         }
         _ => return Ok(()),
     }
     match choice {
-        b"2" => ipc::action(json!({"Quit": {"skip_confirmation": true}})),
-        b"3" => logind_power("PowerOff").await,
+        2 => ipc::action(json!({"Quit": {"skip_confirmation": true}})),
+        3 => logind_power("PowerOff").await,
         _ => logind_power("Reboot").await,
     }
 }
@@ -219,11 +174,19 @@ fn start_tray_applets() -> Result<()> {
     let Some(_launching) = runtime::lock("hype-tray-applets.lock", Duration::ZERO)? else {
         return Ok(());
     };
-    for (name, args) in [
-        ("nm-applet", &["--indicator"][..]),
-        ("blueman-applet", &[][..]),
-        ("warp-taskbar", &[][..]),
+    let config = env::var_os("XDG_CONFIG_HOME")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or(runtime::home()?.join(".config"));
+    let groups = fs::read_to_string(config.join("hype-niri/optional-groups")).unwrap_or_default();
+    for (name, args, group) in [
+        ("nm-applet", &["--indicator"][..], None),
+        ("blueman-applet", &[][..], Some("bluetooth")),
+        ("warp-taskbar", &[][..], Some("warp")),
     ] {
+        if group.is_some_and(|group| !groups.lines().any(|line| line.trim() == group)) {
+            continue;
+        }
         if named_processes(name).next().is_some() {
             continue;
         }
@@ -374,10 +337,17 @@ pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
         "fullscreen-toggle" if args.is_empty() => {
             ipc::action(json!({"FullscreenWindow": {"id": null}}))?;
         }
+        "app-launcher" if args.is_empty() => launcher::run()?,
+        "launch-default" if args.len() == 1 => {
+            launcher::launch_default(&args[0].to_string_lossy()).await?;
+        }
         "menu-toggle" => return menu_toggle(args),
         "password-prompt" => return password_prompt(args),
         "power-menu" if args.is_empty() => power_menu().await?,
         "start-tray-applets" if args.is_empty() => start_tray_applets()?,
+        "stop-waybar" if args.is_empty() => {
+            terminate_named("waybar");
+        }
         "start-waybar" if args.is_empty() => start_waybar(false)?,
         "start-waybar" if args == ["--restart"] => start_waybar(true)?,
         "stealth-indicator" if args.is_empty() => stealth_indicator().await?,

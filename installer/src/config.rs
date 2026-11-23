@@ -17,7 +17,6 @@ const DESKTOP_DIRS: &[&str] = &[
     "niri",
     "waybar",
     "alacritty",
-    "wofi",
     "mako",
     "fastfetch",
     "hypr",
@@ -94,6 +93,7 @@ impl Installer {
         let targets = [
             ".zshrc",
             ".p10k.zsh",
+            ".config/hype-niri",
             ".config/gtk-3.0",
             ".config/gtk-4.0",
             ".config/autostart",
@@ -241,7 +241,43 @@ impl Installer {
                         0o755,
                     )?;
                 }
+                "waybar" => {
+                    let path = staged.join("config.jsonc");
+                    let contents = fs::read_to_string(&path)?;
+                    let mut modules = vec!["\"custom/hotspot\"", "\"tray\""];
+                    if self.selected("warp") {
+                        modules.push("\"custom/warp\"");
+                    }
+                    if self.selected("stealth") {
+                        modules.push("\"image#stealth\"");
+                    }
+                    let default = "\"modules\": [\"custom/hotspot\", \"tray\"]";
+                    if !contents.contains(default) {
+                        return Err(error("Waybar connectivity group template is missing"));
+                    }
+                    write_file(
+                        &path,
+                        contents
+                            .replace(default, &format!("\"modules\": [{}]", modules.join(", ")))
+                            .as_bytes(),
+                        0o644,
+                    )?;
+                }
                 "niri" => {
+                    if self.selected("theme-extras") {
+                        let path = staged.join("config.kdl");
+                        let contents = fs::read_to_string(&path)?;
+                        write_file(
+                            &path,
+                            contents
+                                .replace(
+                                    "xcursor-theme \"Adwaita\"",
+                                    "xcursor-theme \"Bibata-Modern-Ice\"",
+                                )
+                                .as_bytes(),
+                            0o644,
+                        )?;
+                    }
                     let saved = config.join("niri/outputs.kdl");
                     match fs::metadata(&saved) {
                         Ok(metadata) if metadata.is_file() => {
@@ -302,12 +338,29 @@ impl Installer {
                 eprintln!("No wallpaper available to seed current_wallpaper");
             }
         }
-        self.prepare_user_directory(".cache/cliphist")?;
+        self.save_optional_groups()?;
         let autostart = self.prepare_user_directory(".config/autostart")?;
         write_file(
             &autostart.join("blueman.desktop"),
             b"[Desktop Entry]\nType=Application\nHidden=true\n",
             0o644,
+        )?;
+        Ok(())
+    }
+
+    pub fn save_optional_groups(&self) -> Result<()> {
+        let Some(groups) = &self.optional_groups else {
+            return Ok(());
+        };
+        let directory = self.prepare_user_directory(".config/hype-niri")?;
+        let mut contents = groups.join("\n");
+        if !contents.is_empty() {
+            contents.push('\n');
+        }
+        write_file(
+            &directory.join("optional-groups"),
+            contents.as_bytes(),
+            0o600,
         )?;
         Ok(())
     }
@@ -343,6 +396,9 @@ impl Installer {
     }
 
     pub fn setup_lazyvim(&mut self) -> Result<()> {
+        if !self.selected("editor-neovim") {
+            return Ok(());
+        }
         let config = self.user(".config/nvim");
         if fs::read_to_string(config.join("lua/config/lazy.lua"))
             .is_ok_and(|contents| contents.contains("LazyVim/LazyVim"))
@@ -385,9 +441,10 @@ impl Installer {
 
     pub fn setup_shell(&mut self) -> Result<()> {
         let plugin = "fzf-tab/fzf-tab.plugin.zsh";
-        if !self
-            .system(&format!("/usr/share/zsh/plugins/{plugin}"))
-            .is_file()
+        if self.selected("shell-extras")
+            && !self
+                .system(&format!("/usr/share/zsh/plugins/{plugin}"))
+                .is_file()
             && !self.user(&format!(".zsh/{plugin}")).is_file()
         {
             eprintln!("fzf-tab not found. Check the fzf-tab package from pkglist.txt.");
@@ -415,9 +472,16 @@ impl Installer {
     }
 
     pub fn setup_gtk(&mut self) -> Result<()> {
+        let cursor = if self.selected("theme-extras") {
+            "Bibata-Modern-Ice"
+        } else {
+            "Adwaita"
+        };
+        let settings_contents =
+            String::from_utf8_lossy(GTK_SETTINGS).replace("Bibata-Modern-Ice", cursor);
         for dir in [".config/gtk-3.0", ".config/gtk-4.0"] {
             let settings = self.prepare_user_directory(dir)?.join("settings.ini");
-            write_file(&settings, GTK_SETTINGS, 0o644)?;
+            write_file(&settings, settings_contents.as_bytes(), 0o644)?;
         }
         let fonts = self
             .prepare_user_directory(".config/fontconfig/conf.d")?
@@ -428,7 +492,9 @@ impl Installer {
             Some(0o644),
             true,
         )?;
-        if !self.runner.available("papirus-folders") {
+        if !self.selected("theme-extras") {
+            // Core uses the installed Papirus colors.
+        } else if !self.runner.available("papirus-folders") {
             eprintln!(
                 "papirus-folders not found. Install papirus-folders-catppuccin-git to recolor folders."
             );
@@ -454,7 +520,7 @@ impl Installer {
             ("color-scheme", "prefer-dark"),
             ("gtk-theme", "Adwaita-dark"),
             ("icon-theme", "Papirus-Dark"),
-            ("cursor-theme", "Bibata-Modern-Ice"),
+            ("cursor-theme", cursor),
             ("cursor-size", "24"),
             ("font-name", "JetBrains Mono 10"),
             ("monospace-font-name", "JetBrains Mono 10"),
@@ -573,20 +639,22 @@ impl Installer {
                 remove_legacy_link(&transition)?;
             }
         }
-        self.remove_blueman_wrapper()?;
-        if self
-            .command(
-                "gsettings",
-                &["set", "org.blueman.general", "notification-daemon", "false"],
-            )
-            .is_err()
-        {
-            eprintln!(
-                "Could not enable Bluetooth pairing dialogs. Run gsettings set org.blueman.general notification-daemon false."
-            );
+        if self.selected("bluetooth") {
+            self.remove_blueman_wrapper()?;
+            if self
+                .command(
+                    "gsettings",
+                    &["set", "org.blueman.general", "notification-daemon", "false"],
+                )
+                .is_err()
+            {
+                eprintln!(
+                    "Could not enable Bluetooth pairing dialogs. Run gsettings set org.blueman.general notification-daemon false."
+                );
+            }
         }
         if let Err(err) = self.set_default_browser() {
-            eprintln!("Could not set Brave as the default browser: {err}");
+            eprintln!("Could not set the default browser: {err}");
         }
         self.remove_stale_audio_service()?;
         if let Err(err) = self.configure_file_indexing() {
@@ -660,6 +728,13 @@ impl Installer {
     }
 
     fn set_default_browser(&self) -> Result<()> {
+        let browser = if self.selected("browser-brave") {
+            "brave-browser.desktop"
+        } else if self.selected("browser-firefox") {
+            "firefox.desktop"
+        } else {
+            return Ok(());
+        };
         let config = self.prepare_user_directory(".config")?;
         let destination = config.join("mimeapps.list");
         let previous = if metadata(&destination)?.is_some() {
@@ -681,7 +756,7 @@ impl Installer {
             }
             if trimmed.starts_with('[') {
                 if in_defaults && !emitted {
-                    append_brave_defaults(&mut updated);
+                    append_browser_defaults(&mut updated, browser);
                     emitted = true;
                 }
                 in_defaults = trimmed == section;
@@ -704,7 +779,7 @@ impl Installer {
                 updated.push_str(section);
                 updated.push('\n');
             }
-            append_brave_defaults(&mut updated);
+            append_browser_defaults(&mut updated, browser);
         }
         updated.push_str(&blanks);
         write_file(&destination, updated.as_bytes(), 0o644)?;
@@ -1018,10 +1093,12 @@ fn first_wallpaper(directory: &Path) -> io::Result<Option<PathBuf>> {
     Ok(first)
 }
 
-fn append_brave_defaults(destination: &mut String) {
+fn append_browser_defaults(destination: &mut String, browser: &str) {
     for mime in BRAVE_DEFAULTS {
         destination.push_str(mime);
-        destination.push_str("=brave-browser.desktop;\n");
+        destination.push('=');
+        destination.push_str(browser);
+        destination.push_str(";\n");
     }
 }
 

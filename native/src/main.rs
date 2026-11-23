@@ -46,6 +46,9 @@ async fn run(args: &[OsString]) -> Result<i32> {
             | "start-waybar"
             | "stealth-indicator"
             | "warp-indicator"
+            | "app-launcher"
+            | "stop-waybar"
+            | "launch-default"
     ) {
         return helpers::run(command, arguments).await;
     }
@@ -68,9 +71,12 @@ async fn run_desktop(command: &str, arguments: &[String]) -> Result<()> {
         "niri-outputs" | "display-scale" | "monitor-refresh" | "opacity-toggle" => {
             display::run(command, arguments).await
         }
+        "clipboard" => hype_desktop::clipboard::run(arguments).await,
+        "emoji" => hype_desktop::emoji::run(arguments).await,
+        "media" => hype_desktop::media::run(arguments).await,
         "wallpaper" => wallpaper::run(command, arguments).await,
-        "prepare-sleep" | "suspend-now" | "lock-dim" | "copilot-shortcut" | "copilot-display"
-        | "lock" | "lock-screen" => session::run(command, arguments).await,
+        "monitors" | "prepare-sleep" | "suspend-now" | "lock-dim" | "copilot-shortcut"
+        | "copilot-display" | "lock" | "lock-screen" => session::run(command, arguments).await,
         "caffeine" => caffeine::run(command, arguments).await,
         "hotspot" => network::run(command, arguments).await,
         "stealth" => hype_desktop::stealth_client::run(arguments).await,
@@ -85,7 +91,7 @@ async fn run_desktop(command: &str, arguments: &[String]) -> Result<()> {
         }
         "--help" | "help" | "" => {
             println!(
-                "Usage: hype-control <command> [arguments]\nCommands: temperature brightness volume mic power-profile auto-power-profile caffeine display-scale monitor-refresh opacity-toggle hotspot open-drives copilot-shortcut copilot-display prepare-sleep suspend-now lock-dim lock wallpaper runtime-dir stealth fullscreen-toggle menu-toggle password-prompt power-menu start-tray-applets start-waybar stealth-indicator warp-indicator"
+                "Usage: hype-control <command> [arguments]\nCommands: monitors clipboard emoji app-launcher stop-waybar launch-default media temperature brightness volume mic power-profile auto-power-profile caffeine display-scale monitor-refresh opacity-toggle hotspot open-drives copilot-shortcut copilot-display prepare-sleep suspend-now lock-dim lock wallpaper runtime-dir stealth fullscreen-toggle menu-toggle password-prompt power-menu start-tray-applets start-waybar stealth-indicator warp-indicator"
             );
             Ok(())
         }

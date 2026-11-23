@@ -14,24 +14,24 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 
 ## Tech Stack
 
-| Component             | Tool / Link                                                                             |
-| :-------------------- | :-------------------------------------------------------------------------------------- |
-| **Compositor**        | [Niri](https://github.com/YaLTeR/niri)                                                  |
-| **Bar**               | [Waybar](https://github.com/Alexays/Waybar)                                             |
-| **Terminal**          | [Alacritty](https://github.com/alacritty/alacritty)                                     |
-| **Shell**             | [Zsh](https://www.zsh.org/) + [Powerlevel10k](https://github.com/romkatv/powerlevel10k) |
-| **Text Font**         | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)                            |
-| **Waybar Font**       | Roboto with Material Design Icons                                                       |
-| **Launcher**          | [Wofi](https://hg.sr.ht/~scoopta/wofi)                                                  |
-| **Notifications**     | [Mako](https://github.com/emersion/mako)                                                |
-| **Lock Screen**       | [Hyprlock](https://github.com/hyprwm/hyprlock)                                          |
-| **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                                          |
-| **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd)                      |
-| **Wallpaper**         | [Awww](https://codeberg.org/LGFae/awww)                                                 |
-| **Editor**            | [LazyVim](https://www.lazyvim.org/)                                                     |
-| **Recording**         | [OBS Studio](https://obsproject.com/)                                                   |
-| **Login Manager**     | [Ly](https://github.com/fairyglade/ly)                                                  |
-| **Fetch App**         | [Fastfetch](https://github.com/fastfetch-cli/fastfetch)                                 |
+| Component             | Tool / Link                                                        |
+| :-------------------- | :----------------------------------------------------------------- |
+| **Compositor**        | [Niri](https://github.com/YaLTeR/niri)                             |
+| **Bar**               | [Waybar](https://github.com/Alexays/Waybar)                        |
+| **Terminal**          | [Alacritty](https://github.com/alacritty/alacritty)                |
+| **Shell**             | [Zsh](https://www.zsh.org/) (Powerlevel10k optional)               |
+| **Text Font**         | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)       |
+| **Waybar Font**       | Roboto with Material Design Icons                                  |
+| **Launcher**          | Native Rust GTK4 application picker                                |
+| **Notifications**     | [Mako](https://github.com/emersion/mako)                           |
+| **Lock Screen**       | [Hyprlock](https://github.com/hyprwm/hyprlock)                     |
+| **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                     |
+| **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd) |
+| **Wallpaper**         | [Awww](https://codeberg.org/LGFae/awww)                            |
+| **Editor**            | Optional; system default editor                                    |
+| **Recording**         | Optional [OBS Studio](https://obsproject.com/)                     |
+| **Login Manager**     | Existing manager; [Ly](https://github.com/fairyglade/ly) optional  |
+| **Fetch App**         | Optional [Fastfetch](https://github.com/fastfetch-cli/fastfetch)   |
 
 <br/>
 
@@ -43,7 +43,9 @@ For an interactive installation, clone the repository and run the setup script:
 curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
 ```
 
-The one-command installer becomes available when this branch reaches `main`. It downloads source into a temporary directory, builds the GTK-independent Rust installer locally, then runs it with terminal input. Local builds take longer on the first run. If Git, Rust or compilation tools are missing, the bootstrap asks before a full Arch upgrade installs them. Run as your regular user with sudo access and yay already installed. Existing settings are backed up before replacement.
+The one-command installer becomes available when this branch reaches `main`. It downloads source into a temporary directory, builds the GTK-independent Rust installer locally, then runs it with terminal input. Local builds take longer on the first run. If Git, Rust or compilation tools are missing, the bootstrap asks before a full Arch upgrade installs them. Run as your regular user with sudo access. yay is needed only for missing selected AUR packages. Existing settings are backed up before replacement.
+
+The installer defaults to the core desktop. At the optional-group prompt, press Enter to keep that default, or enter group names such as `browser-firefox editor-neovim bluetooth`. Docker, VPNs, Bluetooth, browsers, editors, recording tools, extra themes, compatibility tools and hardware-specific drivers are not installed by default. See [the dependency and service ledger](DEPENDENCIES.md) and [optional-packages.txt](optional-packages.txt). Existing packages are never automatically uninstalled.
 
 To install from a checked-out branch:
 
@@ -68,7 +70,7 @@ git pull
 ./install.sh
 ```
 
-The installer optionally refreshes Arch mirrors, requires a full system upgrade before installing packages, and backs up existing user configurations before replacing them. It uses `pacman` for official repository packages and `yay` for missing AUR packages, retaining installed AUR packages and providers. It checks exact missing AUR package names before installing; a failed lookup stops the package phase. Missing AUR packages require a terminal so you can review provider and conflict choices. Run it as your regular user with sudo access, and install `yay` first with your preferred method.
+The installer optionally refreshes Arch mirrors, requires a full system upgrade before installing packages, and backs up existing user configurations before replacing them. It uses `pacman` for official repository packages and `yay` for missing AUR packages, retaining installed AUR packages and providers. It checks exact missing AUR package names before installing; a failed lookup stops the package phase. Missing AUR packages require a terminal so you can review provider and conflict choices. Run it as your regular user with sudo access. Install `yay` with your preferred method only if selected missing packages require the AUR.
 
 To update only packages without re-running the full script:
 
@@ -79,21 +81,23 @@ yay -Syu --aur
 
 Power profiles switch automatically: Performance on AC, Balanced on battery at 30% or above, and Power Saver below 30%. Manual selections last until the next charger or threshold change. The controller uses D-Bus events and stops at logout; hardware without Performance support uses Balanced.
 
-Docker starts on demand, idle audio devices suspend after five seconds, and file indexing skips dependency/cache directories. Native controls and the remaining startup scripts use locks and atomic writes to prevent duplicate processes and partial configurations.
+Selecting Docker enables socket activation; it is absent from the core install. Idle audio devices suspend after five seconds, and file indexing skips dependency/cache directories. Native controls use locks and atomic writes to prevent duplicate processes and partial configurations.
 
-`Super+Shift+W` opens a wallpaper picker with cached image previews. Niri animations use `ease-out-quad` without overshoot. A new window slides down from its own top edge over 180 ms; closing one (`Super+Q`) slides it back up into that edge over 180 ms, with no opacity change. Other animated Niri transitions run for 180 ms. Maximizing or restoring a column (`Super+F`) and other resizes show the new contents at once instead of crossfading. The same timing covers window movement, view scrolling, workspace switching, overview and compositor dialogs. Niri can only fade the screenshot UI and the recent-windows switcher, so those switch instantly. Three-finger swipes scroll horizontally or switch workspaces vertically; four-finger vertical swipes open and close overview. Gesture motion follows your fingers; the 180 ms timing applies to settling after release. App startup and shutdown delays are separate from animation duration. `Super+A` opens and closes Wofi, and `Esc` also dismisses it, with the same window animations. Search updates every 10 ms; rows use a 180 ms hover transition and one click activates them. The search chevron uses GTK’s symbolic icon renderer. Hyprlock supports only fades, so locking and unlocking fade for 180 ms on a matching quadratic ease-out curve, and the lock screen shows the wallpaper without blur. The lock taken just before sleep stays instant. The power menu (`Super+Shift+Delete`) is a Wofi list, so Niri animates it like the other menus. Wallpaper changes grow from the centre of the screen in 180 ms. Wofi runs as a normal floating window so Niri also animates utility menus, clipboard history, emoji and password prompts. The app launcher keeps the previous 394 × 328 logical-pixel size. Password prompts center text vertically in their compact window. Password prompts and clipboard menus disable Wofi caching. Waybar, Wofi hover effects, and wallpaper transitions use the matching quadratic ease-out curve, `cubic-bezier(0.333333, 0.666667, 0.666667, 1)`, with 180 ms durations. See [Niri animations](https://niri-wm.github.io/niri/Configuration%3A-Animations.html).
+`Super+Shift+W` opens a wallpaper picker with cached image previews. Niri animations use `ease-out-quad` over 180 ms without overshoot. New windows slide down from their top edge; closing windows slide back into that edge without fading. Resizing shows new contents immediately. Gesture motion follows your fingers, with the same settling duration after release. Hyprlock fades over 180 ms; the lock before sleep stays instant. Wallpaper changes grow from the centre over 180 ms. Native GTK pickers open as floating windows under Niri. See [Niri animations](https://niri-wm.github.io/niri/Configuration%3A-Animations.html).
 
 Click the hotspot icon beside the tray to start or stop sharing. Right-click it, or press `Super+Shift+H`, for credentials, **Change password**, and connection settings. Password entry is masked and accepts 8–63 ASCII characters or 64 hexadecimal digits (raw keys support WPA2 only). Changing an active hotspot's password restarts that hotspot; connected devices must reconnect. The first start creates a hotspot named `Hype-Niri` with a random password. It prefers 5 GHz on channel 36, uses 2.4 GHz on adapters without 5 GHz, and retries on 2.4 GHz if 5 GHz activation fails. The saved profile keeps the working band for later starts. Each activation attempt allows 35 seconds for NetworkManager to finish; busy actions show a notification. Security uses WPA2 Personal with RSN, AES/CCMP, and optional protected management frames. Starting an older saved hotspot upgrades these settings without changing its password and restarts it if needed. Starting it may disconnect Wi-Fi on the same adapter. Internet sharing requires an upstream connection, such as Ethernet, USB tethering, or another Wi-Fi adapter. The installer includes `dnsmasq` and configures DHCP/DNS access on hotspot-capable Wi-Fi interfaces when enabling UFW.
 
-The app launcher, clipboard, emoji and power menus use Wofi; display, hotspot, power-profile, wallpaper and drive dialogs use native GTK4. If menus stop opening, run `wofi --version` and check `~/.config/wofi/config` and `~/.config/wofi/style.css`. Keep `normal_window=true` so Niri controls opening and closing animations. Menus stay open when they lose focus; pick an entry or press `Esc` to close them. Menu shortcuts and Waybar menu buttons toggle consistently: the first activation opens a menu, and the next closes it without choosing an action. This covers the launcher (`Super+A`), wallpaper picker (`Super+Shift+W`), hotspot controls (`Super+Shift+H`), display settings (`Super+Shift+D`), clipboard (`Super+V`), emoji (`Super+.`), and power menu (`Super+Shift+Delete`).
+The application launcher, power menu, clipboard history, emoji picker, password prompts, display controls and other utility dialogs use native Rust GTK4. Press Enter to select, Escape to cancel, or activate a menu shortcut again to close it without choosing an action. The launcher discovers visible installed desktop applications through GIO. Browser/editor shortcuts use system defaults; missing optional applications produce a notification.
 
-Cloudflare's native tray client starts with the desktop when installed, showing its cloud status icon. The fallback WARP indicator hides while the native client runs.
+One native clipboard watcher captures supported text and image selections. History is private and bounded to 64 entries, 8 MiB per entry and 32 MiB total. Password-manager hints are excluded. `Super+V` opens history, and `hype-control clipboard clear` clears stored history. Previous cliphist databases remain untouched. Emoji selection types the complete Unicode sequence through Wayland's virtual keyboard protocol. Media keys call MPRIS directly.
+
+Bluetooth and Cloudflare tray applets start only when their corresponding optional groups are selected. The core launches the NetworkManager applet. Optional color-picker support retains its own clipboard tool dependency; see the dependency ledger. WARP and Stealth indicators are added to Waybar only for their selected integrations.
 
 Waybar volume scrolling filters small touchpad movements with a `1.0` smooth-scrolling threshold. Volume and brightness keys use 1% steps (rounded to hardware units for brightness), and brightness ramps between values. Volume changes never queue behind an active change, and notifications do not hold either control's input lock. Brightness stops at 1%; decreasing an already lower value leaves it unchanged.
 
-Installation includes OBS Studio and the [LazyVim starter](https://www.lazyvim.org/installation). Existing LazyVim settings are retained; other Neovim configurations are backed up before replacement. Open `nvim` to download plugins on first launch, then run `:LazyHealth`.
+The `media` group includes OBS Studio; `editor-neovim` installs Neovim and the [LazyVim starter](https://www.lazyvim.org/installation). Existing LazyVim settings are retained; other Neovim configurations are backed up before replacement. Open `nvim` to download plugins on first launch, then run `:LazyHealth`.
 
-Installation configures Blueman to use its [built-in dialogs](https://github.com/blueman-project/blueman/wiki/Integrations#desktop-notifications) for Bluetooth notifications, including pairing PIN codes, passkeys and confirmation buttons. To pair a keyboard, open **Bluetooth Devices** from the tray, put the keyboard in pairing mode, search for it, select it and choose **Pair** (the key button). Type the displayed code on the Bluetooth keyboard and press **Enter**. Devices that request a code instead show an entry dialog; devices that use numeric comparison show confirmation buttons.
+Selecting `bluetooth` configures Blueman to use its [built-in dialogs](https://github.com/blueman-project/blueman/wiki/Integrations#desktop-notifications) for Bluetooth notifications, including pairing PIN codes, passkeys and confirmation buttons. To pair a keyboard, open **Bluetooth Devices** from the tray, put the keyboard in pairing mode, search for it, select it and choose **Pair** (the key button). Type the displayed code on the Bluetooth keyboard and press **Enter**. Devices that request a code instead show an entry dialog; devices that use numeric comparison show confirmation buttons.
 
 The native `hype-control prepare-sleep --watch` process holds a logind sleep delay inhibitor while it confirms the password locker and session lock are ready. Explicit suspend requests abort if that confirmation fails. Lid-close and other external requests remain subject to logind's five-second delay limit.
 
@@ -105,7 +109,7 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 .
 ├── alacritty/       # Fast, GPU-accelerated terminal configuration
 ├── fastfetch/       # System information fetch utility with custom logo
-├── wofi/            # Application launcher styled for Monochrome
+├── wofi/            # Legacy styling retained for custom configurations
 ├── hypr/            # Hypridle + Hyprlock configuration
 ├── mako/            # Notification daemon configuration
 ├── niri/            # Core Niri compositor settings and rules
@@ -113,7 +117,7 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 ├── wallpapers/      # Default curated wallpapers
 ├── native/          # Rust desktop controls and privileged Stealth backend
 ├── notch/           # Rust GTK4 notch companion
-├── scripts/         # Remaining app launchers, menus and indicators
+├── scripts/         # Stylesheet and installed native binary destination
 ├── systemd/         # Automatic power service and OOM protection
 ├── stealth/         # Optional transparent Tor service and installer
 ├── tests/           # Installer, runtime and power-policy regression checks
@@ -122,7 +126,8 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 ├── zsh/             # Shell config, Stealth commands, and Powerlevel10k theme
 ├── install.sh       # Small source-build bootstrap
 ├── installer/       # Native Rust installer, configuration and system setup
-├── pkglist.txt      # Master list of required packages
+├── pkglist.txt      # Core desktop/build package requirements
+├── optional-packages.txt # Explicitly selected extras
 └── *.md             # Documentation files
 ```
 
@@ -134,6 +139,7 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 - **[Zsh Aliases](alias.md)** - Shell aliases
 - **[Stealth Tor Routing](INSTALL.md#stealth-tor-routing)** - Optional Tor routing commands
 - **[Installation Guide](INSTALL.md)** - Detailed setup instructions
+- **[Dependencies and Services](DEPENDENCIES.md)** - Core requirements, optional groups and native replacements
 
 ## Native Desktop Controls
 
@@ -157,7 +163,7 @@ The drawer uses Waybar's translucent black surface, frosted pills and light acti
 
 - A quick search bar. Typing lists matching installed apps; Enter launches the highlighted one, and the last row searches DuckDuckGo in the default browser. Arrow keys move the highlight. `Super+N` focuses the search bar.
 - Current weather and temperature from wttr.in, refreshed every 30 minutes through native HTTPS. The location comes from the public IP address, so WARP or Stealth routing shows the exit location.
-- Volume and brightness sliders. They read the current levels each time the drawer opens and apply changes through the native PipeWire PulseAudio API (capped at 100%) and backlight/logind APIs while you drag. Brightness stops at 1%. A slider hides when its service or device is missing. Waybar keeps the microphone and speaker mute buttons, speaker volume scrolling, and right-click access to `pavucontrol`.
+- Volume and brightness sliders. They read the current levels each time the drawer opens and apply changes through the native PipeWire PulseAudio API (capped at 100%) and backlight/logind APIs while you drag. Brightness stops at 1%. A slider hides when its service or device is missing. Waybar keeps the microphone and speaker mute buttons, speaker volume scrolling, and right-click access to an installed audio mixer (`desktop-tools` includes `pavucontrol`).
 - Live MPRIS music and video titles with previous, play/pause, and next controls. A playing source takes priority over a paused one. While something plays, a small animated wave replaces the music icon in the header and sits beside the track title; it stays still when GTK animations are off.
 - A Pomodoro tab with a 25-minute focus timer and five-minute break. Completion sends a notification; start the next phase when ready. Pausing preserves remaining time. Reset returns to a fresh focus session.
 - A Stopwatch tab with start, pause, and reset. The header shows whichever timer is in use.
@@ -197,6 +203,9 @@ cargo build --workspace --bins --locked
 /usr/bin/python3 tests/test-runtime.py
 /usr/bin/python3 tests/test-native-runtime.py
 /usr/bin/python3 tests/test-warp-indicator.py
+/usr/bin/python3 tests/test-native-media.py
+/usr/bin/python3 tests/test-native-session.py
+/usr/bin/python3 tests/test-native-gui.py
 ./target/debug/hype-notch --check
 ./target/debug/hype-control --check
 ./target/debug/stealth version
@@ -215,6 +224,6 @@ Static checks require ShellCheck, shfmt, Prettier, and Ruff. Shell formatting
 uses the four-space indentation in `.editorconfig`; `ruff.toml` also checks
 import placement.
 
-`install.sh` is the only remaining shell file. Desktop launchers, menus and status indicators run through `hype-control`; the installation phases live in `hype-install`. External applications and vendor tools such as Wofi, pacman, yay and warp-cli remain separate programs. The bootstrap supports `--help`; the Rust installer also exposes named `--phase` operations for the manual steps in [INSTALL.md](INSTALL.md).
+`install.sh` is the only remaining shell file. Desktop launchers, menus and status indicators run through `hype-control`; the installation phases live in `hype-install`. Infrastructure applications and vendor tools such as Hyprlock, pacman, yay and optional warp-cli remain separate programs. Wofi, playerctl, cliphist, wl-clipboard, bemoji and wtype are not default runtime requirements. Headless GUI tests may use test-only Sway and wtype; these are not installed by the core desktop. The bootstrap supports `--help`; the Rust installer also exposes named `--phase` operations for the manual steps in [INSTALL.md](INSTALL.md).
 
 Installation retains four native compatibility symlinks for an already-running Waybar or a custom bar configuration. The temporary power-profile Bash launcher is removed after its replacement user unit has been published and reloaded.

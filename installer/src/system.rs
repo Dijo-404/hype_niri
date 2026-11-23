@@ -12,7 +12,7 @@ use std::{
 };
 
 const SYSTEM_REQUIRED: &[&str] = &["NetworkManager.service", "power-profiles-daemon.service"];
-const SYSTEM_OPTIONAL: &[&str] = &["bluetooth.service", "docker.socket"];
+
 const AUDIO_UNITS: &[&str] = &[
     "pipewire.socket",
     "pipewire-pulse.socket",
@@ -123,7 +123,7 @@ impl Installer {
         println!("System configuration");
         self.configure_pacman()?;
 
-        if self.confirm("Set up ly as display manager?")? {
+        if self.selected("login-manager-ly") && self.confirm("Set up ly as display manager?")? {
             self.setup_ly()?;
         }
 
@@ -154,13 +154,17 @@ impl Installer {
                 ))
             })?;
         }
-        if let Err(cause) = self.enable_unit("bluetooth.service", false, true) {
+        if self.selected("bluetooth")
+            && let Err(cause) = self.enable_unit("bluetooth.service", false, true)
+        {
             eprintln!("Warning: {cause}");
         }
-        if let Err(cause) = self.configure_docker_socket() {
-            eprintln!("Warning: could not configure Docker socket activation: {cause}");
+        if self.selected("docker") {
+            if let Err(cause) = self.configure_docker_socket() {
+                eprintln!("Warning: could not configure Docker socket activation: {cause}");
+            }
+            self.configure_docker_group()?;
         }
-        self.configure_docker_group()?;
 
         if self.succeeded("systemctl", &["--user", "show-environment"]) {
             for unit in AUDIO_UNITS {
@@ -441,6 +445,9 @@ impl Installer {
     }
 
     pub fn setup_firewall(&mut self) -> Result<()> {
+        if !self.selected("firewall") {
+            return Ok(());
+        }
         if !self.runner.available("ufw") {
             println!("ufw is unavailable; firewall setup skipped");
             return Ok(());
@@ -503,6 +510,9 @@ impl Installer {
     }
 
     pub fn setup_cloudflare(&mut self) -> Result<()> {
+        if !self.selected("warp") {
+            return Ok(());
+        }
         if !self.runner.available("warp-cli") {
             println!("warp-cli is unavailable; install cloudflare-warp-bin to use Cloudflare WARP");
             return Ok(());
@@ -628,20 +638,10 @@ impl Installer {
             "hyprlock",
             "hypridle",
             "mako",
-            "wofi",
-            "wl-paste",
-            "cliphist",
             "gnome-keyring-daemon",
             "nm-applet",
             "nmcli",
-            "nvim",
-            "obs",
-            "magick",
             "dnsmasq",
-            "tree-sitter",
-            "blueman-applet",
-            "notify-send",
-            "powerprofilesctl",
             "loginctl",
         ];
         let critical_files = [
@@ -653,12 +653,7 @@ impl Installer {
             ".config/scripts/hype-notch",
             ".config/scripts/hype-control",
             ".config/alacritty/alacritty.toml",
-            ".config/nvim/init.lua",
-            ".config/nvim/lua/config/lazy.lua",
-            ".config/wofi/config",
-            ".config/wofi/style.css",
             ".config/mako/config",
-            ".config/fastfetch/config.jsonc",
             ".config/hypr/hyprlock.conf",
             ".config/hypr/hypridle.conf",
             ".config/gtk-3.0/settings.ini",
@@ -678,14 +673,42 @@ impl Installer {
                 all_ok = false;
             }
         }
-        for program in ["pavucontrol", "playerctl"] {
-            if self.runner.available(program) {
-                println!("Command available: {program}");
-            } else {
-                eprintln!("Warning: optional command missing: {program}");
+        let optional_commands = [
+            ("editor-neovim", "nvim"),
+            ("editor-neovim", "tree-sitter"),
+            ("bluetooth", "blueman-applet"),
+            ("docker", "docker"),
+            ("warp", "warp-cli"),
+            ("browser-firefox", "firefox"),
+            ("browser-brave", "brave"),
+            ("editor-kate", "kate"),
+            ("editor-gnome", "gnome-text-editor"),
+            ("editor-code", "code"),
+            ("chat", "discord"),
+            ("notes", "obsidian"),
+            ("media", "obs"),
+            ("desktop-tools", "pavucontrol"),
+            ("desktop-tools", "hyprpicker"),
+            ("desktop-tools", "htop"),
+            ("firewall", "ufw"),
+        ];
+        for (group, program) in optional_commands {
+            if self.optional_groups.is_some()
+                && self.selected(group)
+                && !self.runner.available(program)
+            {
+                eprintln!("Missing selected {group} command: {program}");
+                all_ok = false;
             }
         }
-
+        if self.optional_groups.is_some() && self.selected("editor-neovim") {
+            for file in [".config/nvim/init.lua", ".config/nvim/lua/config/lazy.lua"] {
+                if !self.user(file).is_file() {
+                    all_ok = false;
+                    eprintln!("Missing {file}");
+                }
+            }
+        }
         const POLKIT_AGENT: &str = "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1";
         if executable(&self.system(POLKIT_AGENT)) {
             println!("Polkit agent executable present");
@@ -728,11 +751,15 @@ impl Installer {
         }
 
         self.validate_fonts();
-        for (unit, required) in SYSTEM_REQUIRED
-            .iter()
-            .map(|unit| (*unit, true))
-            .chain(SYSTEM_OPTIONAL.iter().map(|unit| (*unit, false)))
-        {
+        for (unit, required) in SYSTEM_REQUIRED.iter().map(|unit| (*unit, true)).chain(
+            [
+                ("bluetooth", "bluetooth.service"),
+                ("docker", "docker.socket"),
+            ]
+            .into_iter()
+            .filter(|(group, _)| self.selected(group))
+            .map(|(_, unit)| (unit, self.optional_groups.is_some())),
+        ) {
             all_ok &= self.validate_unit(unit, false, required, true);
         }
         if self.succeeded("systemctl", &["is-enabled", "--quiet", OOMD])
@@ -847,6 +874,9 @@ impl Installer {
     }
 
     pub fn setup_stealth(&mut self) -> Result<()> {
+        if !self.selected("stealth") {
+            return Ok(());
+        }
         if !self.confirm("Install Stealth routing? It stays off until stealth-start and supports NetworkManager Wi-Fi or Ethernet.")? {
             println!("Stealth installation skipped");
             return Ok(());

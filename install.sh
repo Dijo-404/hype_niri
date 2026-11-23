@@ -5,7 +5,7 @@
 hype_bootstrap() {
     set -Eeuo pipefail
     if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-        printf 'Usage: install.sh [installer arguments]\nBuilds locally for Arch Linux. Run as a regular user with sudo and yay.\n'
+        printf 'Usage: install.sh [installer arguments]\nBuilds locally for Arch Linux. Run as a regular user with sudo. yay is needed only for missing AUR packages.\n'
         return 0
     fi
     local temporary="" source_dir="" here="${BASH_SOURCE[0]:-}" build_log="" answer code=0

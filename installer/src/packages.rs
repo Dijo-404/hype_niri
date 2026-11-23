@@ -2,20 +2,44 @@ use crate::{Installer, Result, error};
 use std::{fs, io::Write};
 
 impl Installer {
-    pub fn install_packages(&mut self) -> Result<()> {
-        let contents = fs::read_to_string(self.source.join("pkglist.txt"))?;
-        let mut packages = Vec::new();
-        for line in contents
-            .lines()
-            .map(|line| line.split('#').next().unwrap_or_default())
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        {
-            if line.split_whitespace().count() != 1 || line.starts_with('-') {
-                return Err(error(format!("Invalid package requirement: {line}")));
+    pub fn select_optional_groups(&mut self) -> Result<()> {
+        let groups = optional_groups(&fs::read_to_string(
+            self.source.join("optional-packages.txt"),
+        )?)?;
+        println!("Core desktop is always installed. Optional groups:");
+        for (name, packages) in &groups {
+            println!("  {name}: {}", packages.join(" "));
+        }
+        loop {
+            let answer = self
+                .runner
+                .input("Optional groups (space-separated names; Enter for core only): ")?;
+            match select_groups(&answer, &groups) {
+                Ok(selected) => {
+                    self.optional_groups = Some(selected);
+                    return Ok(());
+                }
+                Err(cause) => eprintln!("{cause}"),
             }
-            if !packages.iter().any(|p| p == line) {
-                packages.push(line.to_owned());
+        }
+    }
+    pub fn install_packages(&mut self) -> Result<()> {
+        if self.optional_groups.is_none() {
+            self.select_optional_groups()?;
+        }
+        let mut packages = package_lines(&fs::read_to_string(self.source.join("pkglist.txt"))?)?;
+        let groups = optional_groups(&fs::read_to_string(
+            self.source.join("optional-packages.txt"),
+        )?)?;
+        for selected in self.optional_groups.as_ref().unwrap() {
+            let (_, requirements) = groups
+                .iter()
+                .find(|(name, _)| name == selected)
+                .ok_or_else(|| error(format!("Unknown optional group: {selected}")))?;
+            for package in requirements {
+                if !packages.contains(package) {
+                    packages.push(package.clone());
+                }
             }
         }
         if packages.is_empty() {
@@ -89,6 +113,78 @@ impl Installer {
     }
 }
 
+fn package_lines(contents: &str) -> Result<Vec<String>> {
+    let mut packages = Vec::new();
+    for line in contents
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|line| !line.is_empty())
+    {
+        if !line
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"@._+-".contains(&byte))
+            || line.starts_with('-')
+        {
+            return Err(error(format!("Invalid package requirement: {line}")));
+        }
+        if !packages.iter().any(|package| package == line) {
+            packages.push(line.to_owned());
+        }
+    }
+    Ok(packages)
+}
+
+type PackageGroups = Vec<(String, Vec<String>)>;
+fn optional_groups(contents: &str) -> Result<PackageGroups> {
+    let mut groups: PackageGroups = Vec::new();
+    for line in contents
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|line| !line.is_empty())
+    {
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+                || groups.iter().any(|(existing, _)| existing == name)
+            {
+                return Err(error(format!(
+                    "Invalid or duplicate optional group: {name}"
+                )));
+            }
+            groups.push((name.into(), Vec::new()));
+        } else {
+            let (_, packages) = groups
+                .last_mut()
+                .ok_or_else(|| error("Optional package requires a group heading"))?;
+            packages.extend(package_lines(line)?);
+        }
+    }
+    if groups.is_empty() {
+        return Err(error("Optional package manifest has no groups"));
+    }
+    Ok(groups)
+}
+fn select_groups(answer: &str, groups: &PackageGroups) -> Result<Vec<String>> {
+    let mut selected = Vec::new();
+    for name in answer.split_whitespace() {
+        if !groups.iter().any(|(group, _)| group == name) {
+            return Err(error(format!("Unknown optional group: {name}")));
+        }
+        if !selected.iter().any(|group| group == name) {
+            selected.push(name.to_owned());
+        }
+    }
+    if selected.contains(&"browser-firefox".into()) && selected.contains(&"browser-brave".into()) {
+        return Err(error("Select one default browser group"));
+    }
+    Ok(selected)
+}
+
 fn package_failure(log: tempfile::NamedTempFile, message: &str) -> Box<dyn std::error::Error> {
     match log.keep() {
         Ok((_, path)) => {
@@ -115,6 +211,8 @@ mod tests {
         metadata_fails: bool,
         install_fails: bool,
         verification_fails: bool,
+        yay_available: bool,
+        answer: String,
     }
     impl Runner for Fake {
         fn output(&self, p: &str, a: &[&str]) -> Result<CommandOutput> {
@@ -143,10 +241,10 @@ mod tests {
             Ok(false)
         }
         fn input(&self, _: &str) -> Result<String> {
-            Ok(String::new())
+            Ok(self.answer.clone())
         }
-        fn available(&self, _: &str) -> bool {
-            true
+        fn available(&self, command: &str) -> bool {
+            command != "yay" || self.yay_available
         }
     }
     fn fixture(
@@ -161,20 +259,124 @@ mod tests {
             " # ignore\nofficial # desktop\nforeign\nprovider\nmissing\nofficial\n",
         )
         .unwrap();
+        std::fs::write(
+            root.path().join("optional-packages.txt"),
+            "[docker]\ndocker\n",
+        )
+        .unwrap();
         let installer = Installer {
             source: root.path().to_owned(),
             home: root.path().join("home"),
             root: root.path().join("system"),
             backup: None,
             build_dir: None,
+            optional_groups: Some(Vec::new()),
             runner: Box::new(Fake {
                 calls: calls.clone(),
                 metadata_fails,
                 install_fails,
                 verification_fails,
+                yay_available: true,
+                answer: String::new(),
             }),
         };
         (root, installer, calls)
+    }
+    #[test]
+    fn selection_defaults_to_core_deduplicates_and_rejects_unknown_groups() {
+        let groups = optional_groups("[docker]\ndocker\n[bluetooth]\nbluez\n").unwrap();
+        assert!(select_groups("", &groups).unwrap().is_empty());
+        assert_eq!(
+            select_groups("docker bluetooth docker", &groups).unwrap(),
+            ["docker", "bluetooth"]
+        );
+        assert!(select_groups("typo", &groups).is_err());
+        for invalid in ["docker", "[a]\na\n[a]\nb", "[bad group]\na", "[a]\n--bad"] {
+            assert!(optional_groups(invalid).is_err(), "{invalid}");
+        }
+    }
+    #[test]
+    fn core_install_does_not_require_yay_or_install_unselected_groups() {
+        let (root, mut installer, calls) = fixture(false, false, false);
+        fs::write(root.path().join("pkglist.txt"), "official\nprovider\n").unwrap();
+        installer.optional_groups = None;
+        installer.runner = Box::new(Fake {
+            calls: calls.clone(),
+            metadata_fails: false,
+            install_fails: false,
+            verification_fails: false,
+            yay_available: false,
+            answer: String::new(),
+        });
+        installer.install_packages().unwrap();
+        assert_eq!(installer.optional_groups, Some(Vec::new()));
+        assert!(
+            !calls
+                .borrow()
+                .iter()
+                .any(|call| call.starts_with("yay ") || call.contains("docker"))
+        );
+    }
+    #[test]
+    fn selected_aur_group_requires_yay_before_repository_installation() {
+        let (root, mut installer, calls) = fixture(false, false, false);
+        fs::write(root.path().join("pkglist.txt"), "official\n").unwrap();
+        fs::write(
+            root.path().join("optional-packages.txt"),
+            "[docker]\nmissing\n",
+        )
+        .unwrap();
+        installer.optional_groups = None;
+        installer.runner = Box::new(Fake {
+            calls: calls.clone(),
+            metadata_fails: false,
+            install_fails: false,
+            verification_fails: false,
+            yay_available: false,
+            answer: "docker".into(),
+        });
+        assert!(
+            installer
+                .install_packages()
+                .unwrap_err()
+                .to_string()
+                .contains("yay is required")
+        );
+        assert!(!calls.borrow().iter().any(|call| call.starts_with("sudo ")));
+    }
+    #[test]
+    fn repository_core_excludes_optional_apps_and_replaced_helpers() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let core = fs::read_to_string(root.join("pkglist.txt")).unwrap();
+        let packages: Vec<_> = core
+            .lines()
+            .map(|line| line.split('#').next().unwrap().trim())
+            .collect();
+        for optional in [
+            "docker",
+            "bluez",
+            "brave-bin",
+            "firefox",
+            "neovim",
+            "vulkan-intel",
+            "wofi",
+            "wl-clipboard",
+            "cliphist",
+            "bemoji",
+            "wtype",
+            "playerctl",
+            "imagemagick",
+            "libnotify",
+            "lm_sensors",
+        ] {
+            assert!(
+                !packages.contains(&optional),
+                "unexpected default: {optional}"
+            );
+        }
+        assert!(root.join("optional-packages.txt").is_file());
     }
     #[test]
     fn retains_foreign_providers_but_upgrades_official_packages() {

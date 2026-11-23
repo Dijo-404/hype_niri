@@ -149,6 +149,19 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
         backup: None,
         runner: Box::new(Rc::clone(&fake)),
         build_dir: None,
+        optional_groups: Some(
+            [
+                "bluetooth",
+                "docker",
+                "warp",
+                "editor-neovim",
+                "browser-brave",
+                "theme-extras",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        ),
     };
     for dir in [
         "scripts",
@@ -170,6 +183,10 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
     }
     for (file, contents) in [
         ("niri/config.kdl", "new Niri configuration"),
+        (
+            "waybar/config.jsonc",
+            "{\"modules\": [\"custom/hotspot\", \"tray\"]}",
+        ),
         (
             "systemd/user/hype-auto-power-profile.service",
             "new service",
@@ -456,7 +473,7 @@ fn user_data_symlinks_stay_linked_without_copying_unrelated_collections() {
         );
     }
     assert!(installer.user("pictures/wallpapers").is_dir());
-    assert!(installer.user(".cache/cliphist").is_dir());
+    assert!(!installer.user(".cache/cliphist").exists());
 }
 
 #[test]
@@ -833,4 +850,113 @@ fn tracker_indexing_preserves_user_exclusions_and_appends_only_missing_entries()
             assert!(writes.is_empty());
         }
     }
+}
+
+#[test]
+fn core_selection_skips_optional_app_setup_and_persists_empty_tray_policy() {
+    let (_temp, mut installer, fake) = fixture(Fake::default());
+    installer.optional_groups = Some(Vec::new());
+    installer.setup_lazyvim().unwrap();
+    installer.setup_desktop_integrations().unwrap();
+    assert!(!installer.user(".config/nvim").exists());
+    assert!(!installer.user(".config/mimeapps.list").exists());
+    assert!(!fake.called(
+        "gsettings",
+        &["set", "org.blueman.general", "notification-daemon", "false"]
+    ));
+    installer.copy_configs().unwrap();
+    assert_eq!(
+        fs::read(installer.user(".config/hype-niri/optional-groups")).unwrap(),
+        b""
+    );
+    let waybar = fs::read_to_string(installer.user(".config/waybar/config.jsonc")).unwrap();
+    assert!(!waybar.contains("warp") && !waybar.contains("stealth"));
+    assert_eq!(
+        installer
+            .user(".config/hype-niri/optional-groups")
+            .metadata()
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    installer.setup_gtk().unwrap();
+    assert!(
+        fs::read_to_string(installer.user(".config/gtk-4.0/settings.ini"))
+            .unwrap()
+            .contains("gtk-cursor-theme-name=Adwaita\n")
+    );
+}
+
+#[test]
+fn selected_firefox_sets_firefox_defaults_and_persists_selected_groups() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    installer.optional_groups = Some(vec!["browser-firefox".into(), "bluetooth".into()]);
+    installer.set_default_browser().unwrap();
+    let defaults = fs::read_to_string(installer.user(".config/mimeapps.list")).unwrap();
+    assert!(defaults.contains("text/html=firefox.desktop;"));
+    assert!(!defaults.contains("brave"));
+    installer.copy_configs().unwrap();
+    assert_eq!(
+        fs::read_to_string(installer.user(".config/hype-niri/optional-groups")).unwrap(),
+        "browser-firefox\nbluetooth\n"
+    );
+}
+
+#[test]
+fn selected_vpn_indicators_are_added_to_the_staged_waybar_group() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    installer.optional_groups = Some(vec!["warp".into(), "stealth".into()]);
+    installer.copy_configs().unwrap();
+    assert!(
+        fs::read_to_string(installer.user(".config/waybar/config.jsonc"))
+            .unwrap()
+            .contains(
+                "\"modules\": [\"custom/hotspot\", \"tray\", \"custom/warp\", \"image#stealth\"]"
+            )
+    );
+}
+
+#[test]
+fn package_phase_selection_can_be_saved_for_later_manual_phases() {
+    let (_temp, mut installer, _fake) = fixture(Fake::default());
+    installer.optional_groups = Some(vec!["bluetooth".into(), "editor-neovim".into()]);
+    installer.save_optional_groups().unwrap();
+    let path = installer.user(".config/hype-niri/optional-groups");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "bluetooth\neditor-neovim\n"
+    );
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    installer.optional_groups = Some(Vec::new());
+    installer.save_optional_groups().unwrap();
+    assert!(fs::read_to_string(path).unwrap().is_empty());
+}
+
+#[test]
+fn optional_cursor_theme_is_applied_only_when_selected() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    fs::write(
+        installer.source.join("niri/config.kdl"),
+        "cursor {\n    xcursor-theme \"Adwaita\"\n}\n",
+    )
+    .unwrap();
+    installer.optional_groups = Some(vec!["theme-extras".into()]);
+    installer.copy_configs().unwrap();
+    assert!(
+        fs::read_to_string(installer.user(".config/niri/config.kdl"))
+            .unwrap()
+            .contains("xcursor-theme \"Bibata-Modern-Ice\"")
+    );
+    installer.optional_groups = Some(Vec::new());
+    installer.copy_configs().unwrap();
+    assert!(
+        fs::read_to_string(installer.user(".config/niri/config.kdl"))
+            .unwrap()
+            .contains("xcursor-theme \"Adwaita\"")
+    );
 }

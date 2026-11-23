@@ -29,7 +29,7 @@
   "custom/launcher": {
     "format": "󰣇",
     "tooltip": false,
-    "on-click": "~/.config/scripts/hype-control menu-toggle wofi --show drun --allow-images --prompt ''"
+    "on-click": "~/.config/scripts/hype-control app-launcher"
   },
 
   "niri/workspaces": {
@@ -111,7 +111,7 @@
 
   "group/connectivity": {
     "orientation": "horizontal",
-    "modules": ["custom/hotspot", "tray", "custom/warp", "image#stealth"]
+    "modules": ["custom/hotspot", "tray"]
   },
   "custom/hotspot": {
     "exec": "~/.config/scripts/hype-control hotspot status",
@@ -150,7 +150,7 @@
     "tooltip": true,
     "tooltip-format": "Volume: {volume}%",
     "on-click": "~/.config/scripts/hype-control volume mute",
-    "on-click-right": "pavucontrol",
+    "on-click-right": "~/.config/scripts/hype-control launch-default audio",
     "on-scroll-up": "~/.config/scripts/hype-control volume up",
     "on-scroll-down": "~/.config/scripts/hype-control volume down"
   },
@@ -181,7 +181,7 @@
     "format": "",
     "tooltip": true,
     "tooltip-format": "Power Menu",
-    "on-click": "~/.config/scripts/hype-control menu-toggle ~/.config/scripts/hype-control power-menu",
-    "on-click-right": "~/.config/scripts/hype-control menu-toggle ~/.config/scripts/hype-control power-menu"
+    "on-click": "~/.config/scripts/hype-control power-menu",
+    "on-click-right": "~/.config/scripts/hype-control power-menu"
   }
 }

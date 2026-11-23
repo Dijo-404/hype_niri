@@ -152,9 +152,16 @@ pub struct Installer {
     pub root: PathBuf,
     pub backup: Option<PathBuf>,
     pub runner: Box<dyn Runner>,
+    /// None means package groups have not been selected yet.
+    pub optional_groups: Option<Vec<String>>,
     pub build_dir: Option<tempfile::TempDir>,
 }
 impl Installer {
+    pub fn selected(&self, group: &str) -> bool {
+        self.optional_groups
+            .as_ref()
+            .is_some_and(|groups| groups.iter().any(|name| name == group))
+    }
     pub fn user(&self, relative: &str) -> PathBuf {
         self.home.join(relative)
     }

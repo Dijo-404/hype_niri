@@ -12,6 +12,10 @@ use std::{
 pub type Phase = fn(&mut Installer) -> Result<()>;
 pub const PHASES: &[(&str, Phase)] = &[
     ("Preflight checks", Installer::preflight),
+    (
+        "Optional package selection",
+        Installer::select_optional_groups,
+    ),
     ("Mirror refresh", Installer::refresh_mirrors),
     ("System upgrade", Installer::update_system_packages),
     ("Package installation", Installer::install_packages),
@@ -87,17 +91,11 @@ impl Installer {
         if !self.runner.available("pacman") {
             return Err(error("This installer requires Arch Linux (pacman)"));
         }
-        if !self.runner.available("yay") {
-            return Err(error(
-                "yay is required; install it with your preferred method and rerun",
-            ));
-        }
         for dir in [
             "niri",
             "waybar",
             "scripts",
             "alacritty",
-            "wofi",
             "mako",
             "fastfetch",
             "hypr",
@@ -113,14 +111,13 @@ impl Installer {
             "Cargo.toml",
             "Cargo.lock",
             "pkglist.txt",
+            "optional-packages.txt",
             "zsh/.zshrc",
             "zsh/.p10k.zsh",
             "niri/config.kdl",
             "niri/opacity.kdl",
             "waybar/config.jsonc",
             "waybar/style.css",
-            "wofi/config",
-            "wofi/style.css",
             "scripts/notch.css",
             "fontconfig/60-hype-niri-fonts.conf",
             "systemd/user/hype-auto-power-profile.service",
@@ -168,6 +165,11 @@ impl Installer {
                     "ipc",
                     "dialog",
                     "notify",
+                    "launcher",
+                    "media",
+                    "clipboard",
+                    "emoji",
+                    "keyboard",
                     "stealth",
                     "stealth_client",
                     "helpers",
@@ -405,6 +407,7 @@ mod tests {
             root: root.path().join("system"),
             backup: None,
             build_dir: None,
+            optional_groups: None,
             runner: Box::new(Fake {
                 yes,
                 calls: calls.clone(),
