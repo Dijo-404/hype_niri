@@ -54,6 +54,18 @@ systemctl() {{ return 1; }}
 gsettings() {{ return 1; }}
 stdbuf() {{ shift 2; "$@"; }}
 xdg-user-dir() {{ printf '%s/\\n' "$INSTALL_TEST_HOME"; }}
+cargo() {{
+    local target=""
+    while (( $# )); do
+        if [[ $1 == --target-dir ]]; then target=$2; shift; fi
+        shift
+    done
+    mkdir -p "$target/release"
+    for binary in hype-notch hype-control stealth; do
+        printf '#!/bin/sh\\nexit 0\\n' > "$target/release/$binary"
+        chmod +x "$target/release/$binary"
+    done
+}}
 xdg-user-dirs-update() {{ printf 'xdg-user-dirs-update %s\\n' "$*" >> "$INSTALL_TEST_LOG"; }}
 """
         result = subprocess.run(
@@ -521,6 +533,90 @@ install_packages
         self.assertIn("sudo reflector", result.stdout)
         self.assertIn("sudo pacman -Syu", result.stdout)
 
+    def test_notch_build_failure_preserves_installed_configs(self):
+        config = self.user_home / ".config/niri"
+        config.mkdir(parents=True)
+        (config / "config.kdl").write_text("working configuration\n")
+        self.run_installer("cargo() { return 1; }; copy_configs", succeeds=False)
+        self.assertEqual((config / "config.kdl").read_text(), "working configuration\n")
+
+    def test_each_native_binary_validation_failure_preserves_configs(self):
+        config = self.user_home / ".config/niri"
+        config.mkdir(parents=True)
+        (config / "config.kdl").write_text("working configuration\n")
+        for binary in ("hype-control", "stealth"):
+            with self.subTest(binary=binary):
+                self.run_installer(
+                    f"""
+cargo() {{
+    local target=""
+    while (( $# )); do
+        if [[ $1 == --target-dir ]]; then target=$2; shift; fi
+        shift
+    done
+    mkdir -p "$target/release"
+    for binary in hype-notch hype-control stealth; do
+        printf '#!/bin/sh\\nexit 0\\n' > "$target/release/$binary"
+        chmod +x "$target/release/$binary"
+    done
+    printf '#!/bin/sh\\nexit 1\\n' > "$target/release/{binary}"
+}}
+copy_configs
+""",
+                    succeeds=False,
+                )
+                self.assertEqual(
+                    (config / "config.kdl").read_text(), "working configuration\n"
+                )
+                self.assertFalse((self.user_home / ".config/scripts").exists())
+
+    def test_notch_install_or_swap_failure_keeps_old_niri(self):
+        for failure in ("install() { return 1; }", "replace_directory() { return 1; }"):
+            with self.subTest(failure=failure):
+                config = self.user_home / ".config/niri"
+                config.mkdir(parents=True, exist_ok=True)
+                (config / "config.kdl").write_text("working configuration\n")
+                self.run_installer(f"{failure}; copy_configs", succeeds=False)
+                self.assertEqual(
+                    (config / "config.kdl").read_text(), "working configuration\n"
+                )
+
+    def test_notch_keeps_legacy_entrypoint_if_niri_copy_fails(self):
+        config = self.user_home / ".config/niri"
+        config.mkdir(parents=True)
+        (config / "config.kdl").write_text("working configuration\n")
+        self.run_installer(
+            'cp() { if [[ $* == */niri/.* ]]; then return 1; fi; command cp "$@"; }; copy_configs',
+            succeeds=False,
+        )
+        self.assertEqual((config / "config.kdl").read_text(), "working configuration\n")
+        legacy = self.user_home / ".config/scripts/notch.sh"
+        self.assertTrue(legacy.is_symlink())
+        self.assertEqual(
+            subprocess.run([str(legacy), "--toggle"], check=False).returncode, 0
+        )
+
+    def test_notch_binary_is_staged_with_scripts(self):
+        fixture = self.root / "configs"
+        for directory in (
+            "niri",
+            "waybar",
+            "scripts",
+            "alacritty",
+            "wofi",
+            "mako",
+            "fastfetch",
+            "hypr",
+        ):
+            (fixture / directory).mkdir(parents=True)
+        (fixture / "scripts/dummy.sh").write_text("#!/bin/bash\nexit 0\n")
+        self.run_installer(f"SCRIPT_DIR={shlex.quote(str(fixture))}; copy_configs")
+        binary = self.user_home / ".config/scripts/hype-notch"
+        self.assertTrue(os.access(binary, os.X_OK))
+        self.assertFalse((binary.parent / "notch.sh").exists())
+        result = subprocess.run([str(binary), "--check"], check=False)
+        self.assertEqual(result.returncode, 0)
+
     def test_wallpaper_selection_handles_large_collection_and_preserves_files(self):
         fixture = self.root / "configs"
         for directory in (
@@ -948,7 +1044,7 @@ setup_stealth
             {
                 "stealth.zsh",
                 "install-stealth.sh",
-                "stealth.sh",
+                "stealth",
                 "stealth.service",
                 "stealth.nft",
                 "stealth.sudoers",

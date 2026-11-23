@@ -6,7 +6,17 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export STEALTH_TEST_ROOT=$TEST_ROOT
 mkdir -p "$TEST_ROOT"/{bin,stage,live/etc/tor/torrc.d,live/etc/sudoers.d,live/etc/systemd/system,live/usr/local/bin,live/var/log,live/run}
-cp "$SOURCE"/{stealth.sh,stealth.nft,stealth.service,stealth.sudoers,torrc.conf} "$TEST_ROOT/stage/"
+cp "$SOURCE"/{stealth.nft,stealth.service,stealth.sudoers,torrc.conf} "$TEST_ROOT/stage/"
+cat >"$TEST_ROOT/backend.c" <<'C'
+#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    const char *version = getenv("MOCK_STEALTH_VERSION");
+    puts(version ? version : "stealth-transparent-v2");
+    return 0;
+}
+C
+"${CC:-cc}" "$TEST_ROOT/backend.c" -o "$TEST_ROOT/stage/stealth"
 sed \
     -e "s|/usr/local/bin/stealth|$TEST_ROOT/live/usr/local/bin/stealth|g" \
     -e "s|/usr/local/bin/privacy-shield.sh|$TEST_ROOT/live/usr/local/bin/privacy-shield.sh|g" \
@@ -84,6 +94,8 @@ done
 run_install() {
     unshare -Urn env PATH="$TEST_ROOT/bin:$PATH" STEALTH_TEST_ROOT="$TEST_ROOT" \
         MOCK_TOR_FAIL_AT="${MOCK_TOR_FAIL_AT:-0}" MOCK_VISUDO_FAIL="${MOCK_VISUDO_FAIL:-0}" \
+        MOCK_STEALTH_VERSION="${MOCK_STEALTH_VERSION:-stealth-transparent-v2}" \
+        STEALTH_BINARY="${STEALTH_BINARY:-$TEST_ROOT/stage/stealth}" \
         bash "$TEST_ROOT/stage/install-stealth.sh"
 }
 
@@ -129,6 +141,26 @@ flock -n "$TEST_ROOT/live/run/stealth.lock" true
 flock -u 8
 exec 8>&-
 
+if STEALTH_BINARY="$TEST_ROOT/missing" run_install >"$TEST_ROOT/missing-binary.out" 2>&1; then
+    printf 'Expected installer to reject a missing native binary.\n' >&2
+    exit 1
+fi
+rg -Fq 'Missing prebuilt native Stealth binary:' "$TEST_ROOT/missing-binary.out"
+printf '#!/usr/bin/env bash\necho stealth-transparent-v2\n' >"$TEST_ROOT/shell-backend"
+chmod +x "$TEST_ROOT/shell-backend"
+if STEALTH_BINARY="$TEST_ROOT/shell-backend" run_install >"$TEST_ROOT/shell-binary.out" 2>&1; then
+    printf 'Expected installer to reject a shell backend.\n' >&2
+    exit 1
+fi
+rg -Fq 'prebuilt native ELF executable' "$TEST_ROOT/shell-binary.out"
+if MOCK_STEALTH_VERSION=wrong-version run_install >"$TEST_ROOT/version-binary.out" 2>&1; then
+    printf 'Expected installer to reject an incompatible native binary.\n' >&2
+    exit 1
+fi
+rg -Fq 'unsupported version or cannot run' "$TEST_ROOT/version-binary.out"
+assert_legacy_restored
+[[ ! -e $TEST_ROOT/mock_calls && ! -e $TEST_ROOT/live/var/backups ]]
+
 MOCK_TOR_FAIL_AT=3
 export MOCK_TOR_FAIL_AT
 if run_install >"$TEST_ROOT/failed-install.out" 2>&1; then
@@ -147,7 +179,8 @@ assert_legacy_restored
 rm "$TEST_ROOT/tor_count"
 
 run_install >"$TEST_ROOT/successful-install.out" 2>&1
-rg -q 'stealth-transparent-v2' "$TEST_ROOT/live/usr/local/bin/stealth"
+cmp "$TEST_ROOT/stage/stealth" "$TEST_ROOT/live/usr/local/bin/stealth"
+[[ $("$TEST_ROOT/live/usr/local/bin/stealth" version) == stealth-transparent-v2 ]]
 [[ -f $TEST_ROOT/live/etc/systemd/system/stealth.service ]]
 [[ -f $TEST_ROOT/live/etc/stealth.nft ]]
 [[ -f $TEST_ROOT/live/etc/tor/torrc.d/stealth.conf ]]
@@ -170,4 +203,18 @@ run_install >"$TEST_ROOT/reinstall.out"
 [[ $(rg -c '^%include ' "$TEST_ROOT/live/etc/tor/torrc") == 1 ]]
 [[ $(stat -c '%a' "$TEST_ROOT/live/var/log/stealth.log") == 600 ]]
 
-printf 'PASS: concurrency lock, migration, rollback after legacy cleanup or sudoers failure, backups, Tor include, sudoers drop-in, log permissions, and reinstall\n'
+alias_home="$TEST_ROOT/home with spaces"
+mkdir -p "$alias_home/.config/scripts"
+cat >"$alias_home/.config/scripts/hype-control" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STEALTH_TEST_ROOT/alias-calls"
+MOCK
+chmod +x "$alias_home/.config/scripts/hype-control"
+# Expand positional arguments inside the isolated Zsh process.
+# shellcheck disable=SC2016
+env HOME="$alias_home" PATH="$TEST_ROOT/bin:/usr/bin" \
+    zsh -f -c 'source "$1"; eval "stealth-start; stealth-status; stealth-stop"' \
+    zsh "$SOURCE/../zsh/stealth.zsh"
+[[ $(cat "$TEST_ROOT/alias-calls") == $'stealth start\nstealth status\nstealth stop' ]]
+
+printf 'PASS: native ELF/version validation, concurrency lock, migration, rollback, backups, Tor include, sudoers drop-in, log permissions, reinstall, and aliases with spaced HOME\n'

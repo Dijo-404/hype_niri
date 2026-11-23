@@ -19,7 +19,7 @@ INSTALL_PHASES=(
 )
 PHASE_TOTAL=$((${#INSTALL_PHASES[@]} + 1))
 PHASE_CURRENT=0
-DESKTOP_CONFIG_DIRS=(niri waybar scripts alacritty wofi mako fastfetch hypr)
+DESKTOP_CONFIG_DIRS=(scripts niri waybar alacritty wofi mako fastfetch hypr)
 XDG_USER_DIRS=(
     DESKTOP:desktop DOWNLOAD:downloads TEMPLATES:templates PUBLICSHARE:public
     DOCUMENTS:documents MUSIC:music PICTURES:pictures VIDEOS:videos PROJECTS:projects
@@ -345,9 +345,14 @@ preflight() {
         waybar/icons/16x16/panel/nm-signal-75.svg
         waybar/icons/16x16/panel/nm-signal-100.svg
         waybar/icons/16x16/panel/nm-no-connection.svg
-        scripts/copilot-display.sh scripts/copilot-shortcut.sh scripts/display-scale.sh scripts/niri-outputs.sh scripts/runtime-dir.sh scripts/auto-power-profile.sh
-        scripts/power-menu.sh scripts/hotspot.sh scripts/password-prompt.sh scripts/menu-toggle.sh
-        scripts/notch.sh scripts/notch.c scripts/notch.css
+        scripts/power-menu.sh scripts/password-prompt.sh scripts/menu-toggle.sh
+        native/Cargo.toml native/src/lib.rs native/src/main.rs native/src/runtime.rs
+        native/src/controls.rs native/src/temperature.rs native/src/display.rs native/src/wallpaper.rs
+        native/src/session.rs native/src/caffeine.rs native/src/network.rs native/src/drives.rs
+        native/src/bus.rs native/src/ipc.rs native/src/dialog.rs native/src/notify.rs
+        native/src/stealth.rs native/src/stealth_client.rs native/src/bin/stealth.rs
+        Cargo.toml Cargo.lock notch/main.rs notch/controller.rs notch/model.rs
+        notch/services.rs notch/surface.rs notch/morph.rs notch/ui.rs scripts/notch.css
         systemd/user/hype-auto-power-profile.service
         wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf
         systemd/setup-oomd.sh systemd/user@.service.d/60-hype-niri-oomd.conf
@@ -601,9 +606,30 @@ setup_user_dirs() {
     fi
 }
 
+build_notch() {
+    print_step "Building native Rust desktop programs"
+    local build_dir
+    build_dir="$(mktemp -d "${TMPDIR:-/tmp}/hype-notch-build.XXXXXX")" || return 1
+    _tmp_resources+=("$build_dir")
+    if ! cargo build --workspace --bins --release --locked --manifest-path "$SCRIPT_DIR/Cargo.toml" --target-dir "$build_dir"; then
+        print_error "Could not build native desktop programs; existing configuration was retained. Install rust, gtk4, gtk4-layer-shell and libpulse."
+        return 1
+    fi
+    NOTCH_BINARY="$build_dir/release/hype-notch"
+    CONTROL_BINARY="$build_dir/release/hype-control"
+    STEALTH_BINARY="$build_dir/release/stealth"
+    if [ ! -x "$NOTCH_BINARY" ] || ! "$NOTCH_BINARY" --check ||
+        [ ! -x "$CONTROL_BINARY" ] || ! "$CONTROL_BINARY" --check ||
+        [ ! -x "$STEALTH_BINARY" ] || ! "$STEALTH_BINARY" version; then
+        print_error "Built desktop programs failed validation; existing configuration was retained."
+        return 1
+    fi
+}
+
 copy_configs() {
     print_header "Copying Configurations" "niri, waybar, terminal, theming and dotfiles"
 
+    build_notch || return 1
     prepare_generated_config_dir "$HOME/.config" || return 1
 
     local config tmp
@@ -617,6 +643,20 @@ copy_configs() {
             print_error "Could not copy $config; its existing configuration was retained."
             return 1
         fi
+        if [ "$config" = scripts ]; then
+            install -m 755 -- "$NOTCH_BINARY" "$tmp/hype-notch" || return 1
+            install -m 755 -- "$CONTROL_BINARY" "$tmp/hype-control" || return 1
+            local legacy
+            for legacy in temperature-control brightness-control volume-control mic-control power-profile caffeine-control display-scale monitor-refresh opacity-toggle hotspot open-drives copilot-shortcut copilot-display prepare-sleep suspend-now lock-dim wallpaper lock lock-screen; do
+                ln -s -- hype-control "$tmp/$legacy.sh" || return 1
+            done
+            # Expand the installed path only when the transitional launcher runs.
+            # shellcheck disable=SC2016
+            printf '#!/usr/bin/env bash\nexec "${BASH_SOURCE[0]%%/*}/hype-control" auto-power-profile "$@"\n' >"$tmp/auto-power-profile.sh"
+            chmod 755 "$tmp/auto-power-profile.sh"
+            # Keep the previous Niri binding usable until its configuration is replaced.
+            ln -s -- hype-notch "$tmp/notch.sh" || return 1
+        fi
         if [ "$config" = niri ] && [ -f "$HOME/.config/niri/outputs.kdl" ]; then
             if ! cp -p -- "$HOME/.config/niri/outputs.kdl" "$tmp/outputs.kdl"; then
                 print_error "Could not keep saved monitor settings; niri configuration was retained."
@@ -624,17 +664,24 @@ copy_configs() {
             fi
         fi
         replace_directory "$tmp" "$HOME/.config/$config" || return 1
+        if [ "$config" = niri ] && [ -L "$HOME/.config/scripts/notch.sh" ]; then
+            rm -- "$HOME/.config/scripts/notch.sh" || return 1
+        fi
         print_done "Copied $config -> ~/.config/$config"
     done
 
+    local legacy
+    for legacy in temperature-control brightness-control volume-control mic-control power-profile caffeine-control display-scale monitor-refresh opacity-toggle hotspot open-drives copilot-shortcut copilot-display prepare-sleep suspend-now lock-dim wallpaper lock lock-screen; do
+        if [ -L "$HOME/.config/scripts/$legacy.sh" ]; then rm -- "$HOME/.config/scripts/$legacy.sh" || return 1; fi
+    done
     if ! chmod +x "$HOME/.config/scripts/"*.sh; then
         print_error "Could not make desktop scripts executable"
         return 1
     fi
     print_done "Made scripts executable"
 
-    if [ -x "$HOME/.config/scripts/display-scale.sh" ]; then
-        "$HOME/.config/scripts/display-scale.sh" --no-reload >/dev/null 2>&1 || true
+    if [ -x "$HOME/.config/scripts/hype-control" ]; then
+        "$HOME/.config/scripts/hype-control" display-scale --no-reload >/dev/null 2>&1 || true
     fi
     if [ -d "$HOME/.config/niri" ] && [ ! -e "$HOME/.config/niri/outputs.kdl" ]; then
         : >"$HOME/.config/niri/outputs.kdl"
@@ -960,6 +1007,7 @@ setup_desktop_integrations() {
     _tmp_resources+=("$tmp")
     ln -sfT -- ../hype-auto-power-profile.service "$tmp"
     mv -fT -- "$tmp" "$destination"
+    rm -f -- "$HOME/.config/scripts/auto-power-profile.sh"
     remove_blueman_wrapper
     if gsettings set org.blueman.general notification-daemon false 2>/dev/null; then
         print_done "Enabled Bluetooth pairing dialogs for PIN codes and confirmation"
@@ -1369,7 +1417,7 @@ setup_stealth() {
     fi
 
     print_step "Installing Stealth packages..."
-    sudo pacman -S --needed --noconfirm tor nftables iproute2 curl || return 1
+    sudo pacman -S --needed --noconfirm tor nftables polkit || return 1
 
     local staging_dir destination
     destination="$HOME/.local/share/stealth"
@@ -1377,9 +1425,11 @@ setup_stealth() {
     staging_dir=$(mktemp -d "$HOME/.local/share/.stealth.XXXXXXXX") || return 1
     _tmp_resources+=("$staging_dir")
     cp "$SCRIPT_DIR/zsh/stealth.zsh" "$staging_dir/stealth.zsh" || return 1
-    cp "$SCRIPT_DIR/stealth/"{install-stealth.sh,stealth.sh,stealth.service,stealth.nft,stealth.sudoers,torrc.conf} \
+    cp "$SCRIPT_DIR/stealth/"{install-stealth.sh,stealth.service,stealth.nft,stealth.sudoers,torrc.conf} \
         "$staging_dir/" || return 1
 
+    [ -x "${STEALTH_BINARY:-}" ] || build_notch || return 1
+    install -m 755 -- "$STEALTH_BINARY" "$staging_dir/stealth" || return 1
     if ! sudo bash "$staging_dir/install-stealth.sh"; then
         print_error "Stealth installation failed; previous user commands were retained"
         return 1
@@ -1403,7 +1453,6 @@ validate() {
         "waybar"
         "hyprlock"
         "hypridle"
-        "swayidle"
         "mako"
         "wofi"
         "wl-paste"
@@ -1418,7 +1467,6 @@ validate() {
         "tree-sitter"
         "blueman-applet"
         "notify-send"
-        "brightnessctl"
         "powerprofilesctl"
         "loginctl"
     )
@@ -1469,35 +1517,13 @@ validate() {
         "$HOME/.config/niri/outputs.kdl"
         "$HOME/.config/waybar/config.jsonc"
         "$HOME/.config/waybar/style.css"
-        "$HOME/.config/scripts/brightness-control.sh"
-        "$HOME/.config/scripts/caffeine-control.sh"
-        "$HOME/.config/scripts/copilot-display.sh"
-        "$HOME/.config/scripts/copilot-shortcut.sh"
-        "$HOME/.config/scripts/display-scale.sh"
-        "$HOME/.config/scripts/niri-outputs.sh"
         "$HOME/.config/scripts/fullscreen-toggle.sh"
-        "$HOME/.config/scripts/hotspot.sh"
-        "$HOME/.config/scripts/lock-screen.sh"
-        "$HOME/.config/scripts/lock.sh"
-        "$HOME/.config/scripts/mic-control.sh"
         "$HOME/.config/scripts/menu-toggle.sh"
-        "$HOME/.config/scripts/notch.sh"
-        "$HOME/.config/scripts/notch.c"
-        "$HOME/.config/scripts/notch.css"
-        "$HOME/.config/scripts/monitor-refresh.sh"
-        "$HOME/.config/scripts/open-drives.sh"
-        "$HOME/.config/scripts/opacity-toggle.sh"
+        "$HOME/.config/scripts/hype-notch"
+        "$HOME/.config/scripts/hype-control"
         "$HOME/.config/scripts/power-menu.sh"
-        "$HOME/.config/scripts/power-profile.sh"
-        "$HOME/.config/scripts/auto-power-profile.sh"
-        "$HOME/.config/scripts/runtime-dir.sh"
-        "$HOME/.config/scripts/prepare-sleep.sh"
         "$HOME/.config/scripts/start-tray-applets.sh"
         "$HOME/.config/scripts/start-waybar.sh"
-        "$HOME/.config/scripts/suspend-now.sh"
-        "$HOME/.config/scripts/temperature-control.sh"
-        "$HOME/.config/scripts/volume-control.sh"
-        "$HOME/.config/scripts/wallpaper.sh"
         "$HOME/.config/alacritty/alacritty.toml"
         "$HOME/.config/nvim/init.lua"
         "$HOME/.config/nvim/lua/config/lazy.lua"
@@ -1525,10 +1551,10 @@ validate() {
         fi
     done
 
-    if "$HOME/.config/scripts/notch.sh" --check; then
+    if "$HOME/.config/scripts/hype-notch" --check; then
         print_done "Notch runtime and style available"
     else
-        print_error "Notch requires base-devel, gtk-layer-shell, playerctl, wayland-protocols and its source/style files"
+        print_error "Notch requires its compiled Rust executable, gtk4, gtk4-layer-shell and libpulse"
         all_ok=false
     fi
 
@@ -1747,7 +1773,15 @@ main() {
         print_error "Run ./install.sh as your regular user; it uses sudo when required."
         return 1
     fi
-    source "$SCRIPT_DIR/scripts/runtime-dir.sh"
+    umask 077
+    RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}"
+    if [ ! -d "$RUNTIME_DIR" ] || [ ! -w "$RUNTIME_DIR" ] || [ ! -O "$RUNTIME_DIR" ] || [ -L "$RUNTIME_DIR" ]; then
+        RUNTIME_DIR="/tmp/hype-niri-$UID"
+        [ ! -L "$RUNTIME_DIR" ] || return 1
+        mkdir -m 700 -- "$RUNTIME_DIR" 2>/dev/null || [ -d "$RUNTIME_DIR" ] || return 1
+        [ -d "$RUNTIME_DIR" ] && [ -O "$RUNTIME_DIR" ] && [ ! -L "$RUNTIME_DIR" ] || return 1
+        chmod 700 -- "$RUNTIME_DIR" || return 1
+    fi
     exec 8>"$RUNTIME_DIR/hype-niri-install.lock"
     if ! flock -n 8; then
         print_error "Another Hype Niri installation is already running"

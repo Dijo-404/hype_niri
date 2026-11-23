@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 
 stop_caffeine() {
-    "$SCRIPT_DIR/caffeine-control.sh" stop >/dev/null 2>&1 || true
+    "$SCRIPT_DIR/hype-control" caffeine stop >/dev/null 2>&1 || true
 }
 
 choice="$(printf "<span font_family='JetBrainsMono Nerd Font'>%s</span>  %s\n" \
@@ -15,8 +15,8 @@ choice="$(printf "<span font_family='JetBrainsMono Nerd Font'>%s</span>  %s\n" \
         --define dmenu-print_line_num=true -p 'Power')" || exit 0
 
 case "$choice" in
-    0) exec "$SCRIPT_DIR/lock-screen.sh" ;;
-    1) exec "$SCRIPT_DIR/suspend-now.sh" ;;
+    0) exec "$SCRIPT_DIR/hype-control" lock-screen ;;
+    1) exec "$SCRIPT_DIR/hype-control" suspend-now ;;
     2)
         stop_caffeine
         exec niri msg action quit --skip-confirmation

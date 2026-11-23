@@ -12,3 +12,5 @@ plans/
 
 niri/outputs.kdl
 __pycache__/
+
+target/

@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
+umask 077
+RUNTIME_DIR="$("${BASH_SOURCE[0]%/*}/hype-control" runtime-dir)" || exit 1
 exec 8>"$RUNTIME_DIR/hype-menu-toggle.lock"
 flock -x 8
 

@@ -213,8 +213,13 @@ window-rule {
     default-window-height { fixed 680; }
 }
 
+window-rule {
+    match app-id="^dev[.]hype_niri[.]Control$"
+    open-floating true
+}
+
 spawn-sh-at-startup "~/.config/scripts/start-waybar.sh"
-spawn-sh-at-startup "~/.config/scripts/notch.sh"
+spawn-at-startup "~/.config/scripts/hype-notch"
 spawn-sh-at-startup "if command -v hype-flow >/dev/null 2>&1; then hype-flow --background; fi"
 
 spawn-sh-at-startup "~/.config/scripts/start-tray-applets.sh"
@@ -222,11 +227,11 @@ spawn-at-startup "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"
 spawn-at-startup "mako"
 spawn-at-startup "alacritty"
 
-spawn-sh-at-startup "~/.config/scripts/wallpaper.sh init"
-spawn-sh-at-startup "~/.config/scripts/display-scale.sh"
+spawn-at-startup "~/.config/scripts/hype-control" "wallpaper" "init"
+spawn-at-startup "~/.config/scripts/hype-control" "display-scale"
 
 spawn-sh-at-startup "dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_ID NIRI_SOCKET; systemctl --user restart hypridle.service || hypridle"
-spawn-sh-at-startup "~/.config/scripts/prepare-sleep.sh --watch"
+spawn-at-startup "~/.config/scripts/hype-control" "prepare-sleep" "--watch"
 
 spawn-sh-at-startup "wl-paste --type text --watch cliphist store"
 spawn-sh-at-startup "wl-paste --type image --watch cliphist store"
@@ -240,11 +245,11 @@ binds {
     Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh"; }
 
     Mod+W { toggle-column-tabbed-display; }
-    Mod+Shift+S repeat=false hotkey-overlay-title="Toggle Window Opacity" { spawn-sh "~/.config/scripts/opacity-toggle.sh"; }
+    Mod+Shift+S repeat=false hotkey-overlay-title="Toggle Window Opacity" { spawn "~/.config/scripts/hype-control" "opacity-toggle"; }
     Mod+Shift+F { spawn-sh "~/.config/scripts/fullscreen-toggle.sh"; }
     Mod+F { maximize-column; }
     Mod+O repeat=false { toggle-overview; }
-    Mod+L { spawn-sh "~/.config/scripts/lock-dim.sh"; }
+    Mod+L { spawn "~/.config/scripts/hype-control" "lock-dim"; }
 
     Mod+Space { toggle-window-floating; }
     Mod+Shift+Space { switch-focus-between-floating-and-tiling; }
@@ -271,18 +276,18 @@ binds {
 
     Mod+T hotkey-overlay-title="Terminal: alacritty" { spawn "alacritty"; }
     Mod+E { spawn "nautilus" "-w"; }
-    Mod+Shift+D repeat=false hotkey-overlay-title="Display Refresh Rate" { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/monitor-refresh.sh"; }
-    Mod+U { spawn-sh "~/.config/scripts/open-drives.sh"; }
+    Mod+Shift+D repeat=false hotkey-overlay-title="Display Refresh Rate" { spawn "~/.config/scripts/hype-control" "monitor-refresh"; }
+    Mod+U { spawn "~/.config/scripts/hype-control" "open-drives"; }
     Mod+C { spawn-sh "alacritty -e nvim"; }
-    Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
-    Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
-    Mod+F23 repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
-    Mod+XF86Assistant repeat=false allow-when-locked=true { spawn-sh "~/.config/scripts/copilot-shortcut.sh"; }
+    Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    Mod+F23 repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    Mod+XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
     Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images"; }
-    Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn-sh "~/.config/scripts/notch.sh --toggle"; }
+    Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn "~/.config/scripts/hype-notch" "--toggle"; }
     Mod+Ctrl+Space repeat=false hotkey-overlay-title="Dictate offline" { spawn "hype-flow" "--toggle"; }
     Mod+Ctrl+Escape repeat=false hotkey-overlay-title="Cancel dictation" { spawn "hype-flow" "--cancel"; }
     Mod+Tab { toggle-overview; }
@@ -298,31 +303,31 @@ binds {
     Mod+BracketRight { consume-or-expel-window-right; }
     Mod+Comma { consume-window-into-column; }
 
-    F10 allow-when-locked=true { spawn-sh "~/.config/scripts/volume-control.sh mute"; }
-    XF86AudioMute allow-when-locked=true { spawn-sh "~/.config/scripts/volume-control.sh mute"; }
-    F11 allow-when-locked=true { spawn-sh "~/.config/scripts/volume-control.sh down"; }
-    F12 allow-when-locked=true { spawn-sh "~/.config/scripts/volume-control.sh up"; }
-    XF86AudioMicMute allow-when-locked=true { spawn-sh "~/.config/scripts/mic-control.sh mute"; }
-    XF86AudioLowerVolume allow-when-locked=true { spawn-sh "~/.config/scripts/volume-control.sh down"; }
-    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "~/.config/scripts/volume-control.sh up"; }
+    F10 allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "mute"; }
+    XF86AudioMute allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "mute"; }
+    F11 allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "down"; }
+    F12 allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "up"; }
+    XF86AudioMicMute allow-when-locked=true { spawn "~/.config/scripts/hype-control" "mic" "mute"; }
+    XF86AudioLowerVolume allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "down"; }
+    XF86AudioRaiseVolume allow-when-locked=true { spawn "~/.config/scripts/hype-control" "volume" "up"; }
 
     XF86AudioPlay allow-when-locked=true { spawn-sh "playerctl play-pause"; }
     XF86AudioPause allow-when-locked=true { spawn-sh "playerctl play-pause"; }
     XF86AudioNext allow-when-locked=true { spawn-sh "playerctl next"; }
     XF86AudioPrev allow-when-locked=true { spawn-sh "playerctl previous"; }
 
-    XF86MonBrightnessUp allow-when-locked=true { spawn-sh "~/.config/scripts/brightness-control.sh up"; }
-    XF86MonBrightnessDown allow-when-locked=true { spawn-sh "~/.config/scripts/brightness-control.sh down"; }
+    XF86MonBrightnessUp allow-when-locked=true { spawn "~/.config/scripts/hype-control" "brightness" "up"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn "~/.config/scripts/hype-control" "brightness" "down"; }
 
     Print { screenshot; }
     Ctrl+Print { screenshot-screen; }
     Alt+Print { screenshot-window; }
     Mod+Shift+P { spawn-sh "hyprpicker -a"; }
 
-    Mod+Alt+Right { spawn-sh "~/.config/scripts/wallpaper.sh random"; }
-    Mod+Alt+Left { spawn-sh "~/.config/scripts/wallpaper.sh random"; }
-    Mod+Shift+W repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/wallpaper.sh select"; }
-    Mod+Shift+H repeat=false hotkey-overlay-title="Hotspot controls" { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/hotspot.sh menu"; }
+    Mod+Alt+Right { spawn "~/.config/scripts/hype-control" "wallpaper" "random"; }
+    Mod+Alt+Left { spawn "~/.config/scripts/hype-control" "wallpaper" "random"; }
+    Mod+Shift+W repeat=false { spawn "~/.config/scripts/hype-control" "wallpaper" "select"; }
+    Mod+Shift+H repeat=false hotkey-overlay-title="Hotspot controls" { spawn "~/.config/scripts/hype-control" "hotspot" "menu"; }
 
     Mod+Alt+Up { spawn-sh "pkill waybar; ~/.config/scripts/start-waybar.sh"; }
     Mod+Alt+Down { spawn-sh "pkill waybar"; }
@@ -363,7 +368,7 @@ binds {
     Mod+Shift+Alt+Right { move-column-to-monitor-right; }
 
     Mod+Escape allow-inhibiting=false { toggle-keyboard-shortcuts-inhibit; }
-    XF86PowerOff allow-when-locked=true { spawn-sh "~/.config/scripts/suspend-now.sh"; }
-    XF86Sleep allow-when-locked=true { spawn-sh "~/.config/scripts/suspend-now.sh"; }
-    XF86Suspend allow-when-locked=true { spawn-sh "~/.config/scripts/suspend-now.sh"; }
+    XF86PowerOff allow-when-locked=true { spawn "~/.config/scripts/hype-control" "suspend-now"; }
+    XF86Sleep allow-when-locked=true { spawn "~/.config/scripts/hype-control" "suspend-now"; }
+    XF86Suspend allow-when-locked=true { spawn "~/.config/scripts/hype-control" "suspend-now"; }
 }

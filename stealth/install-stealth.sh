@@ -7,6 +7,7 @@ umask 077
     exit 1
 }
 SOURCE=$(dirname "$(readlink -f "$0")")
+STEALTH_BINARY=${STEALTH_BINARY:-$SOURCE/stealth}
 SCRIPT=/usr/local/bin/stealth
 UNIT=/etc/systemd/system/stealth.service
 RULES=/etc/stealth.nft
@@ -24,7 +25,7 @@ OLD_INCLUDE_LINE='%include /etc/tor/torrc.d/privacy-shield.conf'
 OLD_LOG=/var/log/privacy-shield.log
 OLD_LOCK=/run/privacy-shield.lock
 
-for command in nft tor systemd-analyze systemctl visudo ip nmcli ss curl jq flock uuidgen od; do
+for command in nft tor systemd-analyze systemctl visudo flock pkexec; do
     command -v "$command" >/dev/null || {
         printf 'Missing command: %s\n' "$command" >&2
         exit 1
@@ -41,6 +42,20 @@ if [[ -e $OLD_LOCK ]]; then
         printf 'The previous backend is changing state; retry after it finishes.\n' >&2
         exit 1
     }
+fi
+
+if [[ ! -f $STEALTH_BINARY || ! -x $STEALTH_BINARY ]]; then
+    printf 'Missing prebuilt native Stealth binary: %s\n' "$STEALTH_BINARY" >&2
+    exit 1
+fi
+IFS= read -r -N 4 binary_magic <"$STEALTH_BINARY" || true
+if [[ $binary_magic != $'\177ELF' ]]; then
+    printf 'Stealth backend must be a prebuilt native ELF executable.\n' >&2
+    exit 1
+fi
+if ! binary_version=$("$STEALTH_BINARY" version) || [[ $binary_version != stealth-transparent-v2 ]]; then
+    printf 'Native Stealth binary has an unsupported version or cannot run.\n' >&2
+    exit 1
 fi
 
 [[ -f $TORRC ]] || {
@@ -67,7 +82,8 @@ for state in /run/stealth/state /run/privacy-shield/state; do
 done
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-cp "$SOURCE/stealth.sh" "$TMP/stealth"
+cp "$STEALTH_BINARY" "$TMP/stealth"
+chmod 755 "$TMP/stealth"
 cp "$SOURCE/stealth.service" "$TMP/stealth.service"
 cp "$SOURCE/stealth.nft" "$TMP/stealth.nft"
 cp "$SOURCE/torrc.conf" "$TMP/torrc.conf"
@@ -75,7 +91,7 @@ cp "$SOURCE/stealth.sudoers" "$TMP/stealth.sudoers"
 awk -v new="$INCLUDE_LINE" -v old="$OLD_INCLUDE_LINE" \
     '$0 != new && $0 != old' "$TORRC" >"$TMP/torrc.preview"
 cat "$TMP/torrc.conf" >>"$TMP/torrc.preview"
-bash -n "$TMP/stealth"
+[[ $("$TMP/stealth" version) == stealth-transparent-v2 ]]
 tor --verify-config -f "$TMP/torrc.preview" >/dev/null
 nft -c -D 'uplink="wlan0"' -f "$TMP/stealth.nft"
 visudo -cqf "$TMP/stealth.sudoers"

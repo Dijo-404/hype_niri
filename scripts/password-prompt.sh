@@ -3,7 +3,8 @@
 set -euo pipefail
 
 style="${XDG_CONFIG_HOME:-$HOME/.config}/wofi/style.css"
-source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
+RUNTIME_DIR="$("${BASH_SOURCE[0]%/*}/hype-control" runtime-dir)" || exit 1
+umask 077
 prompt_style="$(mktemp "$RUNTIME_DIR/wofi-password.XXXXXX.css")"
 trap 'rm -f -- "$prompt_style"' EXIT
 

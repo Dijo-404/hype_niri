@@ -4,7 +4,7 @@
 
 The automated installer can refresh mirrors, performs a required Arch keyring and full system upgrade, installs packages, backs up and copies configurations, sets up Zsh and GTK theming, enables desktop services and memory pressure protection with `systemd-oomd`, and offers optional firewall, Cloudflare WARP, and Stealth configuration.
 
-Packages include OBS Studio, Neovim, and LazyVim dependencies. The installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
+The installer builds the native Rust desktop controls, GTK4 notch and privileged Stealth backend before replacing configurations. Packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell`, `libpulse`, OBS Studio, Neovim, and LazyVim dependencies. The installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
 
 ```bash
 git clone https://github.com/Dijo-404/Hype_Niri.git
@@ -74,14 +74,22 @@ done
 
 ### 3. Copy Configurations
 
-Move the dotfiles to their respective locations in your home directory.
+Build the native programs before copying configuration. Niri validation is pinned to Niri 26.04 and wallpaper IPC to awww 0.12.1; update the pinned Rust dependencies alongside backend upgrades. Then move the dotfiles and binaries to their respective locations in your home directory.
 
 ```bash
+cargo build --workspace --bins --release --locked
+./target/release/hype-control --check
+./target/release/hype-notch --check
+
 mkdir -p ~/.config ~/.cache/cliphist
 bash -c 'source ./install.sh; setup_user_dirs'
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
 cp -r niri waybar scripts alacritty wofi mako fastfetch hypr ~/.config/
+install -m 755 target/release/hype-control target/release/hype-notch ~/.config/scripts/
+mkdir -p ~/.config/systemd/user
+cp systemd/user/hype-auto-power-profile.service ~/.config/systemd/user/
+systemctl --user daemon-reload
 touch ~/.config/niri/outputs.kdl
 
 [ -d wallpapers ] && cp -an wallpapers/. ~/pictures/wallpapers/
@@ -166,7 +174,7 @@ InhibitDelayMaxSec=5
 EOF
 ```
 
-Niri starts `prepare-sleep.sh --watch`, which uses `swayidle -w` to hold a delay inhibitor until lock readiness is confirmed. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
+Niri starts `hype-control prepare-sleep --watch`, which subscribes to logind D-Bus events and holds the native sleep delay inhibitor until the password locker and session lock are confirmed ready. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
 
 To switch to Ly at the next boot, review your current display manager first. Arch ships `ly@tty2.service`. Enable it successfully before disabling an existing display manager, then reserve its TTY:
 
@@ -190,7 +198,7 @@ The user service follows charger and battery events without polling:
 Hardware without Performance support falls back to Balanced. Manual Waybar selections last until the next charger or battery-threshold change. The service stops with the graphical session.
 
 ```bash
-~/.config/scripts/auto-power-profile.sh --check
+~/.config/scripts/hype-control auto-power-profile --check
 systemctl --user status hype-auto-power-profile.service
 ```
 
@@ -286,13 +294,15 @@ The installer asks whether to install Stealth. Choosing Yes installs its package
 ```bash
 mkdir -p ~/.local/share/stealth
 sudo pacman -S --needed tor nftables iproute2 curl jq util-linux networkmanager
-cp zsh/stealth.zsh stealth/install-stealth.sh stealth/stealth.sh \
+cargo build --workspace --bins --release --locked
+cp zsh/stealth.zsh stealth/install-stealth.sh \
     stealth/stealth.service stealth/stealth.nft stealth/stealth.sudoers \
     stealth/torrc.conf ~/.local/share/stealth/
+install -m 755 target/release/stealth ~/.local/share/stealth/stealth
 sudo bash ~/.local/share/stealth/install-stealth.sh
 ```
 
-Open a new Zsh terminal after installing. The commands are `stealth-start`, `stealth-status`, and `stealth-stop`. If you use your own `.zshrc`, source `~/.local/share/stealth/stealth.zsh` from it. The direct commands `sudo stealth start`, `sudo stealth status`, and `sudo stealth stop` also work; a direct start leaves the systemd service inactive even while routing is active. The installer adds `/etc/sudoers.d/stealth` to disable sudo's pseudo-terminal for these commands, avoiding reproduced PTY teardown hangs when output cannot drain. A historical report of 100% CPU after terminal closure remains unconfirmed. When upgrading an earlier installation, stop its routing service first; the installer migrates its inactive system files.
+Open a new Zsh terminal after installing. The commands are `stealth-start`, `stealth-status`, and `stealth-stop`; they call `hype-control stealth start|status|stop`, which requests elevation through Polkit and uses the native privileged backend. If you use your own `.zshrc`, source `~/.local/share/stealth/stealth.zsh` from it. The direct commands `sudo stealth start`, `sudo stealth status`, and `sudo stealth stop` also work; a direct start leaves the systemd service inactive even while routing is active. The installer adds `/etc/sudoers.d/stealth` to disable sudo's pseudo-terminal for these commands, avoiding reproduced PTY teardown hangs when output cannot drain. A historical report of 100% CPU after terminal closure remains unconfirmed. When upgrading an earlier installation, stop its routing service first; the installer migrates its inactive system files.
 
 While Stealth is active, a green Stealth icon appears beside the Wi-Fi and Bluetooth icons in Waybar's tray pill. It disappears after Stealth stops.
 
@@ -337,7 +347,7 @@ yay -Syu --aur
 - **Powerlevel10k Prompt**: The theme is pre-configured out of the box. Run `p10k configure` in your terminal to customize it.
 - **Learn the Controls**: Check out `keybindings.md` to learn how to navigate the Niri compositor.
 - **User Directories**: The installer sets the XDG user directories to lowercase names (`~/desktop`, `~/documents`, `~/downloads`, `~/music`, `~/pictures`, `~/projects`, `~/public`, `~/templates`, `~/videos`). Existing capitalised folders are renamed when the lowercase folder does not exist yet.
-- **Wallpapers**: The wallpaper script looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
+- **Wallpapers**: The native wallpaper controller looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
 - **Lock Screen**: `Super+L` locks via hyprlock and uses the saved wallpaper pointer from `~/.local/state/niri/current_wallpaper`.
 - **Firewall / WARP / Stealth**: If you skipped step 7, use the relevant commands above later. Stealth remains off until `stealth-start`.
 
@@ -370,7 +380,7 @@ yay -S --needed ntfs-3g gvfs udisks2 lvm2 libblockdev-lvm
 - `udisks2` — the mount daemon Nautilus talks to.
 - `lvm2` and `libblockdev-lvm` — let encrypted LUKS drives reveal and mount LVM-backed filesystems.
 
-The `Super+U` keybinding runs `~/.config/scripts/open-drives.sh` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks for the passphrase of locked encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
+The `Super+U` keybinding runs `~/.config/scripts/hype-control open-drives` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks for the passphrase of locked encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
 
 **2. Disable Windows Fast Startup** (this is the cause ~90% of the time).
 

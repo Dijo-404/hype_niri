@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "${BASH_SOURCE[0]%/*}/runtime-dir.sh"
+umask 077
+RUNTIME_DIR="$("${BASH_SOURCE[0]%/*}/hype-control" runtime-dir)" || exit 1
 exec 9>"$RUNTIME_DIR/hype-tray-applets.lock"
 flock -n 9 || exit 0
 

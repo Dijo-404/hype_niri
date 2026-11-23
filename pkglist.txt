@@ -20,14 +20,14 @@ tree-sitter-cli
 kate
 
 waybar
-gtk-layer-shell
+gtk4
+gtk4-layer-shell
 python-gobject
 wayland-protocols
 wofi
 mako
 hyprlock
 hypridle
-swayidle
 awww
 hyprpicker
 polkit-gnome
@@ -80,6 +80,7 @@ man-db
 tmux
 openssh
 base-devel
+rust
 util-linux
 
 pipewire
@@ -128,7 +129,6 @@ papirus-icon-theme
 papirus-folders-catppuccin-git
 bibata-cursor-theme-bin
 
-brightnessctl
 power-profiles-daemon
 upower
 lm_sensors

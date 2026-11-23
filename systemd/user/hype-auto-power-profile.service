@@ -6,7 +6,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=3
 
 [Service]
-ExecStart=/usr/bin/bash %h/.config/scripts/auto-power-profile.sh
+ExecStart=%h/.config/scripts/hype-control auto-power-profile
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=5
