@@ -40,8 +40,16 @@ Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable t
 For an interactive installation, clone the repository and run the setup script:
 
 ```bash
-git clone https://github.com/Dijo-404/Hype_Niri.git
-cd Hype_Niri
+curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
+```
+
+The one-command installer becomes available when this branch reaches `main`. It downloads source into a temporary directory, builds the GTK-independent Rust installer locally, then runs it with terminal input. Local builds take longer on the first run. If Git, Rust or compilation tools are missing, the bootstrap asks before a full Arch upgrade installs them. Run as your regular user with sudo access and yay already installed. Existing settings are backed up before replacement.
+
+To install from a checked-out branch:
+
+```bash
+git clone https://github.com/Dijo-404/hype_niri.git
+cd hype_niri
 ./install.sh
 ```
 
@@ -112,7 +120,8 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 ├── waybar/          # Comprehensive status bar configuration
 ├── wireplumber/     # Audio routing and idle suspension
 ├── zsh/             # Shell config, Stealth commands, and Powerlevel10k theme
-├── install.sh       # Automated installation script
+├── install.sh       # Small source-build bootstrap
+├── installer/       # Native Rust installer, configuration and system setup
 ├── pkglist.txt      # Master list of required packages
 └── *.md             # Documentation files
 ```
@@ -179,21 +188,22 @@ The application uses one instance per session. Preview and installed copies shar
 
 ## Checks
 
-Native regression checks use temporary files, socket fixtures and private D-Bus services. The Python native suite runs the actual `hype-control` binary in Bubblewrap namespaces, with no live network, device or desktop access; it requires `python-gobject`, `dbus` and `bubblewrap`. `HYPE_CONTROL_BINARY` selects a different built binary. Remaining shell-launcher tests mock their external application boundaries. The Rust notch suite covers clocks, weather, Niri replies, backlight discovery and rounded regions. Its optional UI test needs an enabled output and an isolated session bus; it exercises real GTK4 widgets, fake native MPRIS/Flow services, shared timers and view teardown:
+Native regression checks use temporary files, socket fixtures and private D-Bus services. The Python native suite runs the actual `hype-control` binary in Bubblewrap namespaces, with no live network, device or desktop access; it requires `python-gobject`, `dbus` and `bubblewrap`. `HYPE_CONTROL_BINARY` selects a different built binary. Installer tests exercise Rust against temporary home/system roots and controlled external command boundaries. Launcher tests run the real Rust binary in private namespaces. The Rust notch suite covers clocks, weather, Niri replies, backlight discovery and rounded regions. Its optional UI test needs an enabled output and an isolated session bus; it exercises real GTK4 widgets, fake native MPRIS/Flow services, shared timers and view teardown:
 
 ```bash
-python3 tests/test-install.py
-python3 tests/test-runtime.py
+python3 tests/test-bootstrap.py
 cargo test --workspace --locked
 cargo build --workspace --bins --locked
+/usr/bin/python3 tests/test-runtime.py
 /usr/bin/python3 tests/test-native-runtime.py
-python3 tests/test-warp-indicator.py
-bash tests/test-notch.sh
-HYPE_NOTCH_UI_TESTS=1 dbus-run-session -- bash tests/test-notch.sh
-bash stealth/test-stealth.sh
-bash stealth/test-install-stealth.sh
-shellcheck install.sh scripts/*.sh tests/test-notch.sh stealth/*.sh systemd/*.sh
-shfmt -l install.sh scripts/*.sh tests/test-notch.sh stealth/*.sh systemd/*.sh
+/usr/bin/python3 tests/test-warp-indicator.py
+./target/debug/hype-notch --check
+./target/debug/hype-control --check
+./target/debug/stealth version
+# Run ignored GTK tests only with an isolated session bus and Wayland compositor:
+cargo test --workspace --locked -- --ignored --test-threads=1
+shellcheck install.sh
+shfmt -l install.sh
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
 prettier --check . --ignore-unknown
@@ -204,3 +214,7 @@ ruff format --check tests
 Static checks require ShellCheck, shfmt, Prettier, and Ruff. Shell formatting
 uses the four-space indentation in `.editorconfig`; `ruff.toml` also checks
 import placement.
+
+`install.sh` is the only remaining shell file. Desktop launchers, menus and status indicators run through `hype-control`; the installation phases live in `hype-install`. External applications and vendor tools such as Wofi, pacman, yay and warp-cli remain separate programs. The bootstrap supports `--help`; the Rust installer also exposes named `--phase` operations for the manual steps in [INSTALL.md](INSTALL.md).
+
+Installation retains four native compatibility symlinks for an already-running Waybar or a custom bar configuration. The temporary power-profile Bash launcher is removed after its replacement user unit has been published and reloaded.

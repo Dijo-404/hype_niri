@@ -218,11 +218,11 @@ window-rule {
     open-floating true
 }
 
-spawn-sh-at-startup "~/.config/scripts/start-waybar.sh"
+spawn-at-startup "~/.config/scripts/hype-control" "start-waybar"
 spawn-at-startup "~/.config/scripts/hype-notch"
 spawn-sh-at-startup "if command -v hype-flow >/dev/null 2>&1; then hype-flow --background; fi"
 
-spawn-sh-at-startup "~/.config/scripts/start-tray-applets.sh"
+spawn-at-startup "~/.config/scripts/hype-control" "start-tray-applets"
 spawn-at-startup "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"
 spawn-at-startup "mako"
 spawn-at-startup "alacritty"
@@ -242,11 +242,11 @@ binds {
     Ctrl+Q repeat=false { close-window; }
     Alt+F4 repeat=false { close-window; }
     Mod+Delete { quit; }
-    Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh"; }
+    Mod+Shift+Delete repeat=false { spawn-sh "~/.config/scripts/hype-control menu-toggle ~/.config/scripts/hype-control power-menu"; }
 
     Mod+W { toggle-column-tabbed-display; }
     Mod+Shift+S repeat=false hotkey-overlay-title="Toggle Window Opacity" { spawn "~/.config/scripts/hype-control" "opacity-toggle"; }
-    Mod+Shift+F { spawn-sh "~/.config/scripts/fullscreen-toggle.sh"; }
+    Mod+Shift+F { spawn "~/.config/scripts/hype-control" "fullscreen-toggle"; }
     Mod+F { maximize-column; }
     Mod+O repeat=false { toggle-overview; }
     Mod+L { spawn "~/.config/scripts/hype-control" "lock-dim"; }
@@ -286,13 +286,13 @@ binds {
     Mod+B hotkey-overlay-title="Browser: Brave" { spawn "brave"; }
     Ctrl+Shift+Escape { spawn-sh "alacritty -e htop"; }
 
-    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn-sh "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images"; }
+    Mod+A repeat=false hotkey-overlay-title="App Launcher: Wofi" { spawn "~/.config/scripts/hype-control" "menu-toggle" "wofi" "--show" "drun" "--allow-images"; }
     Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn "~/.config/scripts/hype-notch" "--toggle"; }
     Mod+Ctrl+Space repeat=false hotkey-overlay-title="Dictate offline" { spawn "hype-flow" "--toggle"; }
     Mod+Ctrl+Escape repeat=false hotkey-overlay-title="Cancel dictation" { spawn "hype-flow" "--cancel"; }
     Mod+Tab { toggle-overview; }
-    Mod+Period repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh env 'BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry' bemoji -t"; }
-    Mod+V repeat=false { spawn-sh "~/.config/scripts/menu-toggle.sh sh -c 'entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf \"%s\" \"$entry\" | cliphist decode | wl-copy'"; }
+    Mod+Period repeat=false { spawn-sh "~/.config/scripts/hype-control menu-toggle env 'BEMOJI_PICKER_CMD=wofi --dmenu --prompt Emoji --no-custom-entry' bemoji -t"; }
+    Mod+V repeat=false { spawn-sh "~/.config/scripts/hype-control menu-toggle sh -c 'entry=$(cliphist list | wofi --dmenu --no-custom-entry --cache-file /dev/null --prompt Clipboard) && [ -n \"$entry\" ] && printf \"%s\" \"$entry\" | cliphist decode | wl-copy'"; }
 
     Mod+R { switch-preset-column-width; }
     Mod+Shift+R { switch-preset-window-height; }
@@ -329,7 +329,7 @@ binds {
     Mod+Shift+W repeat=false { spawn "~/.config/scripts/hype-control" "wallpaper" "select"; }
     Mod+Shift+H repeat=false hotkey-overlay-title="Hotspot controls" { spawn "~/.config/scripts/hype-control" "hotspot" "menu"; }
 
-    Mod+Alt+Up { spawn-sh "pkill waybar; ~/.config/scripts/start-waybar.sh"; }
+    Mod+Alt+Up { spawn "~/.config/scripts/hype-control" "start-waybar" "--restart"; }
     Mod+Alt+Down { spawn-sh "pkill waybar"; }
 
     Mod+1 { focus-workspace 1; }

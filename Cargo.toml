@@ -22,5 +22,5 @@ lto = "thin"
 strip = true
 
 [workspace]
-members = ["native"]
+members = ["native", "installer"]
 resolver = "3"

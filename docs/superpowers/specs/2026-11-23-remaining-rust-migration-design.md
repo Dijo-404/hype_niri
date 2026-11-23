@@ -1,6 +1,6 @@
 # Remaining Rust migration and one-command installation
 
-Status: proposed; implementation awaits design approval.
+Status: implemented and verified after user approval.
 
 ## Intent and decisions
 

@@ -1,4 +1,5 @@
 use crate::{Result, err};
+use std::os::unix::process::CommandExt;
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
@@ -7,6 +8,7 @@ use std::{
         unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     },
     path::{Path, PathBuf},
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -74,7 +76,7 @@ fn fallback_dir(path: &Path) -> Result<PathBuf> {
     Ok(path.into())
 }
 pub struct Lock(File);
-pub fn lock(name: &str, timeout: Duration) -> Result<Option<Lock>> {
+fn lock_file(name: &str) -> Result<File> {
     if Path::new(name).components().count() != 1 {
         return Err(err("Invalid lock name"));
     }
@@ -89,6 +91,15 @@ pub fn lock(name: &str, timeout: Duration) -> Result<Option<Lock>> {
     if file.metadata()?.uid() != uid() || !file.metadata()?.is_file() {
         return Err(err("Unsafe lock file"));
     }
+    Ok(file)
+}
+pub(crate) fn lock_blocking(name: &str) -> Result<Lock> {
+    let file = lock_file(name)?;
+    file.lock()?;
+    Ok(Lock(file))
+}
+pub fn lock(name: &str, timeout: Duration) -> Result<Option<Lock>> {
+    let file = lock_file(name)?;
     let deadline = Instant::now() + timeout;
     loop {
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
@@ -104,10 +115,18 @@ pub fn lock(name: &str, timeout: Duration) -> Result<Option<Lock>> {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
-impl Drop for Lock {
-    fn drop(&mut self) {
+impl Lock {
+    pub(crate) fn inherit(&self, command: &mut Command) {
+        let fd = self.0.as_raw_fd();
+        // flock stays held until the last copy of this file descriptor closes.
+        // Change CLOEXEC in the child only, leaving all other locks private.
         unsafe {
-            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+            command.pre_exec(move || {
+                if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
         }
     }
 }

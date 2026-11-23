@@ -7,9 +7,16 @@ The automated installer can refresh mirrors, performs a required Arch keyring an
 The installer builds the native Rust desktop controls, GTK4 notch and privileged Stealth backend before replacing configurations. Packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell`, `libpulse`, OBS Studio, Neovim, and LazyVim dependencies. The installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
 
 ```bash
-git clone https://github.com/Dijo-404/Hype_Niri.git
-cd Hype_Niri
-chmod +x install.sh
+curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
+```
+
+This command becomes available after this branch is published to `main`. The small Bash bootstrap downloads source, builds `hype-install` without GTK dependencies, and runs the Rust installer using `/dev/tty` for interactive input. It never reads confirmations from the downloaded script. If Git, Rust or compilation tools are missing, it asks before installing them with a full Arch upgrade. Local builds may take several minutes on the first run.
+
+For a local checkout, run:
+
+```bash
+git clone https://github.com/Dijo-404/hype_niri.git
+cd hype_niri
 ./install.sh
 ```
 
@@ -48,7 +55,9 @@ sudo pacman -Syu
 ```
 
 ```bash
-bash -c 'source ./install.sh; install_packages'
+sudo pacman -S --needed rust base-devel
+cargo build -p hype-install --release --locked
+./target/release/hype-install --source "$PWD" --phase packages
 ```
 
 ### 2. Back Up Existing Configs
@@ -82,7 +91,7 @@ cargo build --workspace --bins --release --locked
 ./target/release/hype-notch --check
 
 mkdir -p ~/.config ~/.cache/cliphist
-bash -c 'source ./install.sh; setup_user_dirs'
+./target/release/hype-install --source "$PWD" --phase user-dirs
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
 cp -r niri waybar scripts alacritty wofi mako fastfetch hypr ~/.config/
@@ -97,9 +106,8 @@ touch ~/.config/niri/outputs.kdl
 cp zsh/.zshrc ~/
 cp zsh/.p10k.zsh ~/
 
-chmod +x ~/.config/scripts/*.sh
-bash -c 'source ./install.sh; setup_desktop_integrations'
-bash -c 'source ./install.sh; setup_lazyvim'
+./target/release/hype-install --source "$PWD" --phase desktop-integrations
+./target/release/hype-install --source "$PWD" --phase lazyvim
 ```
 
 When editing `~/.config/niri/outputs.kdl`, keep each output block's opening
@@ -140,7 +148,7 @@ cp fontconfig/60-hype-niri-fonts.conf ~/.config/fontconfig/conf.d/
 papirus-folders -C grey --theme Papirus-Dark
 
 # Apply matching Wi-Fi and Bluetooth outline icons in the user theme.
-bash -c 'source ./install.sh; setup_tray_icons'
+./target/release/hype-install --source "$PWD" --phase tray-icons
 ```
 
 ### 5. System-Wide Setup
@@ -154,7 +162,7 @@ sudo sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 6/' /etc/pacman.conf
 sudo cp polkit/*.rules /etc/polkit-1/rules.d/
 
 sudo systemctl enable --now NetworkManager bluetooth power-profiles-daemon
-bash -c 'source ./install.sh; configure_docker_socket'
+./target/release/hype-install --source "$PWD" --phase docker-socket
 sudo usermod -aG docker "$USER"   # log out/in before using docker without sudo
 
 systemctl --user enable --now pipewire.socket pipewire-pulse.socket wireplumber.service gnome-keyring-daemon.socket
@@ -209,7 +217,7 @@ Docker starts on demand through `docker.socket`; an existing service with runnin
 The automated installer enables this by default. To apply only OOM protection on an existing setup, run from the repository:
 
 ```bash
-bash systemd/setup-oomd.sh
+./target/release/hype-install --setup-oomd "$PWD"
 ```
 
 The script installs `systemd/user@.service.d/60-hype-niri-oomd.conf` into `/etc/systemd/system/user@.service.d/`, reloads systemd, and runs `sudo systemctl enable --now systemd-oomd.service`. Arch includes the daemon in its `systemd` package; this policy requires systemd 257 or newer, cgroup v2, and PSI. It applies to running user managers without restarting the desktop.
@@ -293,16 +301,16 @@ The installer asks whether to install Stealth. Choosing Yes installs its package
 
 ```bash
 mkdir -p ~/.local/share/stealth
-sudo pacman -S --needed tor nftables iproute2 curl jq util-linux networkmanager
+sudo pacman -S --needed tor nftables polkit
 cargo build --workspace --bins --release --locked
-cp zsh/stealth.zsh stealth/install-stealth.sh \
+cp zsh/stealth.zsh \
     stealth/stealth.service stealth/stealth.nft stealth/stealth.sudoers \
     stealth/torrc.conf ~/.local/share/stealth/
 install -m 755 target/release/stealth ~/.local/share/stealth/stealth
-sudo bash ~/.local/share/stealth/install-stealth.sh
+sudo ./target/release/hype-install --install-stealth "$HOME/.local/share/stealth"
 ```
 
-Open a new Zsh terminal after installing. The commands are `stealth-start`, `stealth-status`, and `stealth-stop`; they call `hype-control stealth start|status|stop`, which requests elevation through Polkit and uses the native privileged backend. If you use your own `.zshrc`, source `~/.local/share/stealth/stealth.zsh` from it. The direct commands `sudo stealth start`, `sudo stealth status`, and `sudo stealth stop` also work; a direct start leaves the systemd service inactive even while routing is active. The installer adds `/etc/sudoers.d/stealth` to disable sudo's pseudo-terminal for these commands, avoiding reproduced PTY teardown hangs when output cannot drain. A historical report of 100% CPU after terminal closure remains unconfirmed. When upgrading an earlier installation, stop its routing service first; the installer migrates its inactive system files.
+Open a new Zsh terminal after installing. The commands are `stealth-start`, `stealth-status`, and `stealth-stop`; they call `hype-control stealth start|status|stop`, which requests elevation through Polkit and uses the native privileged backend. If you use your own `.zshrc`, source `~/.local/share/stealth/stealth.zsh` from it. The direct commands `sudo stealth start`, `sudo stealth status`, and `sudo stealth stop` also work; a direct start leaves the systemd service inactive even while routing is active. The Rust installer adds `/etc/sudoers.d/stealth` to disable sudo's pseudo-terminal for these commands, avoiding reproduced PTY teardown hangs when output cannot drain. A historical report of 100% CPU after terminal closure remains unconfirmed. When upgrading an earlier installation, stop its routing service first; the installer migrates its inactive system files.
 
 While Stealth is active, a green Stealth icon appears beside the Wi-Fi and Bluetooth icons in Waybar's tray pill. It disappears after Stealth stops.
 

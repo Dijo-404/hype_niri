@@ -29,7 +29,7 @@
   "custom/launcher": {
     "format": "󰣇",
     "tooltip": false,
-    "on-click": "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images --prompt ''"
+    "on-click": "~/.config/scripts/hype-control menu-toggle wofi --show drun --allow-images --prompt ''"
   },
 
   "niri/workspaces": {
@@ -123,13 +123,13 @@
     "signal": 17
   },
   "custom/warp": {
-    "exec": "~/.config/scripts/warp-indicator.sh",
+    "exec": "~/.config/scripts/hype-control warp-indicator",
     "return-type": "json",
     "interval": 10,
     "format": "{}"
   },
   "image#stealth": {
-    "exec": "~/.config/scripts/stealth-indicator.sh",
+    "exec": "~/.config/scripts/hype-control stealth-indicator",
     "interval": 10,
     "size": 15
   },
@@ -181,7 +181,7 @@
     "format": "",
     "tooltip": true,
     "tooltip-format": "Power Menu",
-    "on-click": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh",
-    "on-click-right": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh"
+    "on-click": "~/.config/scripts/hype-control menu-toggle ~/.config/scripts/hype-control power-menu",
+    "on-click-right": "~/.config/scripts/hype-control menu-toggle ~/.config/scripts/hype-control power-menu"
   }
 }

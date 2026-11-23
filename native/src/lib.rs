@@ -1,6 +1,7 @@
 pub mod bus;
 pub mod caffeine;
 pub mod dialog;
+pub mod helpers;
 pub mod ipc;
 pub mod network;
 pub mod notify;
