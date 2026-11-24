@@ -1,2066 +1,368 @@
 #!/usr/bin/env python3
-"""Run isolated runtime regressions with mocked desktop commands."""
+"""Exercise native desktop launchers in a shared private PID namespace."""
 
-import fcntl
 import json
-import os
-import shlex
-import shutil
-import signal
-import subprocess
-import tempfile
-import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+from runtime_fixture import RuntimeFixture
 
 
-class RuntimeTests(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="hype-niri-runtime-test-")
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
-        self.user_home = self.root / "home"
-        self.scripts = self.user_home / ".config/scripts"
-        self.scripts.mkdir(parents=True)
-        shutil.copytree(REPO / "wofi", self.user_home / ".config/wofi")
-        for source in (REPO / "scripts").glob("*.sh"):
-            (self.scripts / source.name).write_text(
-                source.read_text().replace("$HOME", "$RUNTIME_TEST_HOME")
-            )
-            (self.scripts / source.name).chmod(0o755)
-        self.runtime = self.root / "runtime"
-        self.runtime.mkdir(mode=0o700)
-        self.bin = self.root / "bin"
-        self.bin.mkdir()
-        self.log = self.root / "commands"
-        self.environment = os.environ | {
-            "RUNTIME_TEST_HOME": str(self.user_home),
-            "XDG_RUNTIME_DIR": str(self.runtime),
-            "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "RUNTIME_TEST_LOG": str(self.log),
-            "XDG_CONFIG_HOME": str(self.user_home / ".config"),
-            "XDG_CACHE_HOME": str(self.user_home / ".cache"),
-        }
-        for command in ("notify-send", "pkill"):
-            self.mock(command, "exit 0")
-        self.mock("pgrep", "exit 1")
-
-    def mock(self, command, body):
-        path = self.bin / command
-        path.write_text("#!/usr/bin/env bash\nset -eu\n" + body + "\n")
-        path.chmod(0o755)
-
-    def run_script(self, name, *args, environment=None):
-        result = subprocess.run(
-            ["bash", str(self.scripts / name), *args],
-            env=environment or self.environment,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return result
-
-    def hold_mock(self, command):
-        fifo = self.root / f"{command}-hold"
-        os.mkfifo(fifo)
-        self.environment["RUNTIME_TEST_HOLD"] = str(fifo)
-        self.mock(
-            command,
-            'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"\nread -r _ < "$RUNTIME_TEST_HOLD"',
-        )
-
-    def start_script(self, name, *args):
-        process = subprocess.Popen(
-            ["bash", str(self.scripts / name), *args],
-            env=self.environment,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.addCleanup(self.stop_process, process)
-        deadline = time.monotonic() + 3
-        while not self.log.exists():
-            self.assertIsNone(
-                process.poll(),
-                process.stderr.read() if process.poll() is not None else "",
-            )
-            self.assertLess(time.monotonic(), deadline, "mock did not start")
-            time.sleep(0.01)
-        return process
-
-    @staticmethod
-    def stop_process(process):
-        if process.poll() is None:
-            process.terminate()
-        process.communicate(timeout=3)
-
-    @staticmethod
-    def stop_process_group(process):
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.communicate(timeout=3)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.communicate(timeout=3)
-
+class RuntimeTests(RuntimeFixture):
     def waybar_fixture(self):
-        config = self.user_home / ".config/waybar/config.jsonc"
+        config = self.home / ".config/waybar/config.jsonc"
         config.parent.mkdir()
-        config.write_text('{"modules-left":["clock"]}')
-        self.mock(
-            "niri",
-            'printf \'%s\\n\' \'{"eDP-1":{"name":"eDP-1","current_mode":0},"DP-1":{"name":"DP-1","current_mode":0}}\'',
-        )
+        config.write_text('// Waybar accepts JSONC.\n{"modules-left": ["clock"],}\n')
         return config
-
-    def sensor_fixture(self, temperature="45000", label="Package id 0"):
-        hwmon = self.root / "hwmon/hwmon0"
-        hwmon.mkdir(parents=True)
-        (hwmon / "name").write_text("coretemp\n")
-        (hwmon / "temp1_input").write_text(temperature + "\n")
-        (hwmon / "temp1_label").write_text(label + "\n")
-        self.environment.update(
-            HWMON_ROOT=str(hwmon.parent), THERMAL_ROOT=str(self.root / "thermal")
-        )
-        return hwmon / "temp1_input"
-
-    def copilot_fixture(self):
-        self.environment["XDG_SESSION_ID"] = "mock-copilot"
-        self.mock("code", 'printf "code\\n" >> "$RUNTIME_TEST_LOG"')
-        self.mock(
-            "loginctl",
-            '''
-[[ "${RUNTIME_TEST_LOGINCTL_FAIL:-0}" != 1 ]] || exit 1
-printf "%s\\n" "${RUNTIME_TEST_LOCKED:-no}"''',
-        )
-        (self.scripts / "copilot-display.sh").write_text(
-            '#!/usr/bin/env bash\nprintf "copilot-display %s\\n" "$*" >> "$RUNTIME_TEST_LOG"\n'
-        )
-        (self.scripts / "copilot-display.sh").chmod(0o755)
-        return self.runtime / "hype-copilot.state"
-
-    def copilot_display_fixture(self):
-        self.environment["XDG_SESSION_ID"] = "mock-copilot"
-        ready = self.root / "session-locked"
-        outputs = self.root / "outputs.json"
-        outputs.write_text(
-            json.dumps(
-                {
-                    "eDP-1": {"name": "eDP-1", "current_mode": 0},
-                    "DP-1": {"name": "DP-1", "current_mode": 1},
-                    "HDMI-A-1": {"name": "HDMI-A-1", "current_mode": None},
-                }
-            )
-        )
-        self.environment.update(
-            RUNTIME_TEST_LOCK_READY=str(ready),
-            RUNTIME_TEST_OUTPUTS=str(outputs),
-        )
-        self.mock("sleep", 'printf "sleep %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.mock("pgrep", '[[ "${!#}" == hyprlock && -f "$RUNTIME_TEST_LOCK_READY" ]]')
-        self.mock(
-            "loginctl",
-            '''
-[[ "${1:-}" == show-session && "${2:-}" == mock-copilot ]] || exit 90
-[[ "${RUNTIME_TEST_LOGINCTL_FAIL:-0}" != 1 ]] || exit 1
-if [[ -n "${RUNTIME_TEST_LOGINCTL_VALUE:-}" ]]; then
-    value="$RUNTIME_TEST_LOGINCTL_VALUE"
-elif [[ -f "$RUNTIME_TEST_LOCK_READY" ]]; then
-    value=yes
-else
-    value=no
-fi
-printf 'loginctl %s\\n' "$value" >> "$RUNTIME_TEST_LOG"
-printf '%s\\n' "$value"''',
-        )
-        self.mock(
-            "niri",
-            """
-printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
-case "$*" in
-    'msg --json outputs') cat "$RUNTIME_TEST_OUTPUTS" ;;
-    'msg output '*' off'|'msg output '*' on')
-        if [[ "$4" == off ]]; then
-            [[ "${RUNTIME_TEST_OFF_FAIL:-}" != "$3" ]] || exit 1
-        else
-            [[ "${RUNTIME_TEST_ON_FAIL:-}" != "$3" ]] || exit 1
-        fi
-        [[ "${RUNTIME_TEST_IGNORE_APPLY:-}" != "$4" ]] || exit 0
-        python3 - "$RUNTIME_TEST_OUTPUTS" "$3" "$4" <<'PY'
-import json
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-outputs = json.loads(path.read_text())
-if sys.argv[2] in outputs:
-    outputs[sys.argv[2]]["current_mode"] = 0 if sys.argv[3] == "on" else None
-path.write_text(json.dumps(outputs))
-PY
-        ;;
-    'msg action power-on-monitors')
-        [[ "${RUNTIME_TEST_POWER_ON_FAIL:-0}" != 1 ]] ;;
-    *) exit 91 ;;
-esac""",
-        )
-        (self.scripts / "lock.sh").write_text("""#!/usr/bin/env bash
-set -eu
-printf 'lock %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
-[[ "${RUNTIME_TEST_LOCK_FAIL:-0}" != 1 ]] || exit 1
-if [[ "${RUNTIME_TEST_LOCK_NEVER_READY:-0}" != 1 ]]; then
-    touch "$RUNTIME_TEST_LOCK_READY"
-fi
-""")
-        return self.runtime / "hype-copilot-displays.state", ready
-
-    def set_copilot_output_modes(self, enabled):
-        path = Path(self.environment["RUNTIME_TEST_OUTPUTS"])
-        outputs = json.loads(path.read_text())
-        for name in ("eDP-1", "DP-1"):
-            if name in outputs:
-                outputs[name]["current_mode"] = 0 if enabled else None
-        path.write_text(json.dumps(outputs))
-
-    def run_copilot_display(self, succeeds=True, mode="toggle"):
-        result = subprocess.run(
-            ["bash", str(self.scripts / "copilot-display.sh"), mode],
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        if succeeds:
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        else:
-            self.assertNotEqual(
-                result.returncode, 0, "unsafe request unexpectedly succeeded"
-            )
-        return self.log.read_text().splitlines() if self.log.exists() else []
-
-    def copilot_press(self):
-        process = subprocess.Popen(
-            ["bash", str(self.scripts / "copilot-shortcut.sh")],
-            env=self.environment,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-        self.addCleanup(self.stop_process_group, process)
-        return process
-
-    def wait_copilot_phase(self, phase):
-        state = self.runtime / "hype-copilot.state"
-        deadline = time.monotonic() + 3
-        while True:
-            try:
-                fields = state.read_text().split()
-            except FileNotFoundError:
-                fields = []
-            if len(fields) == 2 and fields[1] == phase:
-                return
-            self.assertLess(
-                time.monotonic(), deadline, f"Copilot did not enter {phase} phase"
-            )
-            time.sleep(0.005)
-
-    def finish_copilot_press(self, process):
-        _, stderr = process.communicate(timeout=3)
-        self.assertEqual(process.returncode, 0, stderr)
-
-    def test_copilot_single_press_opens_code_after_double_press_window(self):
-        self.copilot_fixture()
-        process = self.copilot_press()
-        self.wait_copilot_phase("single")
-        time.sleep(0.08)
-        self.assertFalse(
-            self.log.exists(),
-            "single press launched before the double press window closed",
-        )
-        self.finish_copilot_press(process)
-        self.assertEqual(self.log.read_text().splitlines(), ["code"])
-
-    def test_copilot_double_press_toggles_locked_displays_without_opening_code(self):
-        self.copilot_fixture()
-        first = self.copilot_press()
-        self.wait_copilot_phase("single")
-        second = self.copilot_press()
-        self.wait_copilot_phase("double")
-        time.sleep(0.08)
-        self.assertFalse(
-            self.log.exists(),
-            "display power command ran before key release could settle",
-        )
-        self.finish_copilot_press(first)
-        self.finish_copilot_press(second)
-        self.assertEqual(self.log.read_text().splitlines(), ["copilot-display toggle"])
-
-    def test_copilot_slow_presses_open_code_twice(self):
-        self.copilot_fixture()
-        self.run_script("copilot-shortcut.sh")
-        self.run_script("copilot-shortcut.sh")
-        self.assertEqual(self.log.read_text().splitlines(), ["code", "code"])
-
-    def test_copilot_triple_press_toggles_displays_once_without_opening_code(self):
-        self.copilot_fixture()
-        first = self.copilot_press()
-        self.wait_copilot_phase("single")
-        second = self.copilot_press()
-        self.wait_copilot_phase("double")
-        third = self.copilot_press()
-        for process in (first, second, third):
-            self.finish_copilot_press(process)
-        self.assertEqual(self.log.read_text().splitlines(), ["copilot-display toggle"])
-
-    def test_copilot_concurrent_presses_do_not_race_into_code_launches(self):
-        self.copilot_fixture()
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            list(
-                executor.map(lambda _: self.run_script("copilot-shortcut.sh"), range(2))
-            )
-        self.assertEqual(self.log.read_text().splitlines(), ["copilot-display toggle"])
-
-    def test_copilot_stale_or_malformed_state_recovers_as_single_press(self):
-        state = self.copilot_fixture()
-        future = time.time_ns() // 1000 + 60_000_000
-        for previous in (
-            "0 single\n",
-            "0 double\n",
-            "broken state\n",
-            "12345 unknown\n",
-            "000000008 single\n",
-            f"{future} single\n",
-            "\n",
-        ):
-            with self.subTest(previous=previous):
-                state.write_text(previous)
-                self.log.unlink(missing_ok=True)
-                self.run_script("copilot-shortcut.sh")
-                self.assertEqual(self.log.read_text().splitlines(), ["code"])
-
-    def test_copilot_single_press_cannot_open_code_while_locked(self):
-        self.copilot_fixture()
-        for session_state in ("locked", "no-session", "logind-error", "unknown"):
-            with self.subTest(session_state=session_state):
-                self.environment["XDG_SESSION_ID"] = "mock-copilot"
-                self.environment["RUNTIME_TEST_LOCKED"] = "no"
-                self.environment.pop("RUNTIME_TEST_LOGINCTL_FAIL", None)
-                if session_state == "locked":
-                    self.environment["RUNTIME_TEST_LOCKED"] = "yes"
-                elif session_state == "no-session":
-                    self.environment.pop("XDG_SESSION_ID")
-                elif session_state == "logind-error":
-                    self.environment["RUNTIME_TEST_LOGINCTL_FAIL"] = "1"
-                else:
-                    self.environment["RUNTIME_TEST_LOCKED"] = "unknown"
-                self.run_script("copilot-shortcut.sh")
-                self.assertFalse(
-                    self.log.exists(),
-                    "unconfirmed unlocked session launched an application",
-                )
-
-    def test_copilot_display_verifies_blackout_then_delays_locker_one_second(self):
-        state, _ = self.copilot_display_fixture()
-        commands = self.run_copilot_display()
-        self.assertEqual(set(state.read_text().splitlines()), {"eDP-1", "DP-1"})
-        disabled = [command for command in commands if command.endswith(" off")]
-        self.assertEqual(
-            set(disabled), {"niri msg output eDP-1 off", "niri msg output DP-1 off"}
-        )
-        last_off = max(commands.index(command) for command in disabled)
-        delay_index = commands.index("sleep 1")
-        self.assertIn("niri msg --json outputs", commands[last_off + 1 : delay_index])
-        self.assertLess(last_off, delay_index)
-        self.assertLess(delay_index, commands.index("lock sleep"))
-        self.assertLess(commands.index("lock sleep"), commands.index("loginctl yes"))
-        outputs = json.loads(Path(self.environment["RUNTIME_TEST_OUTPUTS"]).read_text())
-        self.assertTrue(
-            all(outputs[name]["current_mode"] is None for name in ("eDP-1", "DP-1"))
-        )
-
-    def test_copilot_display_restore_leaves_native_password_lock_active(self):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        state.write_text("eDP-1\nDP-1\n")
-        self.set_copilot_output_modes(enabled=False)
-        commands = self.run_copilot_display()
-        restored = [command for command in commands if command.endswith(" on")]
-        self.assertEqual(
-            set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"}
-        )
-        self.assertTrue(
-            all(
-                commands.index("loginctl yes") < commands.index(command)
-                for command in restored
-            )
-        )
-        power_index = commands.index("niri msg action power-on-monitors")
-        self.assertTrue(
-            all(commands.index(command) < power_index for command in restored)
-        )
-        self.assertFalse(state.exists())
-        self.assertTrue(ready.exists(), "restoring displays bypassed the password lock")
-        self.assertFalse(any(command.startswith("lock ") for command in commands))
-
-    def test_copilot_display_wake_confirms_password_lock_before_restoring_outputs(self):
-        state, ready = self.copilot_display_fixture()
-        state.write_text("eDP-1\nDP-1\n")
-        self.set_copilot_output_modes(enabled=False)
-        commands = self.run_copilot_display()
-        locked_index = commands.index("loginctl yes")
-        self.assertLess(commands.index("lock sleep"), locked_index)
-        restored = [command for command in commands if command.endswith(" on")]
-        self.assertEqual(
-            set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"}
-        )
-        self.assertTrue(
-            all(locked_index < commands.index(command) for command in restored)
-        )
-        self.assertNotIn("sleep 1", commands)
-        self.assertTrue(ready.exists())
-        self.assertFalse(state.exists())
-
-    def test_copilot_display_resume_restores_saved_outputs_after_confirming_password_lock(
-        self,
-    ):
-        state, ready = self.copilot_display_fixture()
-        state.write_text("eDP-1\nDP-1\n")
-        self.set_copilot_output_modes(enabled=False)
-        commands = self.run_copilot_display(mode="resume")
-        locked_index = commands.index("loginctl yes")
-        self.assertLess(commands.index("lock sleep"), locked_index)
-        restored = [command for command in commands if command.endswith(" on")]
-        self.assertEqual(
-            set(restored), {"niri msg output eDP-1 on", "niri msg output DP-1 on"}
-        )
-        self.assertTrue(
-            all(locked_index < commands.index(command) for command in restored)
-        )
-        self.assertIn("niri msg action power-on-monitors", commands)
-        self.assertFalse(any(command.endswith(" off") for command in commands))
-        self.assertNotIn("sleep 1", commands)
-        self.assertTrue(ready.exists())
-        self.assertFalse(state.exists())
-
-    def test_copilot_display_resume_without_snapshot_repeatedly_wakes_only_after_lock(
-        self,
-    ):
-        state, ready = self.copilot_display_fixture()
-        for resume_number in range(2):
-            with self.subTest(resume_number=resume_number):
-                self.log.unlink(missing_ok=True)
-                commands = self.run_copilot_display(mode="resume")
-                power_index = commands.index("niri msg action power-on-monitors")
-                self.assertLess(commands.index("loginctl yes"), power_index)
-                if resume_number == 0:
-                    self.assertLess(commands.index("lock sleep"), power_index)
-                self.assertEqual(commands.count("niri msg action power-on-monitors"), 1)
-                self.assertFalse(
-                    any(command.startswith("niri msg output ") for command in commands)
-                )
-                self.assertNotIn("sleep 1", commands)
-                self.assertTrue(ready.exists())
-                self.assertFalse(
-                    state.exists(),
-                    "resume accidentally entered the display-off toggle mode",
-                )
-
-    def test_copilot_display_resume_failures_preserve_recovery_state(self):
-        state, ready = self.copilot_display_fixture()
-        for failure in ("lock", "apply", "power", "lock-without-snapshot"):
-            with self.subTest(failure=failure):
-                self.log.unlink(missing_ok=True)
-                ready.unlink(missing_ok=True)
-                state.unlink(missing_ok=True)
-                if failure != "lock-without-snapshot":
-                    state.write_text("eDP-1\nDP-1\n")
-                self.set_copilot_output_modes(enabled=False)
-                self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = (
-                    "1" if failure.startswith("lock") else "0"
-                )
-                self.environment["RUNTIME_TEST_IGNORE_APPLY"] = (
-                    "on" if failure == "apply" else ""
-                )
-                self.environment["RUNTIME_TEST_POWER_ON_FAIL"] = (
-                    "1" if failure == "power" else "0"
-                )
-                commands = self.run_copilot_display(succeeds=False, mode="resume")
-                self.assertFalse(any(command.endswith(" off") for command in commands))
-                if failure.startswith("lock"):
-                    self.assertFalse(
-                        any(command.endswith(" on") for command in commands)
-                    )
-                    self.assertNotIn("niri msg action power-on-monitors", commands)
-                else:
-                    self.assertIn("niri msg output eDP-1 on", commands)
-                if failure == "lock-without-snapshot":
-                    self.assertFalse(state.exists())
-                else:
-                    self.assertEqual(state.read_text(), "eDP-1\nDP-1\n")
-
-    def test_copilot_display_resume_cancels_queued_gesture_and_accepts_fresh_gesture(
-        self,
-    ):
-        state, _ = self.copilot_display_fixture()
-        pending = self.runtime / "hype-copilot.state"
-        stale_token = str(time.time_ns() // 1000)
-        pending.write_text(f"{stale_token} double\n")
-        self.run_copilot_display(mode="resume")
-        self.assertFalse(
-            pending.exists(), "resume left a queued display-off gesture active"
-        )
-        self.log.unlink(missing_ok=True)
-        self.environment["HYPE_COPILOT_TOKEN"] = stale_token
-        commands = self.run_copilot_display()
-        self.assertFalse(any(command.endswith(" off") for command in commands))
-        self.assertFalse(state.exists())
-        fresh_token = str(time.time_ns() // 1000)
-        pending.write_text(f"{fresh_token} double\n")
-        self.environment["HYPE_COPILOT_TOKEN"] = fresh_token
-        commands = self.run_copilot_display()
-        self.assertIn("niri msg output eDP-1 off", commands)
-        self.assertIn("niri msg output DP-1 off", commands)
-        self.assertTrue(state.exists())
 
     def test_hypridle_resumes_saved_displays_only_after_system_sleep(self):
         hooks = {"after_sleep_cmd": [], "on-resume": []}
-        for line in (REPO / "hypr/hypridle.conf").read_text().splitlines():
+        for line in (self.repo / "hypr/hypridle.conf").read_text().splitlines():
             key, separator, value = line.partition("=")
             if separator and key.strip() in hooks:
                 hooks[key.strip()].append(value.strip())
         self.assertEqual(
-            hooks["after_sleep_cmd"], ["~/.config/scripts/copilot-display.sh resume"]
+            hooks["after_sleep_cmd"],
+            ["~/.config/scripts/hype-control copilot-display resume"],
         )
         self.assertTrue(hooks["on-resume"])
         self.assertTrue(
             all(
-                command == "niri msg action power-on-monitors"
+                command == "~/.config/scripts/hype-control monitors on"
                 for command in hooks["on-resume"]
             )
         )
 
-    def test_copilot_display_already_locked_does_not_restart_locker(self):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        commands = self.run_copilot_display()
-        self.assertTrue(state.exists())
-        self.assertIn("niri msg output eDP-1 off", commands)
-        self.assertFalse(any(command.startswith("lock ") for command in commands))
+    def test_fullscreen_toggle_does_not_hide_bars_on_other_outputs(self):
+        self.control("fullscreen-toggle")
+        self.assertEqual(self.niri_actions(), [{"FullscreenWindow": {"id": None}}])
 
-    def test_copilot_display_locked_hint_requires_running_password_locker(self):
-        state, ready = self.copilot_display_fixture()
-        self.environment["RUNTIME_TEST_LOGINCTL_VALUE"] = "yes"
-        for locker_recovers in (True, False):
-            with self.subTest(locker_recovers=locker_recovers):
-                ready.unlink(missing_ok=True)
-                state.unlink(missing_ok=True)
-                self.log.unlink(missing_ok=True)
-                self.set_copilot_output_modes(enabled=True)
-                self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = (
-                    "0" if locker_recovers else "1"
-                )
-                commands = self.run_copilot_display(succeeds=locker_recovers)
-                self.assertIn("lock sleep", commands)
-                self.assertTrue(any(command.endswith(" off") for command in commands))
-                self.assertFalse(any(command.endswith(" on") for command in commands))
-                self.assertTrue(state.exists())
-
-    def test_copilot_display_failed_delayed_lock_keeps_displays_off_and_retry_state(
-        self,
-    ):
-        state, _ = self.copilot_display_fixture()
-        self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "1"
-        commands = self.run_copilot_display(succeeds=False)
-        self.assertIn("lock sleep", commands)
-        self.assertIn("niri msg output eDP-1 off", commands)
-        self.assertIn("niri msg output DP-1 off", commands)
-        self.assertFalse(any(command.endswith(" on") for command in commands))
-        self.assertNotIn("niri msg action power-on-monitors", commands)
-        self.assertEqual(set(state.read_text().splitlines()), {"eDP-1", "DP-1"})
-        outputs = json.loads(Path(self.environment["RUNTIME_TEST_OUTPUTS"]).read_text())
-        self.assertTrue(
-            all(outputs[name]["current_mode"] is None for name in ("eDP-1", "DP-1"))
-        )
-
-    def test_copilot_display_partial_blackout_cannot_restore_without_password_lock(
-        self,
-    ):
-        state, _ = self.copilot_display_fixture()
-        self.environment["RUNTIME_TEST_OFF_FAIL"] = "DP-1"
-        self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "1"
-        commands = self.run_copilot_display(succeeds=False)
-        self.assertIn("lock sleep", commands)
-        self.assertIn("niri msg output eDP-1 off", commands)
-        self.assertFalse(any(command.endswith(" on") for command in commands))
-        self.assertNotIn("niri msg action power-on-monitors", commands)
-        self.assertEqual(set(state.read_text().splitlines()), {"eDP-1", "DP-1"})
-
-    def test_copilot_display_stale_snapshot_cannot_restore_without_confirmed_lock(self):
-        state, _ = self.copilot_display_fixture()
-        state.write_text("eDP-1\nDP-1\n")
-        self.environment["RUNTIME_TEST_LOCK_NEVER_READY"] = "1"
-        commands = self.run_copilot_display(succeeds=False)
-        self.assertFalse(any(command.endswith(" on") for command in commands))
-        self.assertNotIn("niri msg action power-on-monitors", commands)
-        self.assertEqual(state.read_text(), "eDP-1\nDP-1\n")
-
-    def test_copilot_display_disable_acknowledgement_requires_outputs_to_turn_off(self):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        self.environment["RUNTIME_TEST_IGNORE_APPLY"] = "off"
-        commands = self.run_copilot_display(succeeds=False)
-        self.assertIn("niri msg output eDP-1 off", commands)
-        self.assertIn("niri msg output eDP-1 on", commands)
-        self.assertIn("niri msg output DP-1 on", commands)
-        self.assertFalse(
-            state.exists(), "successful rollback retained disabled-display state"
-        )
-
-    def test_copilot_display_restore_acknowledgement_requires_visible_output(self):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        state.write_text("eDP-1\nDP-1\n")
-        self.set_copilot_output_modes(enabled=False)
-        self.environment["RUNTIME_TEST_IGNORE_APPLY"] = "on"
-        commands = self.run_copilot_display(succeeds=False)
-        self.assertIn("niri msg output eDP-1 on", commands)
-        self.assertEqual(state.read_text(), "eDP-1\nDP-1\n")
-
-    def test_copilot_display_restore_tolerates_disconnected_saved_output(self):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        path = Path(self.environment["RUNTIME_TEST_OUTPUTS"])
-        outputs = json.loads(path.read_text())
-        del outputs["DP-1"]
-        for all_disconnected in (False, True):
-            with self.subTest(all_disconnected=all_disconnected):
-                state.write_text("eDP-1\nDP-1\n")
-                if all_disconnected:
-                    del outputs["eDP-1"]
-                else:
-                    outputs["eDP-1"]["current_mode"] = None
-                path.write_text(json.dumps(outputs))
-                self.run_copilot_display(succeeds=not all_disconnected)
-                self.assertEqual(state.exists(), all_disconnected)
-
-    def test_copilot_display_rejects_missing_or_untrusted_session_state(self):
-        self.copilot_display_fixture()
-        for failure in ("missing-session", "loginctl-error", "unknown-lock-state"):
-            with self.subTest(failure=failure):
-                self.log.unlink(missing_ok=True)
-                self.environment["XDG_SESSION_ID"] = "mock-copilot"
-                self.environment.pop("RUNTIME_TEST_LOGINCTL_FAIL", None)
-                self.environment.pop("RUNTIME_TEST_LOGINCTL_VALUE", None)
-                if failure == "missing-session":
-                    self.environment.pop("XDG_SESSION_ID")
-                elif failure == "loginctl-error":
-                    self.environment["RUNTIME_TEST_LOGINCTL_FAIL"] = "1"
-                else:
-                    self.environment["RUNTIME_TEST_LOGINCTL_VALUE"] = "unknown"
-                commands = self.run_copilot_display(succeeds=False)
-                self.assertFalse(any(command.endswith(" off") for command in commands))
-
-    def test_copilot_display_restore_failure_preserves_state_for_retry(self):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        for failure in ("output", "power"):
-            with self.subTest(failure=failure):
-                state.write_text("eDP-1\nDP-1\n")
-                self.set_copilot_output_modes(enabled=False)
-                self.environment["RUNTIME_TEST_ON_FAIL"] = (
-                    "eDP-1" if failure == "output" else ""
-                )
-                self.environment["RUNTIME_TEST_POWER_ON_FAIL"] = (
-                    "1" if failure == "power" else "0"
-                )
-                self.run_copilot_display(succeeds=False)
-                self.assertEqual(state.read_text(), "eDP-1\nDP-1\n")
-                self.assertTrue(ready.exists())
-
-    def test_copilot_display_disable_failure_restores_outputs_and_keeps_retry_state_if_needed(
-        self,
-    ):
-        state, ready = self.copilot_display_fixture()
-        ready.touch()
-        self.environment["RUNTIME_TEST_OFF_FAIL"] = "DP-1"
-        for rollback_fails in (False, True):
-            with self.subTest(rollback_fails=rollback_fails):
-                self.log.unlink(missing_ok=True)
-                self.environment["RUNTIME_TEST_ON_FAIL"] = (
-                    "eDP-1" if rollback_fails else ""
-                )
-                commands = self.run_copilot_display(succeeds=False)
-                self.assertIn("niri msg output eDP-1 on", commands)
-                self.assertIn("niri msg output DP-1 on", commands)
-                self.assertEqual(state.exists(), rollback_fails)
-
-    def outputs_fixture(self, outputs_kdl):
-        """Model a laptop panel plus an external monitor on a changeable connector."""
-        niri_dir = self.user_home / ".config/niri"
-        niri_dir.mkdir(parents=True, exist_ok=True)
-        (niri_dir / "outputs.kdl").write_text(outputs_kdl)
-        (niri_dir / "config.kdl").write_text('include "outputs.kdl"\n')
-
-        def mode(width, height, refresh, preferred=False):
-            return {
-                "width": width,
-                "height": height,
-                "refresh_rate": refresh,
-                "is_preferred": preferred,
-            }
-
-        outputs = {
-            "eDP-1": {
-                "name": "eDP-1",
-                "make": "Samsung Display Corp.",
-                "model": "0x419F",
-                "serial": None,
-                "current_mode": 0,
-                "modes": [mode(2880, 1800, 120000, True)],
-            },
-            "DP-2": {
-                "name": "DP-2",
-                "make": "Dell Inc.",
-                "model": "DELL U2723QE",
-                "serial": "ABC123",
-                "current_mode": 1,
-                "modes": [mode(2560, 1440, 165000), mode(2560, 1440, 59951, True)],
-            },
-        }
-        (self.root / "outputs.json").write_text(json.dumps(outputs))
-        self.environment["RUNTIME_TEST_OUTPUTS"] = str(self.root / "outputs.json")
+    def test_idle_start_exports_environment_before_restart_and_falls_back(self):
         self.mock(
-            "niri",
-            f"""
-if [[ $1 == validate ]]; then exec {shlex.quote(shutil.which("niri"))} "$@" >/dev/null 2>&1; fi
-if [[ $* == "msg --json outputs" ]]; then cat "$RUNTIME_TEST_OUTPUTS"; exit 0; fi
-printf 'niri %s\\n' "$*" >> "$RUNTIME_TEST_LOG"
-""",
+            "dbus-update-activation-environment",
+            'printf "env %s\n" "$*" >> "$FIXTURE_LOG"',
         )
-        return niri_dir
-
-    def test_display_scale_keeps_saved_modes_and_adopts_stable_names(self):
-        niri_dir = self.outputs_fixture(
-            'output "eDP-1" {\n    scale 2.0\n}\n'
-            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n}\n'
-        )
-        self.run_script("display-scale.sh")
-        self.assertEqual(
-            (niri_dir / "outputs.kdl").read_text(),
-            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n}\n'
-            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n',
-        )
-        self.assertIn("niri msg action load-config-file", self.log.read_text())
-
-    def test_display_scale_adds_only_new_outputs(self):
-        niri_dir = self.outputs_fixture(
-            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 1.5\n}\n'
-        )
-        self.run_script("display-scale.sh")
-        self.assertEqual(
-            (niri_dir / "outputs.kdl").read_text(),
-            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 1.5\n}\n'
-            'output "Dell Inc. DELL U2723QE ABC123" {\n    scale 1.0\n}\n',
-        )
-        self.run_script("display-scale.sh")
-        self.assertEqual(self.log.read_text().count("load-config-file"), 1)
-
-    def test_monitor_refresh_saves_mode_in_outputs_file_by_stable_name(self):
-        niri_dir = self.outputs_fixture(
-            'output "DP-2" {\n    mode "2560x1440@59.951"\n    position x=0 y=0\n}\n'
-            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n'
-        )
-        self.environment["RUNTIME_TEST_CHOICES"] = str(self.root / "choices")
-        (self.root / "choices").write_text("1\n0\n")
         self.mock(
-            "wofi",
-            """
-printf '%s\\n' "$*" >> "$XDG_RUNTIME_DIR/menu-args"
-cat >/dev/null
-choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
-sed -i 1d "$RUNTIME_TEST_CHOICES"
-printf '%s\\n' "$choice"
-""",
+            "systemctl",
+            'printf "systemctl %s\n" "$*" >> "$FIXTURE_LOG"\n'
+            'exit "${FIXTURE_RESTART_STATUS:-0}"',
         )
-        self.run_script("monitor-refresh.sh")
+        self.mock("hypridle", 'printf "hypridle\n" >> "$FIXTURE_LOG"')
+        self.control("start-idle")
+        expected = [
+            "env --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_ID NIRI_SOCKET",
+            "systemctl --user restart hypridle.service",
+        ]
+        self.assertEqual(self.log.read_text().splitlines(), expected)
+        self.control("start-idle", extra_env={"FIXTURE_RESTART_STATUS": "1"})
         self.assertEqual(
-            (niri_dir / "outputs.kdl").read_text(),
-            'output "Samsung Display Corp. 0x419F Unknown" {\n    scale 2.0\n}\n'
-            'output "Dell Inc. DELL U2723QE ABC123" {\n    mode "2560x1440@165"\n    scale 1.0\n'
-            "    position x=0 y=0\n}\n",
+            self.log.read_text().splitlines(), [*expected, *expected, "hypridle"]
         )
-        self.assertEqual(
-            (niri_dir / "config.kdl").read_text(), 'include "outputs.kdl"\n'
-        )
-        self.assertIn("niri msg output DP-2 mode 2560x1440@165", self.log.read_text())
-        menus = (self.runtime / "menu-args").read_text()
-        self.assertEqual(menus.count("--width 599 --height 369"), 2)
-        self.assertNotIn("--lines", menus)
 
-    def test_monitor_refresh_rejects_compact_output_before_live_changes(self):
-        original = 'output "DP-2" { mode "2560x1440@59.951"; scale 1.0; }\n'
-        niri_dir = self.outputs_fixture(original)
-        choices = self.root / "choices"
-        choices.write_text("1\n0\n")
-        self.environment["RUNTIME_TEST_CHOICES"] = str(choices)
-        self.mock(
-            "wofi",
-            """
-cat >/dev/null
-choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
-sed -i 1d "$RUNTIME_TEST_CHOICES"
-printf '%s\\n' "$choice"
-""",
-        )
-        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        result = subprocess.run(
-            ["bash", str(self.scripts / "monitor-refresh.sh")],
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        self.assertNotEqual(
-            result.returncode, 0, "Unsupported output syntax was reported saved"
-        )
-        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
-        commands = self.log.read_text()
-        self.assertNotIn(
-            "niri msg output ", commands, "Rejected config still changed a live output"
-        )
-        self.assertNotIn("Monitor refresh saved", commands)
-
-    def test_monitor_refresh_cancel_at_either_menu_keeps_display_unchanged(self):
-        original = 'output "DP-2" {\n    scale 1.5\n}\n'
-        niri_dir = self.outputs_fixture(original)
-        choices = self.root / "choices"
-        self.environment["RUNTIME_TEST_CHOICES"] = str(choices)
-        self.mock(
-            "wofi",
-            """
-cat >/dev/null
-choice="$(head -n 1 "$RUNTIME_TEST_CHOICES")"
-sed -i 1d "$RUNTIME_TEST_CHOICES"
-[[ -n "$choice" ]] || exit 1
-printf '%s\\n' "$choice"
-""",
-        )
-        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        for selections in ("", "1\n"):
-            with self.subTest(selections=selections):
-                choices.write_text(selections)
-                self.run_script("monitor-refresh.sh")
-                self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
-                self.assertFalse(
-                    self.log.exists(), "Cancelled picker changed state or notified"
-                )
-
-    def test_monitor_refresh_reports_broken_launcher_without_changing_display(self):
-        original = 'output "DP-2" {\n    scale 1.5\n}\n'
-        niri_dir = self.outputs_fixture(original)
-        self.mock("wofi", "cat >/dev/null; exit 127")
-        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        result = subprocess.run(
-            ["bash", str(self.scripts / "monitor-refresh.sh")],
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 127)
-        self.assertIn("Display menu unavailable", self.log.read_text())
-        self.assertNotIn("niri msg output", self.log.read_text())
-        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
-
-    def test_monitor_refresh_treats_menu_closed_by_launcher_toggle_as_cancel(self):
-        original = 'output "DP-2" {\n    scale 1.5\n}\n'
-        niri_dir = self.outputs_fixture(original)
-        self.mock("wofi", "cat >/dev/null; exit 143")
-        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.run_script("monitor-refresh.sh")
-        self.assertFalse(self.log.exists())
-        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
-
-    def test_monitor_refresh_rejects_invalid_wofi_indices_without_live_changes(self):
-        original = 'output "DP-2" {\n    scale 1.5\n}\n'
-        niri_dir = self.outputs_fixture(original)
-        self.mock("wofi", "cat >/dev/null; printf '%s\\n' \"$MENU_INDEX\"")
-        for index in ("DP-2", "-1", "999"):
-            with self.subTest(index=index):
-                subprocess.run(
-                    ["bash", str(self.scripts / "monitor-refresh.sh")],
-                    env=self.environment | {"MENU_INDEX": index},
-                    capture_output=True,
-                    text=True,
-                    timeout=8,
-                    check=False,
-                )
-                self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
-                self.assertFalse(
-                    self.log.exists(), "Invalid choice changed a live output"
-                )
-
-    def test_display_scale_rejects_compact_output_without_adding_duplicate(self):
-        original = 'output "DP-2" { scale 1.5; }\n'
-        niri_dir = self.outputs_fixture(original)
-        result = subprocess.run(
-            ["bash", str(self.scripts / "display-scale.sh")],
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        self.assertNotEqual(
-            result.returncode, 0, "Unsupported output syntax was silently duplicated"
-        )
-        self.assertEqual((niri_dir / "outputs.kdl").read_text(), original)
-        self.assertFalse(self.log.exists(), "Rejected config was reloaded")
+    def test_legacy_dispatch_accepts_installer_transition_symlink(self):
+        (self.root / "fullscreen-toggle.sh").symlink_to(self.binary)
+        self.isolated('exec "$FIXTURE_ROOT/fullscreen-toggle.sh"')
+        self.assertEqual(self.niri_actions(), [{"FullscreenWindow": {"id": None}}])
 
     def test_waybar_keeps_single_instance_with_hotplug_capable_config(self):
         config = self.waybar_fixture()
-        self.hold_mock("waybar")
-        self.start_script("start-waybar.sh")
-        self.run_script("start-waybar.sh")
+        self.mock(
+            "waybar",
+            'printf "%s\n" "$*" >> "$FIXTURE_LOG"\nexec sleep 30',
+        )
+        self.isolated(
+            "control start-waybar & first=$!\n"
+            'wait_for "$FIXTURE_LOG"\n'
+            "control start-waybar\n"
+            'kill "$first"\n'
+            'wait "$first" || :'
+        )
         self.assertEqual(self.log.read_text().splitlines(), [f"--config {config}"])
 
-    def test_fullscreen_toggle_does_not_hide_bars_on_other_outputs(self):
-        self.mock("niri", 'printf "niri %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.mock("pgrep", "exit 0")
-        self.mock("pkill", 'printf "pkill %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.run_script("fullscreen-toggle.sh")
-        self.assertEqual(
-            self.log.read_text().splitlines(), ["niri msg action fullscreen-window"]
+    def test_waybar_stop_terminates_owned_bar_without_external_utilities(self):
+        self.waybar_fixture()
+        self.mock("waybar", 'touch "$FIXTURE_LOG"\nwhile :; do sleep 0.05; done')
+        self.isolated(
+            "control start-waybar & first=$!\n"
+            'wait_for "$FIXTURE_LOG"\n'
+            'control stop-waybar || { kill "$first"; wait "$first" || :; exit 41; }\n'
+            'status=0; wait "$first" || status=$?\n'
+            "[[ $status == 143 ]]"
         )
+        self.assertEqual(self.niri_actions(), [])
 
-    def test_brightness_changes_succeed_and_notify_in_both_directions(self):
-        value = self.root / "brightness"
-        self.environment["RUNTIME_TEST_BRIGHTNESS"] = str(value)
-        self.mock(
-            "brightnessctl",
-            """
-case "$*" in
-    get) cat "$RUNTIME_TEST_BRIGHTNESS" ;;
-    max) printf '1000\\n' ;;
-    '-q set '*) printf '%s\\n' "$3" > "$RUNTIME_TEST_BRIGHTNESS" ;;
-    *) exit 90 ;;
-esac""",
-        )
-        self.mock("notify-send", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        for action, expected, percent in (("up", 510, 51), ("down", 490, 49)):
-            with self.subTest(action=action):
-                value.write_text("500\n")
-                self.log.unlink(missing_ok=True)
-                self.run_script("brightness-control.sh", action)
-                self.assertEqual(int(value.read_text()), expected)
-                self.assertIn(f"Brightness: {percent}%", self.log.read_text())
-
-    def test_brightness_ramps_precisely_and_respects_limits(self):
-        value = self.root / "brightness"
-        self.environment["RUNTIME_TEST_BRIGHTNESS"] = str(value)
-        self.mock(
-            "brightnessctl",
-            """
-case "$*" in
-    get) cat "$RUNTIME_TEST_BRIGHTNESS" ;;
-    max) printf '%s\\n' "$RUNTIME_TEST_MAX" ;;
-    '-q set '*)
-        printf '%s\\n' "$3" > "$RUNTIME_TEST_BRIGHTNESS"
-        printf '%s\\n' "$3" >> "$RUNTIME_TEST_LOG" ;;
-    *) exit 90 ;;
-esac""",
-        )
-        for maximum, current, action, target in (
-            (400, 120, "up", 124),
-            (400, 120, "down", 116),
-            (255, 100, "up", 103),
-            (255, 100, "down", 97),
-            (255, 4, "down", 3),
-            (400, 399, "up", 400),
-            (400, 400, "up", 400),
-            (400, 5, "down", 4),
-            (400, 4, "down", 4),
-            (400, 1, "down", 1),
-            (400, 0, "down", 0),
-            (1, 0, "up", 1),
-            (1, 1, "down", 1),
-        ):
-            with self.subTest(maximum=maximum, current=current, action=action):
-                self.environment["RUNTIME_TEST_MAX"] = str(maximum)
-                value.write_text(str(current))
-                self.log.unlink(missing_ok=True)
-                self.run_script("brightness-control.sh", action)
-                self.assertEqual(int(value.read_text()), target)
-                writes = (
-                    list(map(int, self.log.read_text().splitlines()))
-                    if self.log.exists()
-                    else []
-                )
-                self.assertEqual(writes, sorted(writes, reverse=action == "down"))
-                self.assertTrue(
-                    all(
-                        min(current, target) <= v <= max(current, target)
-                        for v in writes
-                    )
-                )
-
-    def test_volume_drops_busy_input_instead_of_queueing(self):
-        self.mock("wpctl", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        with (self.runtime / "hype-volume-control.lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            result = subprocess.run(
-                ["bash", str(self.scripts / "volume-control.sh"), "up"],
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                timeout=0.5,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertFalse(self.log.exists())
-
-    def test_control_notifications_do_not_hold_input_locks(self):
-        self.mock("wpctl", "printf 'Volume: 0.65\\n'")
-        self.mock(
-            "brightnessctl",
-            'case "$1" in get) echo 120 ;; max) echo 400 ;; esac',
-        )
-        self.mock(
-            "notify-send",
-            """
-exec 8>"$XDG_RUNTIME_DIR/$RUNTIME_TEST_CONTROL_LOCK"
-if flock -n 8; then
-    echo unlocked >> "$RUNTIME_TEST_LOG"
-else
-    echo locked >> "$RUNTIME_TEST_LOG"
-fi""",
-        )
-        for script, lock in (
-            ("volume-control.sh", "hype-volume-control.lock"),
-            ("brightness-control.sh", "brightness-control.lock"),
-        ):
-            with self.subTest(script=script):
-                self.log.unlink(missing_ok=True)
-                self.environment["RUNTIME_TEST_CONTROL_LOCK"] = lock
-                self.run_script(script, "up")
-                self.assertEqual(self.log.read_text().strip(), "unlocked")
-
-    def test_drive_links_decode_source_and_target_before_opening_nautilus(self):
-        self.environment["USER"] = "runtime-test"
-        self.mock(
-            "findmnt",
-            r"printf '%s\n' '/dev/mapper/My\x20Drive /run/media/runtime-test/My\x20Drive'",
-        )
-        self.mock(
-            "lsblk",
-            """
-if [[ "$*" == '-no LABEL /dev/mapper/My Drive' ]]; then
-    printf 'My Drive\\n'
-fi""",
-        )
-        self.mock("udisksctl", "exit 90")
-        self.mock("udevadm", "exit 0")
-        self.mock("wofi", "exit 1")
-        self.mock(
-            "nautilus",
-            '''
-[[ -L "$1/My Drive" ]] || exit 91
-printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''',
-        )
-        self.run_script("open-drives.sh")
-        link = self.user_home / "drives/My Drive"
-        self.assertTrue(link.is_symlink(), "decoded drive shortcut was not created")
-        self.assertEqual(os.readlink(link), "/run/media/runtime-test/My Drive")
-        self.assertTrue(self.log.exists(), "Nautilus was not launched")
-        self.assertEqual(self.log.read_text().splitlines(), [f"nautilus {link.parent}"])
-
-    def test_drives_open_nautilus_when_mount_tools_are_unavailable(self):
-        self.mock(
-            "nautilus",
-            '''
-[[ -d "$1" ]] || exit 91
-printf 'nautilus %s\\n' "$*" >> "$RUNTIME_TEST_LOG"''',
-        )
-        result = subprocess.run(
-            [
-                "bash",
-                "-c",
-                """
-command() {
-    [[ "$*" != '-v udisksctl' ]] || return 1
-    builtin command "$@"
-}
-source "$1"
-""",
-                "bash",
-                str(self.scripts / "open-drives.sh"),
-            ],
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(
-            self.log.exists(), "Nautilus was not launched without mounting tools"
-        )
-        self.assertEqual(
-            self.log.read_text().splitlines(), [f"nautilus {self.user_home / 'drives'}"]
-        )
-
-    def test_waybar_passes_jsonc_config_through_without_parsing(self):
+    def test_waybar_passes_custom_jsonc_config_and_preserves_theme(self):
         config = self.waybar_fixture()
-        config.write_text('// Waybar accepts JSONC.\n{"modules-left": ["clock"],}\n')
-        self.mock("waybar", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.run_script("start-waybar.sh")
-        self.assertIn(str(config), self.log.read_text())
-
-    def test_concurrent_sensor_scans_publish_complete_cache(self):
-        sensor = self.sensor_fixture(label='Package\t"CPU"')
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            results = list(
-                executor.map(
-                    lambda _: self.run_script("temperature-control.sh"), range(8)
-                )
-            )
-        for result in results:
-            self.assertEqual(json.loads(result.stdout)["text"], "45°")
-        cache = (self.runtime / "hype-niri-temp-sensor").read_text()
-        self.assertEqual(cache.split("\t", 1)[0], str(sensor))
-        self.assertFalse(list(self.runtime.glob(".hype-temp-sensor.*")))
-        self.mock("mktemp", "exit 99")
+        custom = self.root / "custom bar.jsonc"
+        config.rename(custom)
+        self.mock("waybar", 'printf "%s\n" "$GTK_THEME" "$1" "$2" >> "$FIXTURE_LOG"')
+        self.control(
+            "start-waybar",
+            extra_env={"WAYBAR_CONFIG": str(custom), "GTK_THEME": "Test"},
+        )
         self.assertEqual(
-            json.loads(self.run_script("temperature-control.sh").stdout)["text"], "45°"
+            self.log.read_text().splitlines(), ["Test", "--config", str(custom)]
         )
 
-    def test_sensor_cache_does_not_escape_configured_sensor_roots(self):
-        self.sensor_fixture("075000")
-        unrelated = self.root / "unrelated"
-        unrelated.write_text("45000\n")
-        (self.runtime / "hype-niri-temp-sensor").write_text(f"{unrelated}\tUnrelated\n")
-        result = json.loads(self.run_script("temperature-control.sh").stdout)
-        self.assertEqual(result["text"], "75°")
-        self.assertEqual(result["class"], "warning")
-
-    def test_sensor_cache_rescans_when_cached_sensor_identity_changes(self):
-        sensor = self.sensor_fixture("45000")
-        self.run_script("temperature-control.sh")
-        (sensor.parent / "name").write_text("amdgpu\n")
-        (sensor.parent / "temp1_label").write_text("edge\n")
-        sensor.write_text("50000\n")
-        cpu = sensor.parent.parent / "hwmon1"
-        cpu.mkdir()
-        (cpu / "name").write_text("coretemp\n")
-        (cpu / "temp1_label").write_text("Package id 0\n")
-        (cpu / "temp1_input").write_text("85000\n")
-        result = json.loads(self.run_script("temperature-control.sh").stdout)
-        self.assertEqual(result["text"], "85°")
-        self.assertEqual(result["class"], "critical")
-        self.assertIn("coretemp / Package id 0", result["tooltip"])
-
-    def test_sensor_cache_rescans_when_hwmon_symlink_changes_device(self):
-        sensor = self.sensor_fixture("45000")
-        hwmon = sensor.parent
-        first_device = self.root / "first-device"
-        hwmon.rename(first_device)
-        hwmon.symlink_to(first_device, target_is_directory=True)
-        self.run_script("temperature-control.sh")
-        replacement = self.root / "replacement-device"
-        shutil.copytree(first_device, replacement)
-        (replacement / "temp1_input").write_text("50000\n")
-        hwmon.unlink()
-        hwmon.symlink_to(replacement, target_is_directory=True)
-        cpu = hwmon.parent / "hwmon1"
-        shutil.copytree(first_device, cpu)
-        (cpu / "temp1_input").write_text("85000\n")
-        result = json.loads(self.run_script("temperature-control.sh").stdout)
-        self.assertEqual(result["text"], "85°")
-        self.assertEqual(result["class"], "critical")
-
-    def test_wallpaper_ensure_handles_newlines_without_launching_daemon(self):
-        wallpapers = self.user_home / "pictures/wallpapers"
-        wallpapers.mkdir(parents=True)
-        image = wallpapers / "one\ntwo.PNG"
-        image.touch()
-        self.mock("awww", 'printf "unexpected image\\n" >> "$RUNTIME_TEST_LOG"')
-        self.mock("awww-daemon", 'printf "unexpected daemon\\n" >> "$RUNTIME_TEST_LOG"')
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            list(
-                executor.map(
-                    lambda _: self.run_script("wallpaper.sh", "ensure"), range(6)
-                )
-            )
-        current = self.user_home / ".local/state/niri/current_wallpaper"
-        self.assertEqual(current.resolve(), image)
-        self.assertFalse(self.log.exists())
-        self.assertFalse(list(current.parent.glob(".current-wallpaper.*")))
-
-    def test_power_menu_runs_only_the_chosen_action(self):
-        for helper in ("lock-screen.sh", "suspend-now.sh", "caffeine-control.sh"):
-            (self.scripts / helper).write_text(
-                f'#!/usr/bin/env bash\nprintf "%s\\n" "{helper} $*" >> "$RUNTIME_TEST_LOG"\n'
-            )
-        for command in ("niri", "systemctl"):
-            self.mock(command, f'printf "%s\\n" "{command} $*" >> "$RUNTIME_TEST_LOG"')
+    def test_waybar_restart_replaces_owned_waybar(self):
+        config = self.waybar_fixture()
         self.mock(
-            "wofi",
-            'cat > "$XDG_RUNTIME_DIR/menu"\n'
-            'printf "%s\\n" "$*" > "$XDG_RUNTIME_DIR/menu-args"\n'
-            '[[ -n "$MENU_CHOICE" ]] || exit 1\n'
-            'printf "%s\\n" "$MENU_CHOICE"',
+            "waybar",
+            'printf "%s\n" "$*" >> "$FIXTURE_LOG"\n'
+            "if [[ ${FIXTURE_RESTART:-} != true ]]; then\n"
+            "    while :; do sleep 0.05; done\n"
+            "fi",
         )
-        stop = "caffeine-control.sh stop"
-        for choice, expected in (
-            ("0", ["lock-screen.sh"]),
-            ("1", ["suspend-now.sh"]),
-            ("2", [stop, "niri msg action quit --skip-confirmation"]),
-            ("3", [stop, "systemctl poweroff"]),
-            ("4", [stop, "systemctl reboot"]),
-            ("", []),
-        ):
-            with self.subTest(choice=choice):
-                self.log.unlink(missing_ok=True)
-                self.run_script(
-                    "power-menu.sh",
-                    environment=self.environment | {"MENU_CHOICE": choice},
-                )
-                logged = self.log.read_text() if self.log.exists() else ""
-                self.assertEqual(
-                    [line.strip() for line in logged.splitlines()], expected
-                )
-        entries = (self.runtime / "menu").read_text().splitlines()
-        self.assertEqual(
-            [entry.split()[-1] for entry in entries],
-            ["Lock", "Sleep", "Logout", "Shutdown", "Reboot"],
+        self.isolated(
+            "control start-waybar & first=$!\n"
+            'wait_for "$FIXTURE_LOG"\n'
+            "FIXTURE_RESTART=true control start-waybar --restart\n"
+            'wait "$first" || :'
         )
-        arguments = (self.runtime / "menu-args").read_text()
-        self.assertIn("--no-custom-entry", arguments)
-        self.assertIn("--cache-file /dev/null", arguments)
+        self.assertEqual(self.log.read_text().splitlines(), [f"--config {config}"] * 2)
 
-    def test_lock_requests_keep_single_instance(self):
-        self.hold_mock("hyprlock")
-        self.start_script("lock.sh")
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            list(executor.map(lambda _: self.run_script("lock.sh"), range(6)))
-        self.assertEqual(len(self.log.read_text().splitlines()), 1)
+    def test_power_menu_cancellation_has_no_side_effects(self):
+        caffeine_state = self.runtime / "caffeine_state"
+        caffeine_state.write_text("fixture")
+        self.gui_control("power-menu", keys=["Escape"], title="Power")
+        self.assertEqual(caffeine_state.read_text(), "fixture")
+        self.assertEqual(self.niri_actions(), [])
+        self.assertEqual(self.bus_actions(), [])
 
-    def test_lock_dim_cancels_timer_on_unlock_and_restarts_for_next_lock(self):
-        marker = self.root / "lock-dim"
-        marker.mkdir()
-        self.environment["RUNTIME_TEST_DIM"] = str(marker)
+    def test_power_menu_second_invocation_toggles_current_native_dialog(self):
+        self.gui_control("power-menu", toggle=True)
+        self.assertEqual(self.niri_actions(), [])
+        self.assertEqual(self.bus_actions(), [])
+
+    def test_power_menu_lock_uses_session_locker(self):
+        self.mock("hyprlock", 'printf "%s\n" "$*" >> "$FIXTURE_LOG"')
+        self.gui_control("power-menu", keys=["Return"])
+        self.assertEqual(self.log.read_text().splitlines(), ["--grace 0"])
+        self.assertEqual(self.bus_actions(), [])
+
+    def test_power_menu_suspends_after_lock_ready_and_caffeine_cleanup(self):
         self.mock(
             "hyprlock",
-            """
-printf '%s\\n' "$$" > "$RUNTIME_TEST_DIM/locker"
-while [[ ! -f "$RUNTIME_TEST_DIM/unlock" ]]; do /usr/bin/sleep 0.01; done
-""",
+            'printf "%s\n" "$*" >> "$FIXTURE_LOG"\n'
+            "sleep 0.1\n"
+            'touch "$FIXTURE_ROOT/locked"\n'
+            "while :; do sleep 0.05; done",
         )
-        self.mock(
-            "sleep",
-            """
-[[ "$*" == 30 ]] || exit 90
-printf '%s\\n' "$$" >> "$RUNTIME_TEST_DIM/timers"
-while [[ ! -f "$RUNTIME_TEST_DIM/dim" ]]; do /usr/bin/sleep 0.01; done
-""",
+        caffeine_state = self.runtime / "caffeine_state"
+        caffeine_state.write_text("fixture")
+        self.gui_control("power-menu", keys=["Down", "Return"])
+        self.assertEqual(
+            self.log.read_text().splitlines(),
+            ["--grace 0 --immediate-render --no-fade-in"],
         )
-        self.mock(
-            "pgrep",
-            '[[ "${!#}" == hyprlock && -f "$RUNTIME_TEST_DIM/locker" && ! -f "$RUNTIME_TEST_DIM/unlock" ]]',
-        )
-        self.mock(
-            "niri",
-            """
-[[ "$*" == 'msg action power-off-monitors' ]] || exit 90
-printf 'power off\\n' >> "$RUNTIME_TEST_LOG"
-""",
-        )
+        self.assertEqual(self.bus_actions(), [["Suspend", [True]]])
+        self.assertFalse(caffeine_state.exists())
 
-        def start_lock(expected_timers):
-            process = subprocess.Popen(
-                ["bash", str(self.scripts / "lock-dim.sh")],
-                env=self.environment,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-            self.addCleanup(self.stop_process_group, process)
-            deadline = time.monotonic() + 3
-            while (
-                not (marker / "locker").exists()
-                or not (marker / "timers").exists()
-                or len((marker / "timers").read_text().splitlines()) < expected_timers
-            ):
-                self.assertIsNone(
-                    process.poll(), "lock exited before starting its timer"
-                )
-                self.assertLess(
-                    time.monotonic(), deadline, "lock or timer did not start"
-                )
-                time.sleep(0.01)
-            return process
+    def test_power_menu_refuses_suspend_if_locker_exits_before_ready(self):
+        self.mock("hyprlock", "exit 1")
+        result = self.gui_control("power-menu", keys=["Down", "Return"], status=1)
+        self.assertIn("before session locking was confirmed", result.stderr)
+        self.assertEqual(self.bus_actions(), [])
 
-        first = start_lock(1)
-        first_timer = int((marker / "timers").read_text())
-        self.run_script("lock-dim.sh")
-        self.assertEqual(len((marker / "timers").read_text().splitlines()), 1)
-        (marker / "unlock").touch()
-        _, stderr = first.communicate(timeout=3)
-        self.assertEqual(first.returncode, 0, stderr)
-        self.assertFalse(
-            self.pid_running(first_timer), "Unlocked session left its dim timer running"
-        )
-        self.assertFalse(self.log.exists(), "Unlocking powered off the monitors")
+    def test_power_menu_logout_shutdown_and_reboot_stop_caffeine_first(self):
+        caffeine_state = self.runtime / "caffeine_state"
+        for choice, niri, bus in [
+            ("2", [{"Quit": {"skip_confirmation": True}}], []),
+            ("3", [], [["PowerOff", [True]]]),
+            ("4", [], [["Reboot", [True]]]),
+        ]:
+            with self.subTest(choice=choice):
+                caffeine_state.write_text("fixture")
+                self.gui_control("power-menu", keys=["Down"] * int(choice) + ["Return"])
+                self.assertFalse(caffeine_state.exists())
+                self.assertEqual(self.niri_actions(), niri)
+                self.assertEqual(self.bus_actions(), bus)
 
-        (marker / "unlock").unlink()
-        (marker / "locker").unlink()
-        second = start_lock(2)
-        self.assertIsNone(second.poll())
-        (marker / "dim").touch()
-        deadline = time.monotonic() + 3
-        while not self.log.exists():
-            self.assertLess(
-                time.monotonic(), deadline, "new lock did not dim after its own timer"
-            )
-            time.sleep(0.01)
-        self.assertEqual(self.log.read_text().splitlines(), ["power off"])
-        self.assertIsNone(second.poll(), "Dimming stopped the password locker")
-        (marker / "unlock").touch()
-        _, stderr = second.communicate(timeout=3)
-        self.assertEqual(second.returncode, 0, stderr)
+    def optional_groups(self, groups):
+        config = self.home / ".config/hype-niri/optional-groups"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("\n".join(groups) + "\n")
 
-    def test_tray_launcher_keeps_single_instance_without_process_discovery(self):
-        self.hold_mock("nm-applet")
-        pid_files = [self.root / name for name in ("nm-applet", "warp-taskbar")]
-        for pid_file in pid_files:
-            self.mock(
-                pid_file.name,
-                f'''printf '%s' "$$" > {shlex.quote(str(pid_file))}
-printf '{pid_file.name}\\n' >> "$RUNTIME_TEST_LOG"
-read -r _ < "$RUNTIME_TEST_HOLD"''',
-            )
-        self.mock("blueman-applet", "exit 0")
-        self.run_script("start-tray-applets.sh")
-        deadline = time.monotonic() + 3
-        for pid_file in pid_files:
-            while not pid_file.exists():
-                self.assertLess(time.monotonic(), deadline, "applet did not start")
-                time.sleep(0.01)
-            self.addCleanup(self.terminate_pid, int(pid_file.read_text()))
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            list(
-                executor.map(
-                    lambda _: self.run_script("start-tray-applets.sh"), range(6)
-                )
-            )
+    def test_tray_launcher_defaults_to_network_only(self):
+        for name in ("nm-applet", "blueman-applet", "warp-taskbar"):
+            self.mock(name, 'printf "%s\\n" "${0##*/}" >> "$FIXTURE_LOG"')
+        self.isolated('control start-tray-applets\nwait_for "$FIXTURE_LOG"\nsleep 0.1')
+        self.assertEqual(self.log.read_text().splitlines(), ["nm-applet"])
+
+    def test_tray_launcher_only_enables_selected_bluetooth_integration(self):
+        self.optional_groups(["bluetooth"])
+        for name in ("nm-applet", "blueman-applet", "warp-taskbar"):
+            self.mock(name, 'printf "%s\\n" "${0##*/}" >> "$FIXTURE_LOG"')
+        self.isolated('control start-tray-applets\nwait_for "$FIXTURE_LOG"\nsleep 0.1')
         self.assertCountEqual(
-            self.log.read_text().splitlines(), ["nm-applet", "warp-taskbar"]
+            self.log.read_text().splitlines(), ["nm-applet", "blueman-applet"]
+        )
+
+    def test_tray_launcher_keeps_background_instances_without_process_discovery(self):
+        self.optional_groups(["warp"])
+        for applet in ("nm-applet", "warp-taskbar"):
+            self.mock(
+                applet,
+                'printf "%s|%s|%s\n" "${0##*/}" "$GTK_THEME" "$*" >> "$FIXTURE_LOG"\n'
+                'printf "%s" "$$" > "$FIXTURE_ROOT/${0##*/}.pid"\n'
+                "exec sleep 30",
+            )
+        self.isolated(
+            "control start-tray-applets\n"
+            "for name in nm-applet warp-taskbar; do\n"
+            '    wait_for "$FIXTURE_ROOT/$name.pid"\n'
+            '    pid=$(cat "$FIXTURE_ROOT/$name.pid")\n'
+            '    until [[ $(cat "/proc/$pid/comm") == sleep ]]; do sleep 0.01; done\n'
+            "done\n"
+            "for _ in {1..6}; do control start-tray-applets & done\n"
+            "wait\n"
+            "for name in nm-applet warp-taskbar; do\n"
+            '    pid=$(cat "$FIXTURE_ROOT/$name.pid")\n'
+            '    kill "$pid"\n'
+            '    until [[ ! -e "/proc/$pid" ]]; do sleep 0.01; done\n'
+            '    rm "$FIXTURE_ROOT/$name.pid"\n'
+            "done\n"
+            "control start-tray-applets\n"
+            'wait_for "$FIXTURE_ROOT/nm-applet.pid"\n'
+            'wait_for "$FIXTURE_ROOT/warp-taskbar.pid"'
+        )
+        self.assertCountEqual(
+            self.log.read_text().splitlines(),
+            ["nm-applet|Adwaita:dark|--indicator", "warp-taskbar|Adwaita:dark|"] * 2,
         )
 
     def test_tray_launcher_does_not_restart_existing_warp_client(self):
-        self.mock("nm-applet", "exit 0")
-        self.mock("blueman-applet", "exit 0")
-        self.mock("pgrep", '[[ "$*" == "-u $UID -x warp-taskbar" ]]')
-        self.mock("warp-taskbar", 'printf started > "$RUNTIME_TEST_LOG"')
-        self.run_script("start-tray-applets.sh")
-        self.assertFalse(self.log.exists())
-
-    def test_volume_parser_preserves_percentage_and_mute_notifications(self):
-        self.mock("notify-send", 'printf "%s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        self.mock("wpctl", "printf 'Volume: 0.65\\n'")
-        self.run_script("volume-control.sh")
-        self.assertIn("int:value:65", self.log.read_text())
-        self.assertIn("Volume: 65%", self.log.read_text())
-        self.mock("wpctl", "printf 'Volume: 0.65 [MUTED]\\n'")
-        self.run_script("volume-control.sh")
-        self.assertIn("Muted", self.log.read_text().splitlines()[-1])
+        self.optional_groups(["warp"])
+        self.mock(
+            "warp-taskbar",
+            'printf started >> "$FIXTURE_LOG"\nwhile :; do sleep 0.05; done',
+        )
+        self.isolated(
+            'warp-taskbar &\nwait_for "$FIXTURE_LOG"\ncontrol start-tray-applets'
+        )
+        self.assertEqual(self.log.read_text(), "started")
 
     def test_menu_toggle_closes_existing_menu_and_reopens_after_cancel(self):
-        pid_file = self.root / "menu-pid"
-        self.environment["RUNTIME_TEST_MENU_PID"] = str(pid_file)
+        self.mock("wofi", "while :; do sleep 0.05; done")
         self.mock(
-            "pkill",
-            '[[ -s "$RUNTIME_TEST_MENU_PID" ]] && '
-            'kill -TERM "$(cat "$RUNTIME_TEST_MENU_PID")" 2>/dev/null',
+            "delayed-picker",
+            'printf "%s\n" "$*" >> "$FIXTURE_LOG"\nsleep 0.2\nexec wofi "$@"',
         )
-        self.mock(
-            "pgrep",
-            '[[ -s "$RUNTIME_TEST_MENU_PID" ]] && '
-            'kill -0 "$(cat "$RUNTIME_TEST_MENU_PID")" 2>/dev/null',
+        self.isolated(
+            "for count in 1 2; do\n"
+            '    control menu-toggle delayed-picker --dmenu "two words" & first=$!\n'
+            '    until [[ -e "$FIXTURE_LOG" ]] && (( $(wc -l < "$FIXTURE_LOG") >= count )); do sleep 0.01; done\n'
+            '    control menu-toggle delayed-picker --dmenu "two words"\n'
+            "    status=0\n"
+            '    wait "$first" || status=$?\n'
+            "    [[ $status == 143 ]]\n"
+            "done"
         )
-        program = """
-import os
-from pathlib import Path
-import signal
-import time
-with Path(os.environ["RUNTIME_TEST_LOG"]).open("a") as log:
-    log.write("launched\\n")
-time.sleep(0.2)
-Path(os.environ["RUNTIME_TEST_MENU_PID"]).write_text(str(os.getpid()))
-signal.pause()
-"""
-        self.mock("wofi", f"exec python3 -c {shlex.quote(program)}")
-        for expected_launches in (1, 2):
-            process = subprocess.Popen(
-                ["bash", str(self.scripts / "menu-toggle.sh"), "wofi", "--dmenu"],
-                env=self.environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-                text=True,
-            )
-            self.addCleanup(self.stop_process_group, process)
-            deadline = time.monotonic() + 3
-            while (
-                not self.log.exists()
-                or len(self.log.read_text().splitlines()) < expected_launches
-            ):
-                self.assertIsNone(process.poll())
-                self.assertLess(time.monotonic(), deadline, "menu did not launch")
-                time.sleep(0.01)
-            self.run_script("menu-toggle.sh", "wofi", "--dmenu")
-            stdout, stderr = process.communicate(timeout=3)
-            self.assertEqual(process.returncode, 143, stderr)
-            self.assertEqual(stdout, "")
-            self.assertEqual(
-                self.log.read_text().splitlines(), ["launched"] * expected_launches
-            )
+        self.assertEqual(self.log.read_text().splitlines(), ["--dmenu two words"] * 2)
 
-    def test_menu_toggle_preserves_command_arguments_output_and_failure(self):
-        self.mock("pkill", "exit 1")
-        self.mock("pgrep", "exit 1")
-        result = self.run_script("menu-toggle.sh", "printf", "%s", "two words")
+    def test_menu_toggle_preserves_arguments_input_output_and_exit_status(self):
+        result = self.control("menu-toggle", "printf", "%s", "two words")
         self.assertEqual(result.stdout, "two words")
-        result = subprocess.run(
-            ["bash", str(self.scripts / "menu-toggle.sh"), "sh", "-c", "exit 7"],
-            env=self.environment,
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 7)
+        result = self.control("menu-toggle", "cat", input_text="stdin kept\n")
+        self.assertEqual(result.stdout, "stdin kept\n")
+        self.control("menu-toggle", "sh", "-c", "exit 7", status=7)
 
-    def test_wallpaper_menu_preserves_newline_filename(self):
-        wallpapers = self.user_home / "pictures/wallpapers"
-        wallpapers.mkdir(parents=True)
-        image = wallpapers / "one\ntwo.jpg"
-        image.touch()
-        self.mock("wofi", "cat >/dev/null\nprintf '0\\n'")
-        self.mock("pgrep", '[[ "${!#}" == awww-daemon ]]')
-        self.mock("awww", "exit 0")
-        self.run_script("wallpaper.sh", "select")
-        self.assertEqual(
-            (self.user_home / ".local/state/niri/current_wallpaper").resolve(), image
+    def test_password_prompt_preserves_stdout_and_cancellation_contract(self):
+        result = self.gui_control(
+            "password-prompt",
+            "-p",
+            "Fixture password",
+            title="Fixture password",
+            text="two words & literal $",
+            keys=["Return"],
         )
+        self.assertEqual(result.stdout, "two words & literal $\n")
+        result = self.gui_control(
+            "password-prompt",
+            "--prompt=Fixture password",
+            title="Fixture password",
+            keys=["Escape"],
+            status=1,
+        )
+        self.assertEqual(result.stdout, "")
 
-    def test_wallpaper_menu_does_not_block_other_wallpaper_requests(self):
-        wallpapers = self.user_home / "pictures/wallpapers"
-        wallpapers.mkdir(parents=True)
-        (wallpapers / "one.jpg").touch()
-        self.mock("magick", "exit 1")
-        self.hold_mock("wofi")
-        picker = self.start_script("wallpaper.sh", "select")
-        started = time.monotonic()
-        self.run_script("wallpaper.sh", "ensure")
-        self.assertLess(time.monotonic() - started, 1)
-        (self.root / "wofi-hold").write_text("\n")
-        self.assertEqual(picker.wait(timeout=3), 0)
+    def test_password_prompt_rejects_invalid_arguments_without_showing_ui(self):
+        result = self.control("password-prompt", "--unknown", status=1)
+        self.assertIn("Usage:", result.stderr)
+        self.assertEqual(result.stdout, "")
 
-    def test_wallpaper_previews_cache_refresh_and_cancel(self):
-        wallpapers = self.user_home / "pictures/wallpapers"
-        wallpapers.mkdir(parents=True)
-        image = wallpapers / "one\ntwo.jpg"
-        image.write_text("first image")
-        self.mock(
-            "magick",
-            '''
-printf 'thumbnail\n' >> "$RUNTIME_TEST_LOG"
-output="${!#}"
-printf 'PNG' > "${output#PNG:}"''',
-        )
-        self.mock(
-            "wofi",
-            """
-cat > "$XDG_CACHE_HOME/menu"
-[[ "${CANCEL_MENU:-0}" != 1 ]] || exit 1
-printf '0\n' """,
-        )
-        self.mock("pgrep", '[[ "${!#}" == awww-daemon ]]')
-        self.mock("awww", "exit 0")
-        self.run_script("wallpaper.sh", "select")
-        menu = (self.user_home / ".cache/menu").read_bytes()
-        self.assertIn(b":text:", menu)
-        self.assertTrue(menu.endswith(b"one\\ntwo.jpg\n"))
-        thumbnail = Path(menu.removeprefix(b"img:").split(b":text:", 1)[0].decode())
-        self.assertEqual(thumbnail.read_text(), "PNG")
-        self.run_script("wallpaper.sh", "select")
-        self.assertEqual(self.log.read_text().count("thumbnail"), 1)
-        image.write_text("changed image")
-        self.run_script("wallpaper.sh", "select")
-        self.assertEqual(self.log.read_text().count("thumbnail"), 2)
-        current = self.user_home / ".local/state/niri/current_wallpaper"
-        current.unlink()
-        self.run_script(
-            "wallpaper.sh",
-            "select",
-            environment=self.environment | {"CANCEL_MENU": "1"},
-        )
-        self.assertFalse(current.exists())
+    def desktop_entry(self, name, fields):
+        applications = self.home / ".local/share/applications"
+        applications.mkdir(parents=True, exist_ok=True)
+        (applications / name).write_text("[Desktop Entry]\nType=Application\n" + fields)
 
-    def hotspot_fixture(self):
-        self.environment["MOCK_HOTSPOT"] = str(self.root / "hotspot")
-        self.mock(
-            "nmcli",
-            r"""
-printf '%s\n' "$*" >> "$RUNTIME_TEST_LOG"
-case "$*" in
-    '-g connection.uuid connection show id Hype Hotspot')
-        [[ -e "$MOCK_HOTSPOT.profile" ]] || exit 10
-        printf 'hotspot-uuid\n' ;;
-    '-g UUID connection show --active')
-        if [[ -e "$MOCK_HOTSPOT.active" ]]; then printf 'hotspot-uuid\n'; fi ;;
-    '-g 802-11-wireless.mode connection show uuid hotspot-uuid') printf '%s\n' "${PROFILE_MODE:-ap}" ;;
-    '-g ipv4.method connection show uuid hotspot-uuid') printf 'shared\n' ;;
-    '-g GENERAL.DEVICES connection show uuid hotspot-uuid') printf 'wlan0\n' ;;
-    '-t -f DEVICE,TYPE device status') printf 'wlan0:wifi\neth0:ethernet\n' ;;
-    '-g WIFI-PROPERTIES.AP device show wlan0') printf '%s\n' "${AP_SUPPORT:-yes}" ;;
-    '-g WIFI-PROPERTIES.5GHZ device show wlan0') printf '%s\n' "${BAND_SUPPORT:-yes}" ;;
-    '-g 802-11-wireless.band,802-11-wireless.channel,802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pmf,802-11-wireless-security.pairwise,802-11-wireless-security.group connection show uuid hotspot-uuid')
-        if [[ -e "$MOCK_HOTSPOT.settings" ]]; then cat "$MOCK_HOTSPOT.settings"; fi ;;
-    'connection modify uuid hotspot-uuid 802-11-wireless.band bg '*)
-        [[ "${FAIL_MODIFY:-0}" == 0 ]] || exit 4
-        printf 'bg\n1\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
-    'connection modify uuid hotspot-uuid 802-11-wireless.band a '*)
-        [[ "${FAIL_MODIFY:-0}" == 0 ]] || { printf 'save failed\n' >&2; exit 4; }
-        printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n' > "$MOCK_HOTSPOT.settings" ;;
-    'connection modify uuid hotspot-uuid wifi-sec.psk '*)
-        [[ "${FAIL_MODIFY:-0}" == 0 ]] || { printf 'save failed\n' >&2; exit 4; }
-        printf '%s' "$6" > "$MOCK_HOTSPOT.password" ;;
-    'connection add '*)
-        touch "$MOCK_HOTSPOT.profile"
-        if [[ "$*" == *'802-11-wireless.band bg '* ]]; then
-            printf 'bg\n1\nwpa-psk\nrsn\n2\nccmp\nccmp\n'
-        else
-            printf 'a\n36\nwpa-psk\nrsn\n2\nccmp\nccmp\n'
-        fi > "$MOCK_HOTSPOT.settings" ;;
-    '--wait 20 connection up uuid hotspot-uuid' | '--wait 35 connection up uuid hotspot-uuid')
-        [[ "${FAIL_UP:-0}" == 0 ]] || { printf 'activation failed\n' >&2; exit 4; }
-        if [[ "${FAIL_5GHZ:-0}" == 1 && "$(head -n1 "$MOCK_HOTSPOT.settings")" == a ]]; then
-            printf '5 GHz AP unavailable\n' >&2; exit 4
-        fi
-        touch "$MOCK_HOTSPOT.active" ;;
-    '--wait 15 connection down uuid hotspot-uuid') rm -f "$MOCK_HOTSPOT.active" ;;
-    *) printf 'Unexpected nmcli call: %s\n' "$*" >&2; exit 99 ;;
-esac
-""",
+    def test_native_launcher_searches_visible_desktop_entries_and_launches_literal_args(
+        self,
+    ):
+        self.mock("fixture-app", 'printf "%s\\n" "$@" > "$FIXTURE_LOG"')
+        self.desktop_entry(
+            "fixture.desktop",
+            'Name=Fixture Launch\nExec=fixture-app "two words" "literal & value"\n',
         )
-        return self.root / "hotspot.profile", self.root / "hotspot.active"
-
-    def test_hotspot_toggle_saves_profile_reuses_credentials_and_stops(self):
-        profile, active = self.hotspot_fixture()
-        self.assertEqual(
-            json.loads(self.run_script("hotspot.sh").stdout)["class"], "inactive"
+        self.desktop_entry(
+            "hidden.desktop",
+            "Name=Fixture Hidden\nExec=fixture-app hidden\nNoDisplay=true\n",
         )
-        self.run_script("hotspot.sh", "toggle")
-        self.assertTrue(profile.exists())
-        self.assertTrue(active.exists())
-        self.assertEqual(
-            json.loads(self.run_script("hotspot.sh").stdout)["class"], "active"
+        self.gui_control(
+            "app-launcher", text="fixture hidden", keys=["Return", "Escape"]
         )
-        self.run_script("hotspot.sh", "toggle")
-        self.assertFalse(active.exists())
-        self.assertTrue(profile.exists())
-        self.run_script("hotspot.sh", "start")
-        commands = self.log.read_text()
-        self.assertEqual(commands.count("connection add "), 1)
-        self.assertIn("autoconnect no ssid Hype-Niri", commands)
-        self.assertIn("802-11-wireless.band a 802-11-wireless.channel 36", commands)
-        self.assertIn("wifi-sec.pmf optional", commands)
-        self.assertRegex(commands, r"wifi-sec.psk [a-f0-9]{24}")
-
-    def test_hotspot_failures_do_not_activate_or_stop_unrelated_profile(self):
-        _profile, active = self.hotspot_fixture()
-        for scenario in (
-            {"AP_SUPPORT": "no"},
-            {"FAIL_UP": "1"},
-            {"PROFILE_MODE": "infrastructure"},
-        ):
-            with self.subTest(scenario=scenario):
-                result = subprocess.run(
-                    ["bash", str(self.scripts / "hotspot.sh"), "start"],
-                    env=self.environment | scenario,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-                self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(active.exists())
-        self.assertNotIn("connection down", self.log.read_text())
-
-    def test_hotspot_uses_24ghz_when_adapter_lacks_5ghz(self):
-        _profile, active = self.hotspot_fixture()
-        self.run_script(
-            "hotspot.sh",
-            "start",
-            environment=self.environment | {"BAND_SUPPORT": "no"},
-        )
-        self.assertTrue(active.exists())
-        self.assertEqual(
-            (self.root / "hotspot.settings").read_text().splitlines()[:2], ["bg", "1"]
-        )
-
-    def test_hotspot_failed_5ghz_falls_back_and_reuses_working_band(self):
-        profile, active = self.hotspot_fixture()
-        self.run_script(
-            "hotspot.sh",
-            "start",
-            environment=self.environment | {"FAIL_5GHZ": "1"},
-        )
-        self.assertTrue(active.exists())
-        self.assertEqual(
-            (self.root / "hotspot.settings").read_text().splitlines()[:2], ["bg", "1"]
-        )
-        commands = self.log.read_text()
-        self.assertEqual(commands.count("connection up uuid hotspot-uuid"), 2)
-        self.assertEqual(commands.count("connection add "), 1)
-        self.assertTrue(profile.exists())
-        self.run_script("hotspot.sh", "stop")
-        self.log.unlink()
-        self.run_script("hotspot.sh", "start")
-        self.assertTrue(active.exists())
-        self.assertNotIn("connection modify", self.log.read_text())
-        self.assertNotIn("connection add ", self.log.read_text())
-
-    def test_hotspot_failed_24ghz_does_not_retry_or_replace_password(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        (self.root / "hotspot.settings").write_text(
-            "bg\n1\nwpa-psk\nrsn\n2\nccmp\nccmp\n"
-        )
-        result = subprocess.run(
-            ["bash", str(self.scripts / "hotspot.sh"), "start"],
-            env=self.environment | {"FAIL_UP": "1"},
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(active.exists())
-        self.assertEqual(
-            self.log.read_text().count("connection up uuid hotspot-uuid"), 1
-        )
-        self.assertNotIn("connection modify", self.log.read_text())
-
-    def test_hotspot_upgrades_saved_profile_without_changing_password(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        active.touch()
-        self.run_script("hotspot.sh", "start")
-        commands = self.log.read_text()
-        self.assertIn("802-11-wireless.band a 802-11-wireless.channel 36", commands)
-        self.assertIn(
-            "wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pmf optional",
-            commands,
-        )
-        self.assertIn("wifi-sec.pairwise ccmp wifi-sec.group ccmp", commands)
-        self.assertLess(
-            commands.index("connection modify"), commands.index("connection down")
-        )
-        self.assertLess(
-            commands.index("connection down"), commands.index("connection up")
-        )
-        self.assertNotIn("wifi-sec.psk", commands)
-        self.assertNotIn("connection add ", commands)
-        self.assertTrue(active.exists())
-        self.log.unlink()
-        self.run_script("hotspot.sh", "start")
-        commands = self.log.read_text()
-        self.assertNotIn("connection modify", commands)
-        self.assertNotIn("connection down", commands)
-        self.assertNotIn("connection up", commands)
-
-    def test_hotspot_failed_profile_upgrade_keeps_active_connection(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        active.touch()
-        result = subprocess.run(
-            ["bash", str(self.scripts / "hotspot.sh"), "start"],
-            env=self.environment | {"FAIL_MODIFY": "1"},
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertTrue(active.exists())
-        self.assertNotIn("connection down", self.log.read_text())
-        self.assertNotIn("connection up", self.log.read_text())
-
-    def test_hotspot_menu_cancel_does_not_change_network(self):
-        self.hotspot_fixture()
-        self.mock("wofi", "cat >/dev/null; exit 1")
-        self.run_script("hotspot.sh", "menu")
         self.assertFalse(self.log.exists())
-
-    def test_hotspot_unavailable_status_does_not_notify_repeatedly(self):
-        self.mock("nmcli", "exit 1")
-        self.mock("notify-send", 'printf "notification\\n" >> "$RUNTIME_TEST_LOG"')
-        status = json.loads(self.run_script("hotspot.sh", "status").stdout)
-        self.assertEqual(status["class"], "unavailable")
-        self.assertFalse(self.log.exists())
-
-    def test_hotspot_credentials_and_editor_target_saved_profile(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        active.touch()
-        self.mock(
-            "alacritty",
-            'printf "terminal %s\\nlocale %s\\n" "$*" "$LC_ALL" >> "$RUNTIME_TEST_LOG"',
-        )
-        self.mock(
-            "nm-connection-editor", 'printf "editor %s\\n" "$*" >> "$RUNTIME_TEST_LOG"'
-        )
-        self.run_script("hotspot.sh", "credentials")
-        self.run_script("hotspot.sh", "edit")
-        commands = self.log.read_text()
-        self.assertIn(
-            "terminal --class hype-hotspot-credentials --title Hotspot credentials "
-            "--hold -e nmcli --colors yes device wifi show-password ifname wlan0",
-            commands,
-        )
-        self.assertIn("locale C.UTF-8\n", commands)
-        self.assertIn("editor --edit=hotspot-uuid", commands)
-
-    def password_prompt(self):
-        self.mock(
-            "wofi",
-            r"""
-cat >/dev/null
-printf 'wofi %s\n' "$*" >> "$RUNTIME_TEST_LOG"
-if [[ "$*" != *--password* ]]; then printf 'Change password\n'; exit 0; fi
-[[ "${CANCEL_PASSWORD:-0}" == 0 ]] || exit 1
-printf '%s\n' "$NEW_PASSWORD"
-""",
+        self.gui_control("app-launcher", text="fixture launch", keys=["Return"])
+        self.assertEqual(
+            self.log.read_text().splitlines(), ["two words", "literal & value"]
         )
 
-    def test_password_prompt_uses_seekable_style_and_cleans_up(self):
-        self.mock(
-            "wofi",
-            r"""
-while (( $# )); do
-    if [[ "$1" == --style ]]; then
-        [[ -f "$2" && -s "$2" ]] || exit 41
-        printf '%s\n' "$2" > "$RUNTIME_TEST_LOG"
-        break
-    fi
-    shift
-done
-printf 'entered-password\n'
-""",
+    def test_launch_default_color_picker_preserves_copy_argument(self):
+        self.mock("hyprpicker", 'printf "%s\\n" "$@" > "$FIXTURE_LOG"')
+        self.isolated('control launch-default color-picker\nwait_for "$FIXTURE_LOG"')
+        self.assertEqual(self.log.read_text().splitlines(), ["-a"])
+
+    def test_launch_default_uses_configured_browser(self):
+        self.mock("fixture-app", 'printf "%s\\n" "$@" > "$FIXTURE_LOG"')
+        self.desktop_entry(
+            "fixture-browser.desktop",
+            "Name=Fixture Browser\nExec=fixture-app browser\nMimeType=x-scheme-handler/https;\n",
         )
-        result = self.run_script("password-prompt.sh", "-p", "Password")
-        self.assertEqual(result.stdout, "entered-password\n")
-        self.assertFalse(Path(self.log.read_text().strip()).exists())
-
-    def test_hotspot_password_updates_saved_profile_and_restarts_only_when_active(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        self.password_prompt()
-        for password, running in (
-            ("pa ss$()`word", False),
-            ("a" * 63, True),
-            ("f" * 64, False),
-        ):
-            with self.subTest(length=len(password), active=running):
-                self.log.unlink(missing_ok=True)
-                if running:
-                    active.touch()
-                else:
-                    active.unlink(missing_ok=True)
-                self.run_script(
-                    "hotspot.sh",
-                    "menu",
-                    environment=self.environment | {"NEW_PASSWORD": password},
-                )
-                self.assertEqual((self.root / "hotspot.password").read_text(), password)
-                commands = self.log.read_text()
-                self.assertIn("--dmenu --password --height 64", commands)
-                self.assertIn("--cache-file /dev/null", commands)
-                self.assertEqual("connection down uuid" in commands, running)
-                self.assertEqual("connection up uuid" in commands, running)
-                self.assertEqual(active.exists(), running)
-                self.assertNotIn("connection add ", commands)
-                if running:
-                    self.assertLess(
-                        commands.index("connection modify"),
-                        commands.index("connection down"),
-                    )
-                    self.assertLess(
-                        commands.index("connection down"),
-                        commands.index("connection up"),
-                    )
-
-    def test_hotspot_password_cancel_and_invalid_input_never_change_network(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        active.touch()
-        self.password_prompt()
-        for password, cancel in (
-            ("valid-password", "1"),
-            ("", "0"),
-            ("short", "0"),
-            ("g" * 64, "0"),
-            ("a" * 65, "0"),
-            ("pass\tword", "0"),
-            ("passwörd", "0"),
-        ):
-            with self.subTest(length=len(password), cancel=cancel):
-                self.log.unlink(missing_ok=True)
-                result = subprocess.run(
-                    ["bash", str(self.scripts / "hotspot.sh"), "password"],
-                    env=self.environment
-                    | {"NEW_PASSWORD": password, "CANCEL_PASSWORD": cancel},
-                    capture_output=True,
-                    text=True,
-                    timeout=8,
-                    check=False,
-                )
-                self.assertEqual(
-                    result.returncode == 0, cancel == "1" or password == ""
-                )
-                self.assertNotIn("connection modify", self.log.read_text())
-                self.assertNotIn("connection down", self.log.read_text())
-                self.assertFalse((self.root / "hotspot.password").exists())
-                self.assertTrue(active.exists())
-
-    def test_hotspot_password_failures_do_not_expose_password(self):
-        profile, active = self.hotspot_fixture()
-        profile.touch()
-        active.touch()
-        self.password_prompt()
-        self.mock("notify-send", 'printf "notify %s\\n" "$*" >> "$RUNTIME_TEST_LOG"')
-        password = "private-password"
-        for failure in ("FAIL_MODIFY", "FAIL_UP"):
-            with self.subTest(failure=failure):
-                self.log.unlink(missing_ok=True)
-                result = subprocess.run(
-                    ["bash", str(self.scripts / "hotspot.sh"), "password"],
-                    env=self.environment | {"NEW_PASSWORD": password, failure: "1"},
-                    capture_output=True,
-                    text=True,
-                    timeout=8,
-                    check=False,
-                )
-                self.assertNotEqual(result.returncode, 0)
-                self.assertNotIn(password, result.stdout + result.stderr)
-                notifications = [
-                    line
-                    for line in self.log.read_text().splitlines()
-                    if line.startswith("notify ")
-                ]
-                self.assertTrue(notifications)
-                self.assertNotIn(password, "\n".join(notifications))
-                if failure == "FAIL_MODIFY":
-                    self.assertNotIn("connection down", self.log.read_text())
-                    self.assertFalse((self.root / "hotspot.password").exists())
-                    self.assertTrue(active.exists())
-                else:
-                    self.assertEqual(
-                        (self.root / "hotspot.password").read_text(), password
-                    )
-                    self.assertFalse(active.exists())
-                    self.assertIn("Password saved", result.stderr)
-
-    def test_caffeine_stop_terminates_owned_sleep_child(self):
-        pid_file = self.root / "sleep-pid"
-        self.environment["RUNTIME_TEST_CHILD_PID"] = str(pid_file)
-        parent_file = self.runtime / "caffeine_pid"
-        self.addCleanup(self.terminate_recorded_pid, pid_file)
-        self.addCleanup(self.terminate_recorded_pid, parent_file)
-        program = (
-            "import os,subprocess,sys; "
-            "child=subprocess.Popen(sys.argv[sys.argv.index('--')+1:]); "
-            "open(os.environ['RUNTIME_TEST_CHILD_PID'],'w').write(str(child.pid)); "
-            "child.wait()"
+        (self.home / ".config/mimeapps.list").write_text(
+            "[Default Applications]\nx-scheme-handler/https=fixture-browser.desktop;\n"
         )
-        self.mock(
-            "systemd-inhibit",
-            f'exec -a systemd-inhibit {shlex.quote(shutil.which("python3"))} -c {shlex.quote(program)} "$@"',
-        )
-        result = json.loads(self.run_script("caffeine-control.sh", "toggle").stdout)
-        self.assertEqual(result["class"], "activated")
-        deadline = time.monotonic() + 3
-        while not pid_file.exists() or not pid_file.read_text().strip():
-            self.assertLess(
-                time.monotonic(), deadline, "inhibitor child did not become ready"
-            )
-            time.sleep(0.01)
-        child_pid = int(pid_file.read_text())
-        self.run_script("caffeine-control.sh", "stop")
-        self.assertFalse((self.runtime / "caffeine_pid").exists())
-        self.assertFalse((self.runtime / "caffeine_state").exists())
-        deadline = time.monotonic() + 3
-        while self.pid_running(child_pid):
-            self.assertLess(
-                time.monotonic(), deadline, "orphaned sleep process survived"
-            )
-            time.sleep(0.01)
+        self.isolated('control launch-default browser\nwait_for "$FIXTURE_LOG"')
+        self.assertEqual(self.log.read_text().splitlines(), ["browser"])
 
-    @staticmethod
-    def pid_running(pid):
-        try:
-            return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] != "Z"
-        except FileNotFoundError:
-            return False
-
-    @staticmethod
-    def terminate_pid(pid):
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-
-    @classmethod
-    def terminate_recorded_pid(cls, path):
-        try:
-            pid = int(path.read_text())
-        except (FileNotFoundError, ValueError):
-            return
-        cls.terminate_pid(pid)
-
-    def test_caffeine_does_not_kill_unrelated_recorded_pid(self):
-        process = subprocess.Popen(["sleep", "infinity"])
-        self.addCleanup(self.stop_process, process)
-        (self.runtime / "caffeine_pid").write_text(f"{process.pid}\n")
-        (self.runtime / "caffeine_state").touch()
-        self.run_script("caffeine-control.sh", "stop")
-        self.assertIsNone(process.poll())
-
-    def test_failed_inhibitor_does_not_leave_active_state(self):
-        self.mock("systemd-inhibit", "exit 1")
-        result = json.loads(self.run_script("caffeine-control.sh", "toggle").stdout)
-        self.assertEqual(result["class"], "deactivated")
-        self.assertFalse((self.runtime / "caffeine_pid").exists())
-        self.assertFalse((self.runtime / "caffeine_state").exists())
-
-    def test_drive_unlock_removes_passphrase_file_when_interrupted(self):
-        device = self.root / "mock-device"
-        marker = self.root / "key-file"
-        device.touch()
-        self.environment.update(
-            RUNTIME_TEST_DEVICE=str(device), RUNTIME_TEST_KEY=str(marker)
-        )
-        self.mock(
-            "lsblk",
-            """
-case "$*" in
-    '-prno NAME,FSTYPE') printf '%s crypto_LUKS\\n' "$RUNTIME_TEST_DEVICE" ;;
-    '-nrpo NAME '*) printf '%s\\n' "$RUNTIME_TEST_DEVICE" ;;
-    '-dno PARTLABEL '*) printf 'Drive\\n' ;;
-esac""",
-        )
-        self.mock("findmnt", "exit 1")
-        self.mock(
-            "wofi",
-            'printf "%s\\n" "$*" > "$XDG_RUNTIME_DIR/prompt-args"\n'
-            "printf 'test-only-passphrase'",
-        )
-        program = """
-import os
-from pathlib import Path
-import signal
-import sys
-marker = Path(os.environ["RUNTIME_TEST_KEY"])
-temporary = marker.with_suffix(".tmp")
-temporary.write_text(sys.argv[-1])
-temporary.replace(marker)
-signal.pause()
-"""
-        self.mock(
-            "udisksctl",
-            f'exec {shlex.quote(shutil.which("python3"))} -c {shlex.quote(program)} "$@"',
-        )
-        preamble = """
-function [ {
-    if [[ ${1:-} == -b && ${2:-} == "$RUNTIME_TEST_DEVICE" ]]; then return 0; fi
-    builtin [ "$@"
-}
-"""
-        process = subprocess.Popen(
+    def test_stealth_indicator_preserves_markup_and_hides_inactive_service(self):
+        (self.root / "stealth").mkdir()
+        (self.root / "stealth/active").touch()
+        self.set_unit("tor.service", "inactive")
+        self.assertEqual(self.control("stealth-indicator").stdout, "\n\n")
+        self.set_unit("tor.service", "active")
+        self.assertEqual(
+            self.control("stealth-indicator").stdout.splitlines(),
             [
-                "bash",
-                "-c",
-                preamble
-                + "source "
-                + shlex.quote(str(self.scripts / "open-drives.sh")),
+                str(self.home / ".config/waybar/icons/stealth.svg"),
+                "Stealth mode active · Tor routing",
             ],
-            env=self.environment,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
         )
-        self.addCleanup(self.stop_process_group, process)
-        deadline = time.monotonic() + 3
-        while not marker.exists():
-            self.assertIsNone(
-                process.poll(),
-                process.stderr.read() if process.poll() is not None else "",
-            )
-            self.assertLess(time.monotonic(), deadline, "unlock did not start")
-            time.sleep(0.01)
-        key_file = Path(marker.read_text())
-        self.assertEqual(key_file.read_text(), "test-only-passphrase")
-        self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
-        prompt = (self.runtime / "prompt-args").read_text()
-        self.assertIn("--password", prompt)
-        self.assertIn("--cache-file /dev/null", prompt)
-        os.killpg(process.pid, signal.SIGTERM)
-        process.communicate(timeout=3)
-        self.assertFalse(key_file.exists())
 
-    def test_runtime_fallback_rejects_symlink(self):
-        helper = self.scripts / "runtime-dir.sh"
-        fallback = self.root / "fallback"
-        helper.write_text(
-            helper.read_text().replace("/tmp/hype-niri-$UID", str(fallback))
-        )
-        fallback.symlink_to(self.runtime, target_is_directory=True)
-        result = subprocess.run(
-            ["bash", str(helper)],
-            env=self.environment | {"XDG_RUNTIME_DIR": str(self.root / "missing")},
-            capture_output=True,
-            timeout=3,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
+    def test_stealth_indicator_detects_legacy_active_installation(self):
+        (self.root / "stealth").mkdir()
+        self.set_unit("tor.service", "active")
+        self.mock("stealth", '[[ "$*" == version ]]\nprintf "stealth-transparent-v1\n"')
+        self.assertIn("Tor routing", self.control("stealth-indicator").stdout)
+        self.mock("stealth", 'printf "stealth-transparent-v2\n"')
+        self.assertEqual(self.control("stealth-indicator").stdout, "\n\n")
 
-    def test_runtime_fallback_is_private(self):
-        helper = self.scripts / "runtime-dir.sh"
-        fallback = self.root / "fallback"
-        helper.write_text(
-            helper.read_text().replace("/tmp/hype-niri-$UID", str(fallback))
-        )
-        self.run_script(
-            "runtime-dir.sh",
-            environment=self.environment
-            | {"XDG_RUNTIME_DIR": str(self.root / "missing")},
-        )
-        self.assertEqual(fallback.stat().st_mode & 0o777, 0o700)
+    def niri_actions(self):
+        return [
+            json.loads(line)["Action"]
+            for line in self.take_lines(self.root / "niri-log")
+        ]
+
+    def bus_actions(self):
+        return [json.loads(line) for line in self.take_lines(self.root / "login-log")]
 
 
 if __name__ == "__main__":

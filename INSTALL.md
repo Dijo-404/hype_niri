@@ -4,22 +4,29 @@
 
 The automated installer can refresh mirrors, performs a required Arch keyring and full system upgrade, installs packages, backs up and copies configurations, sets up Zsh and GTK theming, enables desktop services and memory pressure protection with `systemd-oomd`, and offers optional firewall, Cloudflare WARP, and Stealth configuration.
 
-Packages include OBS Studio, Neovim, and LazyVim dependencies. The installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
+The installer builds the native Rust desktop controls, GTK4 notch and privileged Stealth backend before replacing configurations. Core packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell` and `libpulse`. OBS Studio and Neovim/LazyVim require the `media` and `editor-neovim` optional groups. When `editor-neovim` is selected, the installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
 
 ```bash
-git clone https://github.com/Dijo-404/Hype_Niri.git
-cd Hype_Niri
-chmod +x install.sh
+curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
+```
+
+This command becomes available after this branch is published to `main`. The small Bash bootstrap downloads source, builds `hype-install` without GTK dependencies, and runs the Rust installer using `/dev/tty` for interactive input. It never reads confirmations from the downloaded script. If Git, Rust or compilation tools are missing, it asks before installing them with a full Arch upgrade. Local builds may take several minutes on the first run.
+
+For a local checkout, run:
+
+```bash
+git clone https://github.com/Dijo-404/hype_niri.git
+cd hype_niri
 ./install.sh
 ```
 
 Run the installer as your regular user with sudo access. It asks before refreshing mirrors, upgrading the system, replacing existing configurations, switching the display manager, setting lid-switch behavior, configuring networking, or changing your login shell. Declining the required system upgrade or a required backup stops the installation.
 
 > [!TIP]
-> The Powerlevel10k prompt theme is pre-configured. Run `p10k configure` if you want to customize it.
+> Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.
 
 > [!NOTE]
-> The installer uses `pacman` for official repository packages and `yay` only for AUR packages. Install `yay` first with your preferred method; this installer does not clone AUR repos to bootstrap it.
+> The installer uses `pacman` for official repository packages and `yay` only for AUR packages. Install `yay` with your preferred method only when selected missing packages require the AUR; this installer does not clone AUR repos to bootstrap it.
 
 ---
 
@@ -29,7 +36,9 @@ If you prefer to selectively apply configurations, follow these manual steps. Ba
 
 ### 1. Install Required Packages
 
-`pkglist.txt` contains the base desktop packages, including ufw and Cloudflare WARP. Their configuration is optional. Stealth packages are installed separately when you choose that option.
+`pkglist.txt` contains core desktop and build requirements. Answer `n` at the extras prompt for core only. Answer `y` or `yes` to select groups from `optional-packages.txt` for installation and setup. For example, choose `browser-firefox editor-neovim bluetooth` to add those features. Firewall, Docker, Bluetooth, VPNs, Stealth, Ly, compatibility packages and Intel-specific drivers are optional. See [Dependencies and Services](DEPENDENCIES.md). Existing packages are retained; deselecting a group does not remove packages or disable existing services.
+
+Select `hype-flow` to build offline dictation and install the English Parakeet model. With a saved selection, the `desktop-integrations` phase configures the shortcuts and background startup after the Niri config is in place.
 
 For smoother downloads, refresh mirrors before installing packages. If `reflector` is already installed, use it:
 
@@ -48,7 +57,9 @@ sudo pacman -Syu
 ```
 
 ```bash
-bash -c 'source ./install.sh; install_packages'
+sudo pacman -S --needed rust base-devel
+cargo build -p hype-install --release --locked
+./target/release/hype-install --source "$PWD" --phase packages
 ```
 
 ### 2. Back Up Existing Configs
@@ -59,7 +70,7 @@ Back up the desktop, scripts, theme settings, shell files, and any existing Stea
 BACKUP_DIR="$(mktemp -d "$HOME/.config-backup-$(date +%Y%m%d-%H%M%S).XXXXXX")"
 for target in \
     .config/niri .config/waybar .config/scripts .config/alacritty \
-    .config/wofi .config/mako .config/fastfetch .config/hypr \
+    .config/mako .config/fastfetch .config/hypr \
     .config/gtk-3.0 .config/gtk-4.0 .config/autostart .config/fontconfig \
     .config/mimeapps.list \
     .config/systemd/user .config/wireplumber \
@@ -74,14 +85,23 @@ done
 
 ### 3. Copy Configurations
 
-Move the dotfiles to their respective locations in your home directory.
+Build the native programs before copying configuration. Niri validation is pinned to Niri 26.04 and wallpaper IPC to awww 0.12.1; update the pinned Rust dependencies alongside backend upgrades. Then move the dotfiles and binaries to their respective locations in your home directory.
 
 ```bash
-mkdir -p ~/.config ~/.cache/cliphist
-bash -c 'source ./install.sh; setup_user_dirs'
+cargo build --release --locked -p hype-notch --bin hype-notch -p hype-desktop --bin hype-control --bin hype-status
+./target/release/hype-control --check
+./target/release/hype-notch --check
+./target/release/hype-status --check
+
+mkdir -p ~/.config
+./target/release/hype-install --source "$PWD" --phase user-dirs
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
-cp -r niri waybar scripts alacritty wofi mako fastfetch hypr ~/.config/
+cp -r niri waybar scripts alacritty mako fastfetch hypr ~/.config/
+install -m 755 target/release/hype-control target/release/hype-notch target/release/hype-status ~/.config/scripts/
+mkdir -p ~/.config/systemd/user
+cp systemd/user/hype-auto-power-profile.service ~/.config/systemd/user/
+systemctl --user daemon-reload
 touch ~/.config/niri/outputs.kdl
 
 [ -d wallpapers ] && cp -an wallpapers/. ~/pictures/wallpapers/
@@ -89,9 +109,9 @@ touch ~/.config/niri/outputs.kdl
 cp zsh/.zshrc ~/
 cp zsh/.p10k.zsh ~/
 
-chmod +x ~/.config/scripts/*.sh
-bash -c 'source ./install.sh; setup_desktop_integrations'
-bash -c 'source ./install.sh; setup_lazyvim'
+./target/release/hype-install --source "$PWD" --phase desktop-integrations
+# Optional: explicitly install/configure the LazyVim starter
+# ./target/release/hype-install --source "$PWD" --phase lazyvim
 ```
 
 When editing `~/.config/niri/outputs.kdl`, keep each output block's opening
@@ -109,7 +129,7 @@ cat > ~/.config/gtk-3.0/settings.ini << 'EOF'
 [Settings]
 gtk-theme-name=Adwaita-dark
 gtk-icon-theme-name=Papirus-Dark
-gtk-cursor-theme-name=Bibata-Modern-Ice
+gtk-cursor-theme-name=Adwaita
 gtk-cursor-theme-size=24
 gtk-font-name=JetBrains Mono 10
 gtk-application-prefer-dark-theme=true
@@ -120,7 +140,7 @@ cp ~/.config/gtk-3.0/settings.ini ~/.config/gtk-4.0/settings.ini
 dconf write /org/gnome/desktop/interface/color-scheme   "'prefer-dark'"
 dconf write /org/gnome/desktop/interface/gtk-theme      "'Adwaita-dark'"
 dconf write /org/gnome/desktop/interface/icon-theme     "'Papirus-Dark'"
-dconf write /org/gnome/desktop/interface/cursor-theme   "'Bibata-Modern-Ice'"
+dconf write /org/gnome/desktop/interface/cursor-theme   "'Adwaita'"
 dconf write /org/gnome/desktop/interface/cursor-size    "24"
 dconf write /org/gnome/desktop/interface/font-name      "'JetBrains Mono 10'"
 dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10'"
@@ -132,7 +152,7 @@ cp fontconfig/60-hype-niri-fonts.conf ~/.config/fontconfig/conf.d/
 papirus-folders -C grey --theme Papirus-Dark
 
 # Apply matching Wi-Fi and Bluetooth outline icons in the user theme.
-bash -c 'source ./install.sh; setup_tray_icons'
+./target/release/hype-install --source "$PWD" --phase tray-icons
 ```
 
 ### 5. System-Wide Setup
@@ -145,9 +165,12 @@ sudo sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 6/' /etc/pacman.conf
 
 sudo cp polkit/*.rules /etc/polkit-1/rules.d/
 
-sudo systemctl enable --now NetworkManager bluetooth power-profiles-daemon
-bash -c 'source ./install.sh; configure_docker_socket'
-sudo usermod -aG docker "$USER"   # log out/in before using docker without sudo
+sudo systemctl enable --now NetworkManager power-profiles-daemon
+# Optional, after selecting/installing bluetooth:
+# sudo systemctl enable --now bluetooth
+# Optional, after selecting/installing docker:
+# ./target/release/hype-install --source "$PWD" --phase docker-socket
+# sudo usermod -aG docker "$USER"   # log out/in before using docker without sudo
 
 systemctl --user enable --now pipewire.socket pipewire-pulse.socket wireplumber.service gnome-keyring-daemon.socket
 systemctl --user enable --now hype-auto-power-profile.service
@@ -166,7 +189,7 @@ InhibitDelayMaxSec=5
 EOF
 ```
 
-Niri starts `prepare-sleep.sh --watch`, which uses `swayidle -w` to hold a delay inhibitor until lock readiness is confirmed. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
+Niri starts `hype-control prepare-sleep --watch`, which subscribes to logind D-Bus events and holds the native sleep delay inhibitor until the password locker and session lock are confirmed ready. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
 
 To switch to Ly at the next boot, review your current display manager first. Arch ships `ly@tty2.service`. Enable it successfully before disabling an existing display manager, then reserve its TTY:
 
@@ -190,18 +213,18 @@ The user service follows charger and battery events without polling:
 Hardware without Performance support falls back to Balanced. Manual Waybar selections last until the next charger or battery-threshold change. The service stops with the graphical session.
 
 ```bash
-~/.config/scripts/auto-power-profile.sh --check
+~/.config/scripts/hype-control auto-power-profile --check
 systemctl --user status hype-auto-power-profile.service
 ```
 
-Docker starts on demand through `docker.socket`; an existing service with running containers is preserved. WirePlumber handles headphone routing and suspends idle audio devices after five seconds. The installer removes the old audio-jack unit only when its expected script is missing, and excludes dependency/cache directories from file indexing while retaining existing exclusions.
+With `docker` selected, Docker starts on demand through `docker.socket`; an existing service with running containers is preserved. WirePlumber handles headphone routing and suspends idle audio devices after five seconds. The installer removes the old audio-jack unit only when its expected script is missing, and excludes dependency/cache directories from file indexing while retaining existing exclusions.
 
 #### Memory pressure protection (systemd-oomd)
 
 The automated installer enables this by default. To apply only OOM protection on an existing setup, run from the repository:
 
 ```bash
-bash systemd/setup-oomd.sh
+./target/release/hype-install --setup-oomd "$PWD"
 ```
 
 The script installs `systemd/user@.service.d/60-hype-niri-oomd.conf` into `/etc/systemd/system/user@.service.d/`, reloads systemd, and runs `sudo systemctl enable --now systemd-oomd.service`. Arch includes the daemon in its `systemd` package; this policy requires systemd 257 or newer, cgroup v2, and PSI. It applies to running user managers without restarting the desktop.
@@ -277,22 +300,24 @@ warp-cli --accept-tos status
 
 Disconnect anytime with `warp-cli disconnect`. Inspect logs with `journalctl -u warp-svc`.
 
-Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
+When `warp` is selected, Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
 
 #### Stealth Tor routing
 
-The installer asks whether to install Stealth. Choosing Yes installs its packages, stages the commands in `~/.local/share/stealth/`, and installs the system service. Choosing No skips those steps. It does not start Tor or change your network until you run `stealth-start`. For a manual install from this repository:
+Select the `stealth` group to install Stealth. The installer then asks before installing its privileged configuration. Choosing Yes installs its packages, stages the commands in `~/.local/share/stealth/`, and installs the system service. Choosing No skips those steps. It does not start Tor or change your network until you run `stealth-start`. For a manual install from this repository:
 
 ```bash
 mkdir -p ~/.local/share/stealth
-sudo pacman -S --needed tor nftables iproute2 curl jq util-linux networkmanager
-cp zsh/stealth.zsh stealth/install-stealth.sh stealth/stealth.sh \
+sudo pacman -S --needed tor nftables polkit
+cargo build --release --locked -p hype-desktop --bin stealth -p hype-install --bin hype-install
+cp zsh/stealth.zsh \
     stealth/stealth.service stealth/stealth.nft stealth/stealth.sudoers \
     stealth/torrc.conf ~/.local/share/stealth/
-sudo bash ~/.local/share/stealth/install-stealth.sh
+install -m 755 target/release/stealth ~/.local/share/stealth/stealth
+sudo ./target/release/hype-install --install-stealth "$HOME/.local/share/stealth"
 ```
 
-Open a new Zsh terminal after installing. The commands are `stealth-start`, `stealth-status`, and `stealth-stop`. If you use your own `.zshrc`, source `~/.local/share/stealth/stealth.zsh` from it. The direct commands `sudo stealth start`, `sudo stealth status`, and `sudo stealth stop` also work; a direct start leaves the systemd service inactive even while routing is active. The installer adds `/etc/sudoers.d/stealth` to disable sudo's pseudo-terminal for these commands, avoiding reproduced PTY teardown hangs when output cannot drain. A historical report of 100% CPU after terminal closure remains unconfirmed. When upgrading an earlier installation, stop its routing service first; the installer migrates its inactive system files.
+Open a new Zsh terminal after installing. The commands are `stealth-start`, `stealth-status`, and `stealth-stop`; they call `hype-control stealth start|status|stop`, which requests elevation through Polkit and uses the native privileged backend. If you use your own `.zshrc`, source `~/.local/share/stealth/stealth.zsh` from it. The direct commands `sudo stealth start`, `sudo stealth status`, and `sudo stealth stop` also work; a direct start leaves the systemd service inactive even while routing is active. The Rust installer adds `/etc/sudoers.d/stealth` to disable sudo's pseudo-terminal for these commands, avoiding reproduced PTY teardown hangs when output cannot drain. A historical report of 100% CPU after terminal closure remains unconfirmed. When upgrading an earlier installation, stop its routing service first; the installer migrates its inactive system files.
 
 While Stealth is active, a green Stealth icon appears beside the Wi-Fi and Bluetooth icons in Waybar's tray pill. It disappears after Stealth stops.
 
@@ -337,7 +362,7 @@ yay -Syu --aur
 - **Powerlevel10k Prompt**: The theme is pre-configured out of the box. Run `p10k configure` in your terminal to customize it.
 - **Learn the Controls**: Check out `keybindings.md` to learn how to navigate the Niri compositor.
 - **User Directories**: The installer sets the XDG user directories to lowercase names (`~/desktop`, `~/documents`, `~/downloads`, `~/music`, `~/pictures`, `~/projects`, `~/public`, `~/templates`, `~/videos`). Existing capitalised folders are renamed when the lowercase folder does not exist yet.
-- **Wallpapers**: The wallpaper script looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
+- **Wallpapers**: The native wallpaper controller looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
 - **Lock Screen**: `Super+L` locks via hyprlock and uses the saved wallpaper pointer from `~/.local/state/niri/current_wallpaper`.
 - **Firewall / WARP / Stealth**: If you skipped step 7, use the relevant commands above later. Stealth remains off until `stealth-start`.
 
@@ -359,7 +384,7 @@ If `reflector` is not installed, rerun `./install.sh` and allow the mirror refre
 
 If your Windows partition doesn't appear in Nautilus, or appears but won't open / mounts read-only:
 
-**1. Install the prerequisites** (already in `pkglist.txt`):
+**1. Install the prerequisites** (the extra filesystem tools belong to `compatibility`):
 
 ```bash
 yay -S --needed ntfs-3g gvfs udisks2 lvm2 libblockdev-lvm
@@ -370,7 +395,7 @@ yay -S --needed ntfs-3g gvfs udisks2 lvm2 libblockdev-lvm
 - `udisks2` — the mount daemon Nautilus talks to.
 - `lvm2` and `libblockdev-lvm` — let encrypted LUKS drives reveal and mount LVM-backed filesystems.
 
-The `Super+U` keybinding runs `~/.config/scripts/open-drives.sh` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks for the passphrase of locked encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
+The `Super+U` keybinding runs `~/.config/scripts/hype-control open-drives` before opening Nautilus. It mounts ordinary volumes, falls back to read-only for dirty Windows NTFS volumes, asks for the passphrase of locked encrypted drives, mounts inner filesystems, and creates friendly links under `~/drives`.
 
 **2. Disable Windows Fast Startup** (this is the cause ~90% of the time).
 

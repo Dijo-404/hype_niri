@@ -1,0 +1,33 @@
+[package]
+name = "hype-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11", features = ["v4_24"] }
+glib-unix = "0.22"
+gio-unix = { version = "0.22", features = ["v2_58"] }
+wl-clipboard-rs = "0.9.5"
+wayland-client = "0.31"
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+emojis = "0.9.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+libpulse-binding = "2.30"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+sha2 = "0.10"
+rand = "0.9"
+tempfile = "3"
+kdl = { version = "6", features = ["v1"] }
+qrcode = { version = "0.14", default-features = false }
+libloading = "0.8"
+
+niri-config = { git = "https://github.com/niri-wm/niri.git", rev = "8ed0da44d974c32c6877d2f4630c314da0717ecb" }
+awww-common = { package = "common", git = "https://codeberg.org/LGFae/awww.git", rev = "f66e12a76dbc4c669b2f1375f78bce49f5b19d66" }
+
+[[bin]]
+name = "hype-control"
+path = "src/main.rs"

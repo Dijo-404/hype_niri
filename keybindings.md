@@ -63,24 +63,24 @@ These are the primary default keybindings for the Hype Niri environment.
 
 ## Applications & Launchers
 
-| Keybinding           | Action             | Description                                                        |
-| :------------------- | :----------------- | :----------------------------------------------------------------- |
-| `Super + T`          | `alacritty`        | Launch Terminal                                                    |
-| `Super + E`          | `nautilus`         | Launch File Manager                                                |
-| `Super + Shift + D`  | `monitor-refresh`  | Toggle monitor settings and save refresh-rate defaults             |
-| `Super + U`          | `open-drives`      | Mount/unlock known external/secondary drives, then launch Nautilus |
-| `Super + C`          | `nvim`             | Launch Neovim                                                      |
-| `Super + Copilot`    | `copilot-shortcut` | Open VS Code after a 400ms double-press window                     |
-| `Super + B`          | `brave`            | Launch Browser (Brave, also the default web browser)               |
-| `Ctrl + Shift + Esc` | `htop`             | Launch System Monitor                                              |
-| `Super + A`          | `wofi`             | Toggle Application Menu                                            |
-| `Super + Tab`        | `toggle-overview`  | Open Window Overview                                               |
-| `Super + .`          | `bemoji`           | Toggle Emoji Picker                                                |
-| `Super + V`          | `cliphist`         | Toggle Clipboard History List                                      |
+| Keybinding           | Action                   | Description                                                        |
+| :------------------- | :----------------------- | :----------------------------------------------------------------- |
+| `Super + T`          | `alacritty`              | Launch Terminal                                                    |
+| `Super + E`          | `nautilus`               | Launch File Manager                                                |
+| `Super + Shift + D`  | `monitor-refresh`        | Toggle monitor settings and save refresh-rate defaults             |
+| `Super + U`          | `open-drives`            | Mount/unlock known external/secondary drives, then launch Nautilus |
+| `Super + C`          | `launch-default editor`  | Launch the installed default text editor                           |
+| `Super + Copilot`    | `copilot-shortcut`       | Open the default editor after a 400ms double-press window          |
+| `Super + B`          | `launch-default browser` | Launch the installed default browser                               |
+| `Ctrl + Shift + Esc` | `launch-default monitor` | Launch an installed system monitor                                 |
+| `Super + A`          | `app-launcher`           | Toggle the native application picker                               |
+| `Super + Tab`        | `toggle-overview`        | Open Window Overview                                               |
+| `Super + .`          | `emoji`                  | Toggle the native emoji picker                                     |
+| `Super + V`          | `clipboard pick`         | Toggle native clipboard history                                    |
 
-For the Copilot shortcuts, hold Super and press Copilot once to open VS Code, or twice within 400ms to lock and turn off the displays without opening VS Code. Ordinary keyboard and mouse input leaves the displays off. Repeat Super + double Copilot to show Hyprlock's password prompt, then enter your Linux account password (normally the same password used by sudo) to unlock the desktop. A single press while locked does nothing.
+For the Copilot shortcuts, hold Super and press Copilot once to open the default editor, or twice within 400ms to lock and turn off the displays without opening the editor. Ordinary keyboard and mouse input leaves the displays off. Repeat Super + double Copilot to show Hyprlock's password prompt, then enter your Linux account password (normally the same password used by sudo) to unlock the desktop. A single press while locked does nothing.
 
-This mode temporarily disables the enabled outputs, waits one second, then starts Hyprlock while the displays are off. It restores the outputs on the next double press; monitor modes and scales in the configuration remain unchanged. The script confirms Niri's session lock through logind before restoring outputs. If locking fails, it keeps the displays off and allows another double press to retry.
+This mode temporarily disables the enabled outputs, waits one second, then starts Hyprlock while the displays are off. It restores the outputs on the next double press; monitor modes and scales in the configuration remain unchanged. The native controller confirms Niri's session lock through logind before restoring outputs. If locking fails, it keeps the displays off and allows another double press to retry.
 
 Sleep takes priority over this mode: after lid-close suspend or another system sleep, resume restores the saved displays and shows Hyprlock automatically. Your password is still required; another Copilot shortcut is unnecessary. Ordinary idle activity continues to leave the manual blackout in effect.
 
@@ -127,6 +127,9 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even
 | `Super + Alt + ←` / `→` | `wallpaper random`  | Cycle random wallpaper next/prev                             |
 | `Super + Shift + W`     | `wallpaper select`  | Toggle wallpaper selector with image previews                |
 | `Super + Shift + H`     | `hotspot menu`      | Toggle hotspot controls, credentials, password, and settings |
+| `Super + N`             | `notch`             | Pin or close the notch (search, weather, media, timers)      |
+| `Alt + Space`           | `Hype Flow`         | Start dictation, then press again to transcribe and paste    |
+| `Super + Ctrl + Esc`    | `Hype Flow`         | Cancel the current dictation                                 |
 | `Super + Alt + ↑`       | `waybar show`       | Show/restart Waybar                                          |
 | `Super + Alt + ↓`       | `waybar hide`       | Hide Waybar                                                  |
 | `Super + Esc`           | `inhibit-shortcuts` | Toggle Niri keyboard shortcut override                       |

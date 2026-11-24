@@ -21,7 +21,6 @@
     "clock",
     "pulseaudio#microphone",
     "pulseaudio",
-    "backlight",
     "battery",
     "group/connectivity",
     "custom/power"
@@ -30,7 +29,7 @@
   "custom/launcher": {
     "format": "󰣇",
     "tooltip": false,
-    "on-click": "~/.config/scripts/menu-toggle.sh wofi --show drun --allow-images --prompt ''"
+    "on-click": "~/.config/scripts/hype-control app-launcher"
   },
 
   "niri/workspaces": {
@@ -38,20 +37,20 @@
   },
 
   "custom/caffeine": {
-    "exec": "~/.config/scripts/caffeine-control.sh",
+    "exec": "~/.config/scripts/hype-control caffeine",
     "return-type": "json",
     "interval": "once",
     "format": "{}",
-    "on-click": "~/.config/scripts/caffeine-control.sh toggle",
+    "on-click": "~/.config/scripts/hype-control caffeine toggle",
     "signal": 15
   },
   "custom/power-profile": {
-    "exec": "~/.config/scripts/power-profile.sh",
+    "exec": "~/.config/scripts/hype-control power-profile",
     "return-type": "json",
     "interval": "once",
     "format": "{icon}",
     "format-icons": ["󰾆", "󰾅", "󰓅"],
-    "on-click": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-profile.sh menu",
+    "on-click": "~/.config/scripts/hype-control power-profile menu",
     "signal": 16
   },
 
@@ -97,20 +96,11 @@
     "format": "temp"
   },
   "custom/temperature": {
-    "exec": "~/.config/scripts/temperature-control.sh",
+    "exec": "~/.config/scripts/hype-status temperature",
     "return-type": "json",
-    "interval": 5,
+    "restart-interval": 5,
     "format": "{text}",
     "align": 0.5
-  },
-
-  "backlight": {
-    "smooth-scrolling-threshold": 1.0,
-    "format": "{icon}  {percent}%",
-    "format-icons": ["󰃞", "󰃝", "󰃟", "󰃠"],
-    "tooltip-format": "Brightness: {percent}%",
-    "on-scroll-up": "~/.config/scripts/brightness-control.sh up",
-    "on-scroll-down": "~/.config/scripts/brightness-control.sh down"
   },
 
   "tray": {
@@ -121,25 +111,24 @@
 
   "group/connectivity": {
     "orientation": "horizontal",
-    "modules": ["custom/hotspot", "tray", "custom/warp", "image#stealth"]
+    "modules": ["custom/hotspot", "tray"]
   },
   "custom/hotspot": {
-    "exec": "~/.config/scripts/hotspot.sh status",
+    "exec": "~/.config/scripts/hype-status hotspot",
     "return-type": "json",
-    "interval": 5,
+    "restart-interval": 5,
     "format": "{}",
-    "on-click": "~/.config/scripts/hotspot.sh toggle",
-    "on-click-right": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/hotspot.sh menu",
-    "signal": 17
+    "on-click": "~/.config/scripts/hype-control hotspot toggle",
+    "on-click-right": "~/.config/scripts/hype-control hotspot menu"
   },
   "custom/warp": {
-    "exec": "~/.config/scripts/warp-indicator.sh",
+    "exec": "~/.config/scripts/hype-control warp-indicator",
     "return-type": "json",
     "interval": 10,
     "format": "{}"
   },
   "image#stealth": {
-    "exec": "~/.config/scripts/stealth-indicator.sh",
+    "exec": "~/.config/scripts/hype-control stealth-indicator",
     "interval": 10,
     "size": 15
   },
@@ -159,16 +148,16 @@
     },
     "tooltip": true,
     "tooltip-format": "Volume: {volume}%",
-    "on-click": "~/.config/scripts/volume-control.sh mute",
-    "on-click-right": "pavucontrol",
-    "on-scroll-up": "~/.config/scripts/volume-control.sh up",
-    "on-scroll-down": "~/.config/scripts/volume-control.sh down"
+    "on-click": "~/.config/scripts/hype-control volume mute",
+    "on-click-right": "~/.config/scripts/hype-control launch-default audio",
+    "on-scroll-up": "~/.config/scripts/hype-control volume up",
+    "on-scroll-down": "~/.config/scripts/hype-control volume down"
   },
   "pulseaudio#microphone": {
     "format": "{format_source}",
     "format-source": "󰍬",
     "format-source-muted": "󰍭",
-    "on-click": "~/.config/scripts/mic-control.sh mute",
+    "on-click": "~/.config/scripts/hype-control mic mute",
     "tooltip": true,
     "tooltip-format": "{source_desc} | Volume: {source_volume}%"
   },
@@ -191,7 +180,7 @@
     "format": "",
     "tooltip": true,
     "tooltip-format": "Power Menu",
-    "on-click": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh",
-    "on-click-right": "~/.config/scripts/menu-toggle.sh ~/.config/scripts/power-menu.sh"
+    "on-click": "~/.config/scripts/hype-control power-menu",
+    "on-click-right": "~/.config/scripts/hype-control power-menu"
   }
 }

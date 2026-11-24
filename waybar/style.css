@@ -36,7 +36,6 @@ window#waybar.hidden {
 #custom-power-profile,
 #clock,
 #pulseaudio,
-#backlight,
 #battery,
 #connectivity,
 #custom-power {
@@ -163,7 +162,6 @@ window#waybar.hidden {
 #custom-power-profile:hover,
 #clock:hover,
 #pulseaudio:hover,
-#backlight:hover,
 #battery:hover,
 #connectivity:hover,
 #custom-power:hover {
@@ -321,10 +319,6 @@ window#waybar.hidden {
   margin: 0;
   padding: 0;
   font-weight: 600;
-}
-
-#backlight {
-  color: #ffffff;
 }
 
 menu {
