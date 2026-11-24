@@ -519,7 +519,7 @@ impl Installer {
                 .is_file()
             && !self.user(&format!(".zsh/{plugin}")).is_file()
         {
-            eprintln!("fzf-tab not found. Check the fzf-tab package from pkglist.txt.");
+            eprintln!("fzf-tab not found. Check the shell-extras group in optional-packages.txt.");
         }
 
         for dotfile in [".zshrc", ".p10k.zsh"] {

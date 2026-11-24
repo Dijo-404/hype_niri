@@ -4,13 +4,13 @@
 
 The automated installer can refresh mirrors, performs a required Arch keyring and full system upgrade, installs packages, backs up and copies configurations, sets up Zsh and GTK theming, enables desktop services and memory pressure protection with `systemd-oomd`, and offers optional firewall, Cloudflare WARP, and Stealth configuration.
 
-The installer builds the native Rust desktop controls, GTK4 notch and privileged Stealth backend before replacing configurations. Core packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell` and `libpulse`. OBS Studio and Neovim/LazyVim require the `media` and `editor-neovim` optional groups. When `editor-neovim` is selected, the installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
+The installer builds the native Rust desktop controls and GTK4 notch before replacing configurations. It builds the privileged Stealth backend when the optional Stealth setup is selected and confirmed. Core packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell` and `libpulse`. OBS Studio and Neovim/LazyVim require the `media` and `editor-neovim` optional groups. When `editor-neovim` is selected, the installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
 ```
 
-This command becomes available after this branch is published to `main`. The small Bash bootstrap downloads source, builds `hype-install` without GTK dependencies, and runs the Rust installer using `/dev/tty` for interactive input. It never reads confirmations from the downloaded script. If Git, Rust or compilation tools are missing, it asks before installing them with a full Arch upgrade. Local builds may take several minutes on the first run.
+The Bash bootstrap downloads source from `main`, builds `hype-install` without GTK dependencies, and reads installer confirmations from `/dev/tty`. If Git, Rust or compilation tools are missing, it asks before installing them with a full Arch upgrade. Local builds may take several minutes on the first run.
 
 For a local checkout, run:
 
@@ -198,7 +198,7 @@ systemctl status display-manager.service --no-pager
 sudo systemctl enable ly@tty2.service && sudo systemctl disable getty@tty2.service
 ```
 
-If another display manager is enabled, disable its service only after deciding to replace it with Ly. Select **niri-session** at the next Ly login.
+If another display manager is enabled, disable its service only after deciding to replace it with Ly. Select **Niri** at the next Ly login.
 
 #### Automatic power profiles
 
@@ -304,7 +304,7 @@ When `warp` is selected, Waybar uses WARP's native tray icon while its desktop a
 
 #### Stealth Tor routing
 
-Select the `stealth` group to install Stealth. The installer then asks before installing its privileged configuration. Choosing Yes installs its packages, stages the commands in `~/.local/share/stealth/`, and installs the system service. Choosing No skips those steps. It does not start Tor or change your network until you run `stealth-start`. For a manual install from this repository:
+Select the `stealth` group to install its packages. The installer then asks before building the backend, staging commands in `~/.local/share/stealth/`, and installing the system service. Run `stealth-start` when you want to activate routing. For a manual install from this repository:
 
 ```bash
 mkdir -p ~/.local/share/stealth
@@ -321,18 +321,18 @@ Open a new Zsh terminal after installing. The commands are `stealth-start`, `ste
 
 While Stealth is active, a green Stealth icon appears beside the Wi-Fi and Bluetooth icons in Waybar's tray pill. It disappears after Stealth stops.
 
-This version requires a NetworkManager-managed Wi-Fi or Ethernet default IPv4 route and a Tor service account. The optional installer step installs `tor`, `nftables`, `iproute2`, and `curl`; the main package list includes `jq` and `util-linux`. While active, host IPv4 TCP and DNS go through Tor; IPv6, other UDP, ICMP, and forwarded/container traffic are blocked. Tor's relay connections and DHCP still use the selected physical connection. Wi-Fi mode temporarily spoofs the MAC address and reconnects; Ethernet mode keeps its existing connection and MAC. If startup fails after the firewall is installed, run `stealth-stop` to recover it. Stealth is not a full IP VPN.
+This version requires a NetworkManager-managed Wi-Fi or Ethernet default IPv4 route and a Tor service account. The `stealth` group includes `tor`, `nftables`, and `polkit`. While active, host IPv4 TCP and DNS go through Tor; IPv6, other UDP, ICMP, and forwarded/container traffic are blocked. Tor's relay connections and DHCP still use the selected physical connection. Wi-Fi mode temporarily spoofs the MAC address and reconnects; Ethernet mode keeps its existing connection and MAC. If startup fails after the firewall is installed, run `stealth-stop` to recover it. Stealth is not a full IP VPN.
 
 ### 8. Reboot Your System
 
-Reboot to initialize all changes and the new login manager:
+Reboot to apply system changes, including the login-manager switch if you selected it:
 
 ```bash
 reboot
 ```
 
 > [!NOTE]
-> At the Ly login screen, select **niri-session** before logging in.
+> Select **Niri** in your display manager before logging in.
 
 ---
 
@@ -341,8 +341,8 @@ reboot
 To pull the latest changes from the repository and apply them:
 
 ```bash
-cd Hype_Niri
-git pull
+cd hype_niri
+git pull --ff-only
 ./install.sh
 ```
 
@@ -359,7 +359,7 @@ yay -Syu --aur
 
 ## Post-Install Steps
 
-- **Powerlevel10k Prompt**: The theme is pre-configured out of the box. Run `p10k configure` in your terminal to customize it.
+- **Powerlevel10k Prompt**: The `shell-extras` group installs Powerlevel10k. Run `p10k configure` in your terminal to customize the supplied theme.
 - **Learn the Controls**: Check out `keybindings.md` to learn how to navigate the Niri compositor.
 - **User Directories**: The installer sets the XDG user directories to lowercase names (`~/desktop`, `~/documents`, `~/downloads`, `~/music`, `~/pictures`, `~/projects`, `~/public`, `~/templates`, `~/videos`). Existing capitalised folders are renamed when the lowercase folder does not exist yet.
 - **Wallpapers**: The native wallpaper controller looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.

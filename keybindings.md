@@ -16,7 +16,7 @@ These are the primary default keybindings for the Hype Niri environment.
 | `Super + Delete`                     | `quit`                         | Exit Niri completely                                                                       |
 | `Super + W`                          | `toggle-column-tabbed-display` | Toggle tabbed column view                                                                  |
 | `Super + Shift + S`                  | `opacity-toggle`               | Toggle window transparency (95%/90% or fully opaque)                                       |
-| `Super + Shift + F`                  | `fullscreen-toggle`            | Toggle fullscreen with waybar animation                                                    |
+| `Super + Shift + F`                  | `fullscreen-toggle`            | Toggle fullscreen for the focused window                                                   |
 | `Super + F`                          | `maximize-column`              | Maximize the current column                                                                |
 | `Super + O`                          | `toggle-overview`              | Toggle window overview                                                                     |
 | `Super + Space`                      | `toggle-window-floating`       | Toggle floating mode for a window                                                          |
@@ -90,15 +90,15 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even
 
 ## Audio & Brightness
 
-| Keybinding             | Action            | Description                |
-| :--------------------- | :---------------- | :------------------------- |
-| `F10` / `Mute`         | `volume mute`     | Toggle Audio Mute          |
-| `F11` / `Vol Down`     | `volume down`     | Decrease Volume            |
-| `F12` / `Vol Up`       | `volume up`       | Increase Volume            |
-| `Mic Mute`             | `mic mute`        | Toggle Microphone Mute     |
-| `Bright Down`          | `brightness down` | Decrease Screen Brightness |
-| `Bright Up`            | `brightness up`   | Increase Screen Brightness |
-| `Play/Pause/Next/Prev` | `playerctl`       | Control Media Playback     |
+| Keybinding             | Action            | Description                          |
+| :--------------------- | :---------------- | :----------------------------------- |
+| `F10` / `Mute`         | `volume mute`     | Toggle Audio Mute                    |
+| `F11` / `Vol Down`     | `volume down`     | Decrease Volume                      |
+| `F12` / `Vol Up`       | `volume up`       | Increase Volume                      |
+| `Mic Mute`             | `mic mute`        | Toggle Microphone Mute               |
+| `Bright Down`          | `brightness down` | Decrease Screen Brightness           |
+| `Bright Up`            | `brightness up`   | Increase Screen Brightness           |
+| `Play/Pause/Next/Prev` | `media`           | Control media playback through MPRIS |
 
 ## Workspaces & Monitors
 
@@ -122,15 +122,15 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even
 
 ## Miscellaneous
 
-| Keybinding              | Action              | Description                                                  |
-| :---------------------- | :------------------ | :----------------------------------------------------------- |
-| `Super + Alt + ←` / `→` | `wallpaper random`  | Cycle random wallpaper next/prev                             |
-| `Super + Shift + W`     | `wallpaper select`  | Toggle wallpaper selector with image previews                |
-| `Super + Shift + H`     | `hotspot menu`      | Toggle hotspot controls, credentials, password, and settings |
-| `Super + N`             | `notch`             | Pin or close the notch (search, weather, media, timers)      |
-| `Alt + Space`           | `Hype Flow`         | Start dictation, then press again to transcribe and paste    |
-| `Super + Ctrl + Esc`    | `Hype Flow`         | Cancel the current dictation                                 |
-| `Super + Alt + ↑`       | `waybar show`       | Show/restart Waybar                                          |
-| `Super + Alt + ↓`       | `waybar hide`       | Hide Waybar                                                  |
-| `Super + Esc`           | `inhibit-shortcuts` | Toggle Niri keyboard shortcut override                       |
-| `Power Button`          | `suspend`           | Stop caffeine mode, then suspend the system                  |
+| Keybinding              | Action                   | Description                                                  |
+| :---------------------- | :----------------------- | :----------------------------------------------------------- |
+| `Super + Alt + ←` / `→` | `wallpaper random`       | Cycle random wallpaper next/prev                             |
+| `Super + Shift + W`     | `wallpaper select`       | Toggle wallpaper selector with image previews                |
+| `Super + Shift + H`     | `hotspot menu`           | Toggle hotspot controls, credentials, password, and settings |
+| `Super + N`             | `hype-notch --toggle`    | Pin or close the notch (search, weather, media, timers)      |
+| `Alt + Space`           | `Hype Flow`              | Start dictation, then press again to transcribe and paste    |
+| `Super + Ctrl + Esc`    | `Hype Flow`              | Cancel the current dictation                                 |
+| `Super + Alt + ↑`       | `start-waybar --restart` | Show or restart Waybar                                       |
+| `Super + Alt + ↓`       | `stop-waybar`            | Hide Waybar                                                  |
+| `Super + Esc`           | `inhibit-shortcuts`      | Toggle Niri keyboard shortcut override                       |
+| `Power Button`          | `suspend-now`            | Stop caffeine mode, lock the session, and suspend            |

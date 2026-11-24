@@ -1,55 +1,68 @@
+<a id="readme-top"></a>
+
+<div align="center">
+
 # Hype Niri
 
-> A clean, professional, highly functional Wayland setup based on the Niri scrollable-tiling compositor and a minimalist Monochrome theme.
+**A monochrome Arch Linux desktop with Niri scrollable tiling, Waybar, and native Rust controls.**
 
-![Niri](https://img.shields.io/badge/Niri-Wayland-b0b0b0?style=for-the-badge&logo=wayland&logoColor=white)
-![Arch Linux](https://img.shields.io/badge/Arch_Linux-888888?style=for-the-badge&logo=archlinux&logoColor=white)
-![Monochrome Theme](https://img.shields.io/badge/Theme-Monochrome-141414?style=for-the-badge)
+[![Latest release](https://img.shields.io/github/v/release/Dijo-404/hype_niri?style=for-the-badge&color=555555)](https://github.com/Dijo-404/hype_niri/releases)
+[![MIT license](https://img.shields.io/badge/License-MIT-555555?style=for-the-badge)](LICENSE)
+![Arch Linux](https://img.shields.io/badge/Arch_Linux-555555?style=for-the-badge&logo=archlinux&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-555555?style=for-the-badge&logo=rust&logoColor=white)
+
+[Quick start](#quick-start) · [Usage](#usage) · [Documentation](#documentation) · [Contributing](#contributing)
+
+</div>
 
 <br/>
+
+<p align="center">
+  <img src="docs/assets/desktop.png" alt="Hype Niri desktop showing Waybar, the open notch with its Pomodoro timer, and an Alacritty window" width="820" />
+</p>
+
+> [!NOTE]
+> This guide follows `main`. See the [v1.0.0 release notes](https://github.com/Dijo-404/hype_niri/releases/tag/v1.0.0) for the original tagged setup.
 
 ## Overview
 
-Personal dotfiles for a minimal Arch Linux setup using the **Niri** scrollable tiling Wayland compositor. Focused on delivering a premium, smooth, and full-featured desktop experience using native Wayland tools.
+Hype Niri is a set of dotfiles and an interactive installer for a Niri desktop on Arch Linux. It brings together a consistent monochrome theme, keyboard-driven window management, and GTK4 utilities for everyday desktop tasks.
 
-## Tech Stack
+### Features
 
-| Component             | Tool / Link                                                        |
-| :-------------------- | :----------------------------------------------------------------- |
-| **Compositor**        | [Niri](https://github.com/YaLTeR/niri)                             |
-| **Bar**               | [Waybar](https://github.com/Alexays/Waybar)                        |
-| **Terminal**          | [Alacritty](https://github.com/alacritty/alacritty)                |
-| **Shell**             | [Zsh](https://www.zsh.org/) (Powerlevel10k optional)               |
-| **Text Font**         | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)       |
-| **Waybar Font**       | Roboto with Material Design Icons                                  |
-| **Launcher**          | Native Rust GTK4 application picker                                |
-| **Notifications**     | [Mako](https://github.com/emersion/mako)                           |
-| **Lock Screen**       | [Hyprlock](https://github.com/hyprwm/hyprlock)                     |
-| **Idle Daemon**       | [Hypridle](https://github.com/hyprwm/hypridle)                     |
-| **Memory Protection** | [systemd-oomd](INSTALL.md#memory-pressure-protection-systemd-oomd) |
-| **Wallpaper**         | [Awww](https://codeberg.org/LGFae/awww)                            |
-| **Editor**            | Optional; system default editor                                    |
-| **Recording**         | Optional [OBS Studio](https://obsproject.com/)                     |
-| **Login Manager**     | Existing manager; [Ly](https://github.com/fairyglade/ly) optional  |
-| **Fetch App**         | Optional [Fastfetch](https://github.com/fastfetch-cli/fastfetch)   |
+- **Navigate by keyboard.** Scroll between tiling columns, switch workspaces, and open the app launcher, emoji picker, or clipboard history.
+- **Keep controls close.** Waybar shows system status. The notch provides app search, weather, media controls, a Pomodoro timer, and a stopwatch on each display.
+- **Manage displays and connections.** Pick a wallpaper with previews, set monitor refresh rates, and manage a saved NetworkManager hotspot from the desktop.
+- **Switch power profiles automatically.** Use Performance on AC where supported, Balanced on battery at 30% or above, and Power Saver below 30%.
+- **Choose your extras.** Add browsers, tools, Bluetooth, or offline dictation with Hype Flow during installation.
 
-<br/>
+## Requirements
+
+| Requirement  | Details                                                                                                     |
+| :----------- | :---------------------------------------------------------------------------------------------------------- |
+| **OS**       | Arch Linux with `pacman`, an interactive terminal, sudo access, and an internet connection for installation |
+| **Build**    | Git, `base-devel`, Rust and Cargo 1.92 or newer                                                             |
+| **Desktop**  | Niri, GTK4 4.24 or newer, `gtk4-layer-shell`, and `libpulse`                                                |
+| **Optional** | `yay` when a selected, missing package comes from the AUR. Hype Flow's Parakeet worker requires x86-64.     |
+
+See the [core package list](pkglist.txt) for the complete package set.
 
 ## Installation
 
-For an interactive installation, clone the repository and run the setup script:
+Run the bootstrap from an interactive terminal as your regular user with sudo access.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
 ```
 
-The one-command installer becomes available when this branch reaches `main`. It downloads source into a temporary directory, builds the GTK-independent Rust installer locally, then runs it with terminal input. Local builds take longer on the first run. If Git, Rust or compilation tools are missing, the bootstrap asks before a full Arch upgrade installs them. Run as your regular user with sudo access. yay is needed only for missing selected AUR packages. Existing settings are backed up before replacement.
+The bootstrap builds the Rust installer locally. It offers to install missing build tools. The installer requires a full Arch upgrade before installing desktop packages and asks before backing up and replacing existing user configurations.
 
-Answer `n` to **Install optional extras?** for the core desktop. Answer `y` or `yes` and enter group names such as `browser-firefox editor-neovim bluetooth` to install and set up those extras. Docker, VPNs, Bluetooth, browsers, editors, recording tools, extra themes, compatibility tools and hardware-specific drivers are not installed by default. See [the dependency and service ledger](DEPENDENCIES.md) and [optional-packages.txt](optional-packages.txt). Existing packages are never automatically uninstalled.
+Answer `n` at **Install optional extras?** for the core desktop. Answer `y` or `yes` and enter space-separated [group names](optional-packages.txt), such as `browser-firefox editor-neovim bluetooth`. Selected groups are installed and configured. Select `hype-flow` to build Hype Flow, download and verify the English Parakeet model, and set up dictation shortcuts.
 
-Select `hype-flow` for offline dictation on x86-64. The installer builds Hype Flow, downloads and verifies the English Parakeet model, and configures Niri shortcuts. The app runs in the background from login. The speech worker loads on first dictation and unloads after 10 idle minutes by default.
+<details>
+<summary><b>Install from a local checkout</b></summary>
 
-To install from a checked-out branch:
+<br/>
 
 ```bash
 git clone https://github.com/Dijo-404/hype_niri.git
@@ -57,164 +70,185 @@ cd hype_niri
 ./install.sh
 ```
 
-> [!NOTE]
-> See [INSTALL.md](INSTALL.md) for manual setup instructions and post-installation steps.
+The [installation guide](INSTALL.md#manual-install) also covers applying individual components.
 
-<br/>
+</details>
 
-## Updating
+### Updating
 
-To pull the latest config changes and apply them:
+From your local checkout, pull the latest changes and rerun the installer.
 
 ```bash
-cd Hype_Niri
-git pull
+cd hype_niri
+git pull --ff-only
 ./install.sh
 ```
 
-The installer optionally refreshes Arch mirrors, requires a full system upgrade before installing packages, and backs up existing user configurations before replacing them. It uses `pacman` for official repository packages and `yay` for missing AUR packages, retaining installed AUR packages and providers. It checks exact missing AUR package names before installing; a failed lookup stops the package phase. Missing AUR packages require a terminal so you can review provider and conflict choices. Run it as your regular user with sudo access. Install `yay` with your preferred method only if selected missing packages require the AUR.
+### Uninstalling
 
-To update only packages without re-running the full script:
+Log out of Niri and use another session or a TTY. Restore the configurations you want to keep from the `~/.config-backup-*` directory printed by the installer. Remove any Hype Niri files that had no previous version. Review the packages and services you enabled separately. See [Dependencies and services](DEPENDENCIES.md).
 
-```bash
-sudo pacman -Syu
-yay -Syu --aur
+## Quick start
+
+Log in to the **Niri** session from your display manager. Then try these shortcuts.
+
+1. Press `Super+A` to find an app. Press `Enter` to launch it.
+2. Press `Super+N` to open the notch and try the timer or app search.
+3. Press `Super+Shift+W` to choose a wallpaper.
+4. With Hype Flow installed, press `Alt+Space` to start dictation and press it again to finish.
+
+## Usage
+
+### Commands
+
+Desktop commands use the installed binaries. Run the installer help command from a checkout.
+
+| Command                                                     | Description                                         |
+| :---------------------------------------------------------- | :-------------------------------------------------- |
+| `~/.config/scripts/hype-control --check`                    | Check the native desktop control binary.            |
+| `~/.config/scripts/hype-control --help`                     | List desktop commands.                              |
+| `~/.config/scripts/hype-control auto-power-profile --check` | Inspect the current power policy and D-Bus support. |
+| `~/.config/scripts/hype-control clipboard clear`            | Clear stored clipboard history.                     |
+| `~/.config/scripts/hype-notch --toggle`                     | Open or close the notch drawer.                     |
+| `./install.sh --help`                                       | Show bootstrap usage from a local checkout.         |
+
+### Keybindings
+
+| Key                         | Action                                   |
+| :-------------------------- | :--------------------------------------- |
+| `Super+A`                   | Open the app launcher                    |
+| `Super+T`                   | Open Alacritty                           |
+| `Super+←` / `Super+→`       | Focus the adjacent tiling column         |
+| `Super+1` through `Super+0` | Switch to workspaces 1 through 10        |
+| `Super+N`                   | Toggle the notch drawer                  |
+| `Super+V`                   | Open clipboard history                   |
+| `Super+Shift+H`             | Open hotspot settings                    |
+| `Super+L`                   | Lock the session                         |
+| `Alt+Space`                 | Start or finish dictation with Hype Flow |
+| `Super+Ctrl+Esc`            | Cancel dictation with Hype Flow          |
+
+See the [full keybinding reference](keybindings.md).
+
+### Examples
+
+**Use the notch.** Hover over the Finotch-inspired pill below Waybar to see the compact view. Move within it to open the drawer, or press `Super+N` to pin it and focus search. Press `Esc` to close it. The drawer includes media controls, volume and brightness sliders, a 25-minute focus timer with a five-minute break, and a stopwatch. With Hype Flow installed, it also shows dictation status and controls. The speech worker loads on first use and unloads after 10 idle minutes by default.
+
+**Share a connection over Wi-Fi.** Click the hotspot icon in Waybar to toggle sharing. Right-click it or press `Super+Shift+H` for credentials and password settings. The first start creates `Hype-Niri` with a random password. It tries 5 GHz where supported, falls back to 2.4 GHz, and remembers the working band. The hotspot uses WPA2 Personal with AES/CCMP and accepts an 8–63 character ASCII password or a 64-digit hexadecimal key. Internet sharing requires an upstream connection such as Ethernet, USB tethering, or a second Wi-Fi adapter. Starting a hotspot can disconnect Wi-Fi on the selected adapter. Changing an active hotspot password restarts it.
+
+**Pair a Bluetooth keyboard.** With the `bluetooth` group installed, open **Bluetooth Devices** from the tray and select **Pair**. If Blueman displays a passkey, type it on the Bluetooth keyboard and press `Enter`.
+
+## Configuration
+
+Edit `~/.config/niri/config.kdl` for keybindings and window rules, `~/.config/niri/outputs.kdl` for display settings, and `~/.config/waybar/config.jsonc` or `~/.config/waybar/style.css` for the bar. The installer preserves saved monitor settings. See the [manual configuration steps](INSTALL.md#3-copy-configurations).
+
+A typical output block looks like this. Replace `DP-1` with the name shown by `niri msg outputs`.
+
+```kdl
+output "DP-1" {
+    scale 1.25
+}
 ```
 
-Power profiles switch automatically: Performance on AC, Balanced on battery at 30% or above, and Power Saver below 30%. Manual selections last until the next charger or threshold change. The controller uses D-Bus events and stops at logout; hardware without Performance support uses Balanced.
+### Environment variables
 
-Selecting Docker enables socket activation; it is absent from the core install. Idle audio devices suspend after five seconds, and file indexing skips dependency/cache directories. Native controls use locks and atomic writes to prevent duplicate processes and partial configurations.
+| Variable              | Effect                                                                      |
+| :-------------------- | :-------------------------------------------------------------------------- |
+| `WALLPAPER_DIR`       | Override the wallpaper directory used by the desktop controls.              |
+| `WAYBAR_CONFIG`       | Override the config path used by `hype-control start-waybar`.               |
+| `XDG_STATE_HOME`      | Override the state root used for clipboard history and the saved wallpaper. |
+| `HYPE_CONTROL_BINARY` | Select the `hype-control` binary used by Python runtime tests.              |
 
-`Super+Shift+W` opens a wallpaper picker with cached image previews. Niri animations use `ease-out-quad` over 180 ms without overshoot. New windows slide down from their top edge; closing windows slide back into that edge without fading. Resizing shows new contents immediately. Gesture motion follows your fingers, with the same settling duration after release. Hyprlock fades over 180 ms; the lock before sleep stays instant. Wallpaper changes grow from the centre over 180 ms. Native GTK pickers open as floating windows under Niri. See [Niri animations](https://niri-wm.github.io/niri/Configuration%3A-Animations.html).
+### Files it creates
 
-Click the hotspot icon beside the tray to start or stop sharing. Right-click it, or press `Super+Shift+H`, for credentials, **Change password**, and connection settings. Password entry is masked and accepts 8–63 ASCII characters or 64 hexadecimal digits (raw keys support WPA2 only). Changing an active hotspot's password restarts that hotspot; connected devices must reconnect. The first start creates a hotspot named `Hype-Niri` with a random password. It prefers 5 GHz on channel 36, uses 2.4 GHz on adapters without 5 GHz, and retries on 2.4 GHz if 5 GHz activation fails. The saved profile keeps the working band for later starts. Each activation attempt allows 35 seconds for NetworkManager to finish; busy actions show a notification. Security uses WPA2 Personal with RSN, AES/CCMP, and optional protected management frames. Starting an older saved hotspot upgrades these settings without changing its password and restarts it if needed. Starting it may disconnect Wi-Fi on the same adapter. Internet sharing requires an upstream connection, such as Ethernet, USB tethering, or another Wi-Fi adapter. The installer includes `dnsmasq` and configures DHCP/DNS access on hotspot-capable Wi-Fi interfaces when enabling UFW.
+| Path                                             | Contents                                                                                         |
+| :----------------------------------------------- | :----------------------------------------------------------------------------------------------- |
+| `~/.config-backup-*`                             | Copies of existing configurations and shell files that the installer backs up before replacement |
+| `~/.config/niri/outputs.kdl`                     | Saved display configuration                                                                      |
+| `~/.config/hype-niri/optional-groups`            | Selected extras                                                                                  |
+| `~/.config/scripts/`                             | Installed desktop binaries and compatibility links                                               |
+| `~/.local/state/niri/current_wallpaper`          | Symlink to the selected wallpaper by default                                                     |
+| `~/.local/state/hype-niri-clipboard/history.bin` | Private clipboard history by default                                                             |
+| `~/.cache/hype-niri/cargo-target/`               | Reusable Cargo build artifacts                                                                   |
 
-The application launcher, power menu, clipboard history, emoji picker, password prompts, display controls and other utility dialogs use native Rust GTK4. Press Enter to select, Escape to cancel, or activate a menu shortcut again to close it without choosing an action. The launcher discovers visible installed desktop applications through GIO. Browser/editor shortcuts use system defaults; missing optional applications produce a notification.
+## Privacy and safety
 
-One native clipboard watcher captures supported text and image selections. History is private and bounded to 64 entries, 8 MiB per entry and 32 MiB total. Password-manager hints are excluded. `Super+V` opens history, and `hype-control clipboard clear` clears stored history. Previous cliphist databases remain untouched. Emoji selection types the complete Unicode sequence through Wayland's virtual keyboard protocol. Media keys call MPRIS directly.
+- Clipboard history keeps supported text and images locally, up to 64 entries, 8 MiB per entry, and 32 MiB total. It skips selections marked as sensitive by supported clipboard hints.
+- The notch requests IP-based weather from wttr.in every 30 minutes. Selecting the web search result opens the query in DuckDuckGo in your default browser.
+- Hype Flow transcribes locally after the initial model download. The notch receives dictation state and microphone levels over session D-Bus. Transcript text stays with Hype Flow and the dictation output it produces.
+- The installer asks before replacing backed-up configurations or applying optional changes such as a display-manager switch or firewall setup.
 
-Bluetooth and Cloudflare tray applets start only when their corresponding optional groups are selected. The core launches the NetworkManager applet. Optional color-picker support retains its own clipboard tool dependency; see the dependency ledger. WARP and Stealth indicators are added to Waybar only for their selected integrations.
+## How it works
 
-Waybar volume scrolling filters small touchpad movements with a `1.0` smooth-scrolling threshold. Volume and brightness keys use 1% steps (rounded to hardware units for brightness), and brightness ramps between values. Volume changes never queue behind an active change, and notifications do not hold either control's input lock. Brightness stops at 1%; decreasing an already lower value leaves it unchanged.
+```mermaid
+flowchart LR
+    A["Bash bootstrap"] --> B["Rust installer"]
+    B --> C["Niri and Waybar configuration"]
+    B --> D["Native desktop binaries"]
+    C -->|"Shortcuts and status modules"| D
+    D -->|"Wayland, Niri IPC, and D-Bus"| E["Desktop services"]
+```
 
-The `media` group includes OBS Studio; `editor-neovim` installs Neovim and the [LazyVim starter](https://www.lazyvim.org/installation). Existing LazyVim settings are retained; other Neovim configurations are backed up before replacement. Open `nvim` to download plugins on first launch, then run `:LazyHealth`.
+`hype-control` handles desktop actions. `hype-status` streams temperature and hotspot state to Waybar. A single GTK4 layer-shell process renders the notch on each active display and follows GTK's reduced-motion setting. Cargo pins the Niri configuration decoder to Niri 26.04 and the wallpaper client protocol to awww 0.12.1.
 
-Selecting `bluetooth` configures Blueman to use its [built-in dialogs](https://github.com/blueman-project/blueman/wiki/Integrations#desktop-notifications) for Bluetooth notifications, including pairing PIN codes, passkeys and confirmation buttons. To pair a keyboard, open **Bluetooth Devices** from the tray, put the keyboard in pairing mode, search for it, select it and choose **Pair** (the key button). Type the displayed code on the Bluetooth keyboard and press **Enter**. Devices that request a code instead show an entry dialog; devices that use numeric comparison show confirmation buttons.
+## Tech stack
 
-The native `hype-control prepare-sleep --watch` process holds a logind sleep delay inhibitor while it confirms the password locker and session lock are ready. Explicit suspend requests abort if that confirmation fails. Lid-close and other external requests remain subject to logind's five-second delay limit.
+| Component                  | Tool                                                                                                                                           |
+| :------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Compositor and bar**     | [Niri](https://github.com/YaLTeR/niri), [Waybar](https://github.com/Alexays/Waybar)                                                            |
+| **Native UI**              | [Rust](https://www.rust-lang.org/), [GTK4](https://www.gtk.org/), [GTK4 Layer Shell](https://github.com/wmww/gtk4-layer-shell)                 |
+| **Terminal and shell**     | [Alacritty](https://github.com/alacritty/alacritty), [Zsh](https://www.zsh.org/)                                                               |
+| **Notifications and lock** | [Mako](https://github.com/emersion/mako), [Hypridle](https://github.com/hyprwm/hypridle), [Hyprlock](https://github.com/hyprwm/hyprlock)       |
+| **Audio and wallpaper**    | [PipeWire](https://pipewire.org/), [WirePlumber](https://pipewire.pages.freedesktop.org/wireplumber/), [awww](https://codeberg.org/LGFae/awww) |
 
-<br/>
-
-## Repository Structure
+## Project structure
 
 ```text
 .
-├── alacritty/       # Fast, GPU-accelerated terminal configuration
-├── fastfetch/       # System information fetch utility with custom logo
-├── hypr/            # Hypridle + Hyprlock configuration
-├── mako/            # Notification daemon configuration
-├── niri/            # Core Niri compositor settings and rules
-├── polkit/          # Polkit rules for NetworkManager and drive access
-├── wallpapers/      # Default curated wallpapers
-├── native/          # Rust desktop controls and privileged Stealth backend
-├── notch/           # Rust GTK4 notch companion
-├── scripts/         # Stylesheet and installed native binary destination
-├── systemd/         # Automatic power service and OOM protection
-├── stealth/         # Optional transparent Tor service and installer
-├── tests/           # Installer, runtime and power-policy regression checks
-├── waybar/          # Comprehensive status bar configuration
-├── wireplumber/     # Audio routing and idle suspension
-├── zsh/             # Shell config, Stealth commands, and Powerlevel10k theme
-├── install.sh       # Small source-build bootstrap
-├── installer/       # Native Rust installer, configuration and system setup
-├── pkglist.txt      # Core desktop/build package requirements
-├── optional-packages.txt # Explicitly selected extras
-└── *.md             # Documentation files
+├── install.sh             # Source-build bootstrap
+├── installer/             # Rust installer and integration tests
+├── native/                # Rust desktop controls, status streams, and Stealth backend
+├── notch/                 # GTK4 notch and UI tests
+├── niri/                  # Compositor settings and keybindings
+├── waybar/                # Bar configuration, styles, and icons
+├── hypr/                  # Hypridle and Hyprlock configurations
+├── scripts/notch.css      # Styles embedded in the notch
+├── systemd/               # Power profile and memory pressure configuration
+├── tests/                 # Bootstrap and desktop regression suites
+├── pkglist.txt            # Core packages
+└── optional-packages.txt  # Opt-in groups
 ```
 
-<br/>
-
-## Documentation
-
-- **[Keybindings Reference](keybindings.md)** - Learn how to navigate and manage windows
-- **[Zsh Aliases](alias.md)** - Shell aliases
-- **[Stealth Tor Routing](INSTALL.md#stealth-tor-routing)** - Optional Tor routing commands
-- **[Installation Guide](INSTALL.md)** - Detailed setup instructions
-- **[Dependencies and Services](DEPENDENCIES.md)** - Core requirements, optional groups and native replacements
-
-## Native Desktop Controls
-
-The installer builds `hype-control`, `hype-notch` and `hype-status` before replacing configurations. It builds the privileged `stealth` binary when installing the optional Stealth integration. Cargo artifacts are reused from `~/.cache/hype-niri/cargo-target`. Niri, Waybar, Hypridle and the power-profile service call `~/.config/scripts/hype-control` directly. Waybar also uses `hype-status` to stream temperature and hotspot status. Application backends such as Hyprlock, Hyprpicker, Nautilus and `awww-daemon` run as separate programs.
-
-Display changes use Niri IPC and its own configuration decoder, pinned to Niri 26.04. Wallpaper rendering uses the native awww 0.12.1 protocol; keep these dependencies aligned when upgrading their installed backends. GTK4 dialogs provide masked password entry and cached wallpaper previews. The selected wallpaper remains an atomic symlink at `~/.local/state/niri/current_wallpaper` (or `$XDG_STATE_HOME/niri/current_wallpaper`).
+## Development
 
 ```bash
-cargo build --workspace --bins --release --locked
-./target/release/hype-control --check
-./target/release/hype-control auto-power-profile --check
-```
-
-The first check needs no display or desktop services. The power-profile check reads the system D-Bus state without changing it. The installer keeps temporary compatibility entry points while replacing configurations, then removes them after callers switch to the native binary.
-
-## Niri Notch
-
-A Finotch-inspired companion sits just below Waybar, centered on each display. At rest it is a small pill. Hovering the pill slides out the compact notch with the current song, timer, and temperature; moving the pointer within the compact notch after it opens reveals the full drawer. Leaving closes it after a short delay unless the search bar holds text. Click the header or press `Super+N` to pin it open. Press `Esc`, click the pinned header again, or focus another window to collapse it. Hovering does not take keyboard focus.
-
-The drawer uses Waybar's translucent black surface, frosted pills and light active state, animates over 150 ms, and provides:
-
-- A quick search bar. Typing lists matching installed apps; Enter launches the highlighted one, and the last row searches DuckDuckGo in the default browser. Arrow keys move the highlight. `Super+N` focuses the search bar.
-- Current weather and temperature from wttr.in, refreshed every 30 minutes through native HTTPS. The location comes from the public IP address, so WARP or Stealth routing shows the exit location.
-- Volume and brightness sliders. They read the current levels each time the drawer opens and apply changes through the native PipeWire PulseAudio API (capped at 100%) and backlight/logind APIs while you drag. Brightness stops at 1%. A slider hides when its service or device is missing. Waybar keeps the microphone and speaker mute buttons, speaker volume scrolling, and right-click access to an installed audio mixer (`desktop-tools` includes `pavucontrol`).
-- Live MPRIS music and video titles with previous, play/pause, and next controls. A playing source takes priority over a paused one. While something plays, a small animated wave replaces the music icon in the header and sits beside the track title; it stays still when GTK animations are off.
-- A Pomodoro tab with a 25-minute focus timer and five-minute break. Completion sends a notification; start the next phase when ready. Pausing preserves remaining time. Reset returns to a fresh focus session.
-- A Stopwatch tab with start, pause, and reset. The header shows whichever timer is in use.
-- Optional Hype Flow offline dictation. The default shortcut `Alt+Space` starts or finishes recording, and `Super+Ctrl+Esc` cancels. A voice icon and live waveform replace the resting indicator while dictation is active. Click the capsule to finish or right-click to cancel. The drawer includes start/stop, cancel, copy-last, and settings controls.
-
-The dictation connection uses session D-Bus actions and receives state and microphone levels, never transcript text. The capsule does not take keyboard focus. When Hype Flow stops, the notch restores its resting indicator. The existing weather and web-search features remain separate from offline dictation.
-
-The notch is a Rust GTK4 layer-shell surface. Its surface keeps a fixed size and only the visible part accepts input, so the compositor never resizes it mid-animation. GTK4 asks Niri to blur the visible rounded notch and dictation capsule through `ext-background-effect-v1`, so text stays readable over busy windows. It reserves no additional workspace and uses native symbolic icons. Opening it can cover the top of an application. GTK's animation setting controls reduced motion. Media updates arrive through MPRIS D-Bus events. The timer runs only while this process is alive and does not prevent sleep. It pauses during system suspend.
-
-The notch runs as one native Rust process with an embedded stylesheet. The installer builds it once with Cargo before replacing any configuration, then installs `~/.config/scripts/hype-notch`. Startup and `Super+N` call that binary directly. Weather, audio, brightness, media, dictation, and focused-output selection use native APIs; the notch does not invoke control commands or shell scripts. GTK4 manages each output's scale independently, including mixed-scale displays and monitor hotplug.
-
-Build dependencies (`base-devel` and `rust`) and runtime libraries (`gtk4`, `gtk4-layer-shell`, and `libpulse`) are included in `pkglist.txt`. Niri starts the notch after installing this branch and logging in again. To preview directly from the repository without replacing live configuration:
-
-```bash
-cargo build --release --locked
-./target/release/hype-notch --check
-./target/release/hype-notch
-# From another terminal:
-./target/release/hype-notch --toggle
-./target/release/hype-notch --quit
-```
-
-`--check` validates the embedded stylesheet without needing a display. Running the UI requires a Wayland compositor with layer-shell support. GTK4 4.24 or newer and Rust 1.92 or newer are required. Missing optional services do not prevent startup; brightness write failures appear in the drawer.
-
-The GTK4 bindings and layer-shell extension follow the [gtk4-rs API](https://gtk-rs.org/gtk4-rs/stable/latest/docs/gtk4/) and [GTK4 layer-shell API](https://docs.rs/gtk4-layer-shell/0.8.1/gtk4_layer_shell/). Brightness fallback uses logind's [SetBrightness method](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.login1.html).
-
-The application uses one instance per session. Preview and installed copies share that instance; quit the preview before starting the installed version.
-
-## Checks
-
-Native regression checks use temporary files, socket fixtures and private D-Bus services. The Python native suite runs the actual `hype-control` binary in Bubblewrap namespaces, with no live network, device or desktop access; it requires `python-gobject`, `dbus` and `bubblewrap`. `HYPE_CONTROL_BINARY` selects a different built binary. Installer tests exercise Rust against temporary home/system roots and controlled external command boundaries. Launcher tests run the real Rust binary in private namespaces. The Rust notch suite covers clocks, weather, Niri replies, backlight discovery and rounded regions. Its optional UI test needs an enabled output and an isolated session bus; it exercises real GTK4 widgets, fake native MPRIS/Flow services, shared timers and view teardown:
-
-```bash
-python3 tests/test-bootstrap.py
+git clone https://github.com/Dijo-404/hype_niri.git
+cd hype_niri
+sudo pacman -Syu --needed base-devel rust gtk4 gtk4-layer-shell libpulse
 cargo test --workspace --locked
 cargo build --workspace --bins --locked
+```
+
+Run the regression suites against the debug binaries. The runtime tests use private Bubblewrap and D-Bus fixtures and need `python-gobject`, `bubblewrap`, and `dbus`. The GUI suite creates a private headless Sway session and requires Sway and `wtype`.
+
+```bash
+/usr/bin/python3 tests/test-bootstrap.py
 /usr/bin/python3 tests/test-runtime.py
 /usr/bin/python3 tests/test-native-runtime.py
 /usr/bin/python3 tests/test-warp-indicator.py
 /usr/bin/python3 tests/test-native-media.py
 /usr/bin/python3 tests/test-native-session.py
 /usr/bin/python3 tests/test-native-gui.py
-./target/debug/hype-notch --check
 ./target/debug/hype-control --check
+./target/debug/hype-notch --check
 ./target/debug/hype-status --check
 ./target/debug/stealth version
-# Run ignored GTK tests only with an isolated session bus and Wayland compositor:
-cargo test --workspace --locked -- --ignored --test-threads=1
+```
+
+Run the lint and formatting checks before submitting changes.
+
+```bash
 shellcheck install.sh
-shfmt -l install.sh
+shfmt -d install.sh
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
 prettier --check . --ignore-unknown
@@ -222,10 +256,57 @@ ruff check tests
 ruff format --check tests
 ```
 
-Static checks require ShellCheck, shfmt, Prettier, and Ruff. Shell formatting
-uses the four-space indentation in `.editorconfig`; `ruff.toml` also checks
-import placement.
+## Troubleshooting
 
-`install.sh` is the only tracked `.sh` file. Desktop launchers and menus use `hype-control`, and the temperature and hotspot streams use `hype-status`. Installation phases live in `hype-install`. Infrastructure applications and vendor tools such as Hyprlock, pacman, yay and optional warp-cli remain separate programs. Wofi, playerctl, cliphist, wl-clipboard, bemoji and wtype are optional or test-only tools. The bootstrap supports `--help`, and the Rust installer exposes named `--phase` operations for the manual steps in [INSTALL.md](INSTALL.md).
+<details>
+<summary><b>Niri validation reports a missing outputs.kdl</b></summary>
 
-Installation retains four native compatibility symlinks for an already-running Waybar or a custom bar configuration. The temporary power-profile Bash launcher is removed after its replacement user unit has been published and reloaded.
+<br/>
+
+The installer creates `outputs.kdl`. To validate a fresh checkout without installing, run this from the repository root.
+
+```bash
+touch niri/outputs.kdl
+niri validate -c niri/config.kdl
+```
+
+</details>
+
+<details>
+<summary><b>Cargo cannot find gtk4-layer-shell-0</b></summary>
+
+<br/>
+
+Install the `gtk4-layer-shell` package, then verify that `pkg-config` can find it.
+
+```bash
+sudo pacman -Syu --needed gtk4-layer-shell
+pkg-config --modversion gtk4-layer-shell-0
+```
+
+For a user-local library install, add its `lib/pkgconfig` directory to `PKG_CONFIG_PATH`.
+
+</details>
+
+## Documentation
+
+| Guide                                        | What's in it                                                   |
+| :------------------------------------------- | :------------------------------------------------------------- |
+| [Installation](INSTALL.md)                   | Manual setup, service configuration, and troubleshooting       |
+| [Keybindings](keybindings.md)                | Window management, workspace navigation, and desktop shortcuts |
+| [Dependencies and services](DEPENDENCIES.md) | Core packages, optional groups, and native replacements        |
+| [Zsh aliases](alias.md)                      | Shell shortcuts and optional tools                             |
+
+## Contributing
+
+Open an issue for bugs or feature requests. Include your Niri version, the relevant optional groups, and steps to reproduce a bug. Pull requests should include the checks you ran. [GitHub Issues](https://github.com/Dijo-404/hype_niri/issues)
+
+## License
+
+Released under the [MIT License](LICENSE). See the [Waybar icon credits](waybar/icons/README.md) for bundled icons.
+
+<br/>
+
+<div align="center">
+  <sub>Built by <a href="https://github.com/Dijo-404">Dijo-404</a> · <a href="#readme-top">Back to top</a></sub>
+</div>
