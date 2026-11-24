@@ -176,7 +176,6 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
         "niri",
         "waybar",
         "alacritty",
-        "wofi",
         "mako",
         "fastfetch",
         "hypr",

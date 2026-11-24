@@ -1,6 +1,6 @@
 # Dependencies and services
 
-Hype Niri installs a core Wayland desktop by default. Extra applications, compatibility tools, hardware-specific drivers and service integrations require a group selection. Press Enter at the installer group prompt to install the core only.
+Hype Niri installs the core Wayland desktop. Answer `n` at the extras prompt for core only. Answer `y` or `yes` to choose extra applications, compatibility tools, hardware-specific drivers, and service integrations.
 
 The previous package list contained 124 direct requirements. The core now contains 49: 76 previous defaults were removed and `adwaita-cursors` was added. These are explicit package requests, not the total installed package count. Pacman can still install libraries and tools as dependencies of retained applications.
 
@@ -51,6 +51,7 @@ browser-firefox editor-neovim bluetooth
 | `browser-firefox`, `browser-brave`                            | Choose one browser; system defaults are preserved when neither is selected                       |
 | `editor-neovim`, `editor-kate`, `editor-gnome`, `editor-code` | Optional editors; Neovim selection includes LazyVim setup                                        |
 | `chat`, `notes`, `media`                                      | Chat, notes, media playback and recording applications                                           |
+| `hype-flow`                                                   | Offline dictation, Parakeet model setup, `wl-clipboard`, `wtype` and Bubblewrap                  |
 | `desktop-tools`                                               | Optional audio mixer, color picker and system monitor; wl-clipboard supports hyprpicker autocopy |
 | `docker`                                                      | Docker tools, socket activation and optional group membership                                    |
 | `bluetooth`                                                   | BlueZ/Blueman, Bluetooth service and pairing dialogs                                             |
@@ -71,7 +72,7 @@ The core uses Pacman packages. Yay is required only when a selected missing requ
 
 Package managers, Cargo, Git, sudo/Polkit elevation, authoritative configuration validators and infrastructure applications remain separate programs. The installer still uses tools such as systemctl, gsettings/dconf, nmcli, UFW and optional vendor CLIs during setup. WARP still uses its vendor `warp-cli`; a private daemon protocol was not introduced. The advanced network editor, file manager, locker and wallpaper daemon keep their existing application responsibilities.
 
-Niri keybindings and desktop startup use direct argument-vector spawning. Rust startup commands launch optional Hype Flow and export the session environment before starting Hypridle. The generic `menu-toggle` command remains for custom and legacy callers. Default menus use native GTK dialogs.
+The `hype-flow` group builds a pinned upstream revision and uses Hype Flow's setup command to validate and publish its Niri shortcuts and background startup entry. Rust startup commands export the session environment before starting Hypridle. The generic `menu-toggle` command remains for custom and legacy callers. Default menus use native GTK dialogs.
 
 Waybar runs the headless `hype-status` binary for hotspot and temperature. Hotspot follows NetworkManager events. Temperature keeps the existing sensor selection and samples every five seconds, emitting only changes.
 
@@ -81,4 +82,4 @@ New clipboard access uses [wl-clipboard-rs](https://github.com/YaLTeR/wl-clipboa
 
 Versions are resolved in Cargo.lock. Niri configuration validation and awww IPC use pinned upstream code; keep their pins aligned with the installed compositor/wallpaper backend. No dependency's future maintenance can be guaranteed. Prefer supported protocol boundaries and distribution packages, and review upstream compatibility when updating the lockfile.
 
-GUI/protocol regression checks use test-only Sway and wtype on private buses and Wayland sockets. Python/GObject, Bubblewrap, formatters and linters are development requirements, not core installer packages.
+GUI/protocol regression checks use Sway and wtype on private buses and Wayland sockets. Python/GObject, formatters and linters are development requirements.

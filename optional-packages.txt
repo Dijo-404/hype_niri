@@ -1,4 +1,4 @@
-# Select group names at the installer prompt; blank selects core only.
+# Answer yes to the extras prompt to choose groups for installation and setup.
 [browser-firefox]
 firefox
 [browser-brave]
@@ -17,6 +17,10 @@ visual-studio-code-bin
 discord
 [notes]
 obsidian
+[hype-flow]
+wl-clipboard
+wtype
+bubblewrap
 [desktop-tools]
 hyprpicker
 wl-clipboard

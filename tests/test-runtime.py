@@ -58,11 +58,6 @@ class RuntimeTests(RuntimeFixture):
             self.log.read_text().splitlines(), [*expected, *expected, "hypridle"]
         )
 
-    def test_flow_start_preserves_background_argument(self):
-        self.mock("hype-flow", 'printf "%s\n" "$*" >> "$FIXTURE_LOG"')
-        self.control("start-flow")
-        self.assertEqual(self.log.read_text().splitlines(), ["--background"])
-
     def test_legacy_dispatch_accepts_installer_transition_symlink(self):
         (self.root / "fullscreen-toggle.sh").symlink_to(self.binary)
         self.isolated('exec "$FIXTURE_ROOT/fullscreen-toggle.sh"')

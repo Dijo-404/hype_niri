@@ -662,8 +662,6 @@ fn validation_checks_required_services_and_live_oom_settings() {
         ".config/alacritty/alacritty.toml",
         ".config/nvim/init.lua",
         ".config/nvim/lua/config/lazy.lua",
-        ".config/wofi/config",
-        ".config/wofi/style.css",
         ".config/mako/config",
         ".config/fastfetch/config.jsonc",
         ".config/hypr/hyprlock.conf",
@@ -711,7 +709,7 @@ fn validation_checks_required_services_and_live_oom_settings() {
     .into_iter()
     .map(str::to_owned)
     .collect();
-    for optional in [".config/nvim", ".config/wofi", ".config/fastfetch"] {
+    for optional in [".config/nvim", ".config/fastfetch"] {
         fs::remove_dir_all(f.installer.user(optional)).unwrap();
     }
     f.installer.validate().unwrap();

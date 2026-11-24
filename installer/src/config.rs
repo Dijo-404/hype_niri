@@ -213,22 +213,10 @@ impl Installer {
             return Err(error("Unsafe Cargo build cache lock"));
         }
         lease.lock()?;
-        let cargo = self.output("cargo", &["-vV"])?;
-        let host = cargo
-            .stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("host: "))
-            .filter(|host| {
-                cargo.success()
-                    && !host.is_empty()
-                    && host
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
-            })
-            .ok_or_else(|| error("Could not determine Cargo's host target"))?;
+        let host = self.cargo_host()?;
         let manifest = self.source.join("Cargo.toml");
         // An inherited build.target must not redirect the build away from the binaries we publish.
-        let mut args = vec!["build", "--release", "--locked", "--target", host];
+        let mut args = vec!["build", "--release", "--locked", "--target", &host];
         args.extend_from_slice(targets);
         args.extend([
             "--manifest-path",
@@ -250,6 +238,23 @@ impl Installer {
             copy_regular(&binary, &staged.path().join(name), Some(0o755), false)?;
         }
         Ok(staged)
+    }
+
+    pub(crate) fn cargo_host(&self) -> Result<String> {
+        let cargo = self.output("cargo", &["-vV"])?;
+        cargo
+            .stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("host: "))
+            .filter(|host| {
+                cargo.success()
+                    && !host.is_empty()
+                    && host
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+            })
+            .map(str::to_owned)
+            .ok_or_else(|| error("Could not determine Cargo's host target"))
     }
 
     fn validate_binary(&self, path: &Path, check: &str) -> Result<()> {
@@ -730,6 +735,7 @@ impl Installer {
         if user_manager_running {
             self.command("systemctl", &["--user", "daemon-reload"])?;
         }
+        self.setup_hype_flow()?;
         Ok(())
     }
 
@@ -926,7 +932,7 @@ fn metadata(path: &Path) -> io::Result<Option<Metadata>> {
     }
 }
 
-fn path_arg(path: &Path) -> Result<&str> {
+pub(crate) fn path_arg(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| {
         error(format!(
             "Command path is not valid UTF-8: {}",

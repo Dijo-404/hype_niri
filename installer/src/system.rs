@@ -688,21 +688,28 @@ impl Installer {
             ("chat", "discord"),
             ("notes", "obsidian"),
             ("media", "obs"),
+            ("hype-flow", "wl-copy"),
+            ("hype-flow", "wtype"),
+            ("hype-flow", "bwrap"),
             ("desktop-tools", "pavucontrol"),
             ("desktop-tools", "hyprpicker"),
             ("desktop-tools", "htop"),
             ("firewall", "ufw"),
         ];
         for (group, program) in optional_commands {
-            if self.optional_groups.is_some()
-                && self.selected(group)
-                && !self.runner.available(program)
-            {
+            if self.selected(group) && !self.runner.available(program) {
                 eprintln!("Missing selected {group} command: {program}");
                 all_ok = false;
             }
         }
-        if self.optional_groups.is_some() && self.selected("editor-neovim") {
+        if self.selected("hype-flow") {
+            let flow = self.user(".local/bin/hype-flow");
+            if !executable(&flow) || !self.user(".config/niri/hype-flow.kdl").is_file() {
+                eprintln!("Hype Flow installation or Niri shortcuts are missing");
+                all_ok = false;
+            }
+        }
+        if self.selected("editor-neovim") {
             for file in [".config/nvim/init.lua", ".config/nvim/lua/config/lazy.lua"] {
                 if !self.user(file).is_file() {
                     all_ok = false;

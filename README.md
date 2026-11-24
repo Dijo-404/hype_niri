@@ -45,7 +45,9 @@ curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh 
 
 The one-command installer becomes available when this branch reaches `main`. It downloads source into a temporary directory, builds the GTK-independent Rust installer locally, then runs it with terminal input. Local builds take longer on the first run. If Git, Rust or compilation tools are missing, the bootstrap asks before a full Arch upgrade installs them. Run as your regular user with sudo access. yay is needed only for missing selected AUR packages. Existing settings are backed up before replacement.
 
-The installer defaults to the core desktop. At the optional-group prompt, press Enter to keep that default, or enter group names such as `browser-firefox editor-neovim bluetooth`. Docker, VPNs, Bluetooth, browsers, editors, recording tools, extra themes, compatibility tools and hardware-specific drivers are not installed by default. See [the dependency and service ledger](DEPENDENCIES.md) and [optional-packages.txt](optional-packages.txt). Existing packages are never automatically uninstalled.
+Answer `n` to **Install optional extras?** for the core desktop. Answer `y` or `yes` and enter group names such as `browser-firefox editor-neovim bluetooth` to install and set up those extras. Docker, VPNs, Bluetooth, browsers, editors, recording tools, extra themes, compatibility tools and hardware-specific drivers are not installed by default. See [the dependency and service ledger](DEPENDENCIES.md) and [optional-packages.txt](optional-packages.txt). Existing packages are never automatically uninstalled.
+
+Select `hype-flow` for offline dictation on x86-64. The installer builds Hype Flow, downloads and verifies the English Parakeet model, and configures Niri shortcuts. The app runs in the background from login. The speech worker loads on first dictation and unloads after 10 idle minutes by default.
 
 To install from a checked-out branch:
 
@@ -109,7 +111,6 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 .
 ├── alacritty/       # Fast, GPU-accelerated terminal configuration
 ├── fastfetch/       # System information fetch utility with custom logo
-├── wofi/            # Legacy styling retained for custom configurations
 ├── hypr/            # Hypridle + Hyprlock configuration
 ├── mako/            # Notification daemon configuration
 ├── niri/            # Core Niri compositor settings and rules
@@ -167,7 +168,7 @@ The drawer uses Waybar's translucent black surface, frosted pills and light acti
 - Live MPRIS music and video titles with previous, play/pause, and next controls. A playing source takes priority over a paused one. While something plays, a small animated wave replaces the music icon in the header and sits beside the track title; it stays still when GTK animations are off.
 - A Pomodoro tab with a 25-minute focus timer and five-minute break. Completion sends a notification; start the next phase when ready. Pausing preserves remaining time. Reset returns to a fresh focus session.
 - A Stopwatch tab with start, pause, and reset. The header shows whichever timer is in use.
-- Optional Hype Flow offline dictation. When installed, `Super+Ctrl+Space` starts recording and finishes it on the next press; `Super+Ctrl+Esc` cancels. A compact charcoal capsule with a voice icon and live waveform replaces the resting indicator while dictation is active. Click the capsule to finish or right-click to cancel. The drawer includes start/stop, cancel, copy-last, and settings controls. Hype Flow opens from the app launcher and owns its model setup; no terminal is needed for daily use.
+- Optional Hype Flow offline dictation. The default shortcut `Alt+Space` starts or finishes recording, and `Super+Ctrl+Esc` cancels. A voice icon and live waveform replace the resting indicator while dictation is active. Click the capsule to finish or right-click to cancel. The drawer includes start/stop, cancel, copy-last, and settings controls.
 
 The dictation connection uses session D-Bus actions and receives state and microphone levels, never transcript text. The capsule does not take keyboard focus. When Hype Flow stops, the notch restores its resting indicator. The existing weather and web-search features remain separate from offline dictation.
 
@@ -190,7 +191,7 @@ cargo build --release --locked
 
 The GTK4 bindings and layer-shell extension follow the [gtk4-rs API](https://gtk-rs.org/gtk4-rs/stable/latest/docs/gtk4/) and [GTK4 layer-shell API](https://docs.rs/gtk4-layer-shell/0.8.1/gtk4_layer_shell/). Brightness fallback uses logind's [SetBrightness method](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.login1.html).
 
-The application uses one instance per session. Preview and installed copies share that instance; quit the preview before starting the installed version. This first version does not include calendar sync, file sharing, artwork downloads, or Claude Code hooks.
+The application uses one instance per session. Preview and installed copies share that instance; quit the preview before starting the installed version.
 
 ## Checks
 

@@ -344,12 +344,6 @@ pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
         "menu-toggle" => return menu_toggle(args),
         "password-prompt" => return password_prompt(args),
         "power-menu" if args.is_empty() => power_menu().await?,
-        "start-flow" if args.is_empty() => {
-            let error = Command::new("hype-flow").arg("--background").exec();
-            if error.kind() != std::io::ErrorKind::NotFound {
-                return Err(error.into());
-            }
-        }
         "start-idle" if args.is_empty() => {
             // Keep the restart synchronous so fallback only runs when the service fails.
             let _ = Command::new("dbus-update-activation-environment")

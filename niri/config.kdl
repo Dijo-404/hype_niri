@@ -178,13 +178,6 @@ window-rule {
 
 include "opacity.kdl"
 
-window-rule {
-    match app-id="^wofi$"
-    open-floating true
-    open-focused true
-    border { off; }
-}
-
 layer-rule {
     match namespace="^waybar$"
     geometry-corner-radius 6
@@ -207,20 +200,12 @@ window-rule {
 }
 
 window-rule {
-    match app-id="^dev[.]hype[.]Flow$"
-    open-floating true
-    default-column-width { fixed 960; }
-    default-window-height { fixed 680; }
-}
-
-window-rule {
     match app-id="^dev[.]hype_niri[.]Control$"
     open-floating true
 }
 
 spawn-at-startup "~/.config/scripts/hype-control" "start-waybar"
 spawn-at-startup "~/.config/scripts/hype-notch"
-spawn-at-startup "~/.config/scripts/hype-control" "start-flow"
 
 spawn-at-startup "~/.config/scripts/hype-control" "start-tray-applets"
 spawn-at-startup "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"
@@ -287,8 +272,6 @@ binds {
 
     Mod+A repeat=false hotkey-overlay-title="Application Launcher" { spawn "~/.config/scripts/hype-control" "app-launcher"; }
     Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn "~/.config/scripts/hype-notch" "--toggle"; }
-    Mod+Ctrl+Space repeat=false hotkey-overlay-title="Dictate offline" { spawn "hype-flow" "--toggle"; }
-    Mod+Ctrl+Escape repeat=false hotkey-overlay-title="Cancel dictation" { spawn "hype-flow" "--cancel"; }
     Mod+Tab { toggle-overview; }
     Mod+Period repeat=false { spawn "~/.config/scripts/hype-control" "emoji"; }
     Mod+V repeat=false { spawn "~/.config/scripts/hype-control" "clipboard" "pick"; }

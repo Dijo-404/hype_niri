@@ -40,15 +40,24 @@ class BootstrapTests(unittest.TestCase):
         self.tool("uname", "printf 'Linux\\n'")
         self.tool(
             "cargo",
-            """printf 'cargo %s\\n' "$*" >> "$BOOTSTRAP_LOG"
-target=""
+            """if [[ $1 == -vV ]]; then
+    printf 'host: x86_64-test-linux-gnu\\n'
+    exit 0
+fi
+printf 'cargo %s\\n' "$*" >> "$BOOTSTRAP_LOG"
+target_dir=""
+target_arch="${CARGO_BUILD_TARGET:-}"
 while (( $# )); do
-    if [[ $1 == --target-dir ]]; then target=$2; shift; fi
+    case "$1" in
+        --target-dir) target_dir=$2; shift ;;
+        --target) target_arch=$2; shift ;;
+    esac
     shift
 done
-[[ -n $target ]] || exit 71
-mkdir -p "$target/release"
-cat > "$target/release/hype-install" <<'BIN'
+[[ -n $target_dir && -n $target_arch ]] || exit 71
+release_dir="$target_dir/$target_arch/release"
+mkdir -p "$release_dir"
+cat > "$release_dir/hype-install" <<'BIN'
 #!/usr/bin/env bash
 printf 'installer' >> "$BOOTSTRAP_LOG"
 printf ' <%s>' "$@" >> "$BOOTSTRAP_LOG"
@@ -56,7 +65,7 @@ printf '\\n' >> "$BOOTSTRAP_LOG"
 read -r answer
 printf 'answer <%s>\\n' "$answer" >> "$BOOTSTRAP_LOG"
 BIN
-chmod +x "$target/release/hype-install"
+chmod +x "$release_dir/hype-install"
 """,
         )
         self.tool(
@@ -137,10 +146,12 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         result = self.run_bootstrap(arguments=("--help",))
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertFalse(self.log.exists())
+        self.environment["CARGO_BUILD_TARGET"] = "wrong-target"
         result = self.run_bootstrap(arguments=("--source-check", "two words"))
         self.assertEqual(result.returncode, 0, result.stdout)
         calls = self.log.read_text()
         self.assertIn("--package hype-install", calls)
+        self.assertIn("--target x86_64-test-linux-gnu", calls)
         self.assertIn("<--source-check> <two words>", calls)
         self.assertIn("answer <terminal answer>", calls)
         self.assertNotIn("git clone", calls)
@@ -176,7 +187,10 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         self.assertFalse(list(self.root.glob("hype-niri-source.*")))
 
     def test_failed_build_never_runs_installer(self):
-        self.tool("cargo", "exit 8")
+        self.tool(
+            "cargo",
+            "if [[ $1 == -vV ]]; then printf 'host: x86_64-test-linux-gnu\\n'; exit; fi\nexit 8",
+        )
         result = self.run_bootstrap()
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.log.exists())

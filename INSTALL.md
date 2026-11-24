@@ -36,7 +36,9 @@ If you prefer to selectively apply configurations, follow these manual steps. Ba
 
 ### 1. Install Required Packages
 
-`pkglist.txt` contains core desktop/build requirements. The installer offers named groups from `optional-packages.txt`; Enter selects no extras. For example, choose `browser-firefox editor-neovim bluetooth` to add those features. Firewall, Docker, Bluetooth, VPNs, Stealth, Ly, compatibility packages and Intel-specific drivers are optional. See [Dependencies and Services](DEPENDENCIES.md). Existing packages are retained; deselecting a group does not remove packages or disable existing services.
+`pkglist.txt` contains core desktop and build requirements. Answer `n` at the extras prompt for core only. Answer `y` or `yes` to select groups from `optional-packages.txt` for installation and setup. For example, choose `browser-firefox editor-neovim bluetooth` to add those features. Firewall, Docker, Bluetooth, VPNs, Stealth, Ly, compatibility packages and Intel-specific drivers are optional. See [Dependencies and Services](DEPENDENCIES.md). Existing packages are retained; deselecting a group does not remove packages or disable existing services.
+
+Select `hype-flow` to build offline dictation and install the English Parakeet model. With a saved selection, the `desktop-integrations` phase configures the shortcuts and background startup after the Niri config is in place.
 
 For smoother downloads, refresh mirrors before installing packages. If `reflector` is already installed, use it:
 
@@ -68,7 +70,7 @@ Back up the desktop, scripts, theme settings, shell files, and any existing Stea
 BACKUP_DIR="$(mktemp -d "$HOME/.config-backup-$(date +%Y%m%d-%H%M%S).XXXXXX")"
 for target in \
     .config/niri .config/waybar .config/scripts .config/alacritty \
-    .config/wofi .config/mako .config/fastfetch .config/hypr \
+    .config/mako .config/fastfetch .config/hypr \
     .config/gtk-3.0 .config/gtk-4.0 .config/autostart .config/fontconfig \
     .config/mimeapps.list \
     .config/systemd/user .config/wireplumber \

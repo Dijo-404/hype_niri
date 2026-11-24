@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Obtain source, build the GTK-independent Rust installer, then hand off.
-# curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
-
 hype_bootstrap() {
     set -Eeuo pipefail
     if [[ ${1:-} == --help || ${1:-} == -h ]]; then
         printf 'Usage: install.sh [installer arguments]\nBuilds locally for Arch Linux. Run as a regular user with sudo. yay is needed only for missing AUR packages.\n'
         return 0
     fi
-    local temporary="" source_dir="" here="${BASH_SOURCE[0]:-}" build_log="" answer code=0
+    local temporary="" source_dir="" here="${BASH_SOURCE[0]:-}" build_log="" cargo_host answer code=0
     trap 'code=$?; [[ -z ${temporary:-} ]] || rm -rf -- "$temporary"; exit "$code"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
@@ -47,15 +44,19 @@ hype_bootstrap() {
         git clone --depth 1 -- https://github.com/Dijo-404/hype_niri.git "$source_dir" <&3 || exit 1
     fi
     printf 'Building Rust installer locally...\n' >&2
+    if ! cargo_host=$(cargo -vV | sed -n 's/^host: //p') || [[ ! $cargo_host =~ ^[A-Za-z0-9_-]+$ ]]; then
+        printf 'Could not determine Cargo host target.\n' >&2
+        exit 1
+    fi
     build_log="$(mktemp "${TMPDIR:-/tmp}/hype-niri-build.XXXXXXXX.log")"
-    if ! cargo build --release --locked --package hype-install --manifest-path "$source_dir/Cargo.toml" --target-dir "$source_dir/target" <&3 >"$build_log" 2>&1; then
+    if ! cargo build --release --locked --package hype-install --target "$cargo_host" --manifest-path "$source_dir/Cargo.toml" --target-dir "$source_dir/target" <&3 >"$build_log" 2>&1; then
         tail -n 40 -- "$build_log" >&2
         printf 'Installer build failed. Full log: %s\n' "$build_log" >&2
         exit 1
     fi
     rm -f -- "$build_log"
     local status=0
-    "$source_dir/target/release/hype-install" --source "$source_dir" "$@" <&3 || status=$?
+    "$source_dir/target/$cargo_host/release/hype-install" --source "$source_dir" "$@" <&3 || status=$?
     exit "$status"
 }
 

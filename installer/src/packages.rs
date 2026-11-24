@@ -3,12 +3,20 @@ use std::{collections::HashSet, fs, io::Write};
 
 impl Installer {
     pub fn select_optional_groups(&mut self) -> Result<()> {
+        if !self.confirm("Install optional extras?")? {
+            self.optional_groups = Some(Vec::new());
+            return Ok(());
+        }
         let groups = optional_groups(&fs::read_to_string(
             self.source.join("optional-packages.txt"),
         )?)?;
         println!("Core desktop is always installed. Optional groups:");
         for (name, packages) in &groups {
-            println!("  {name}: {}", packages.join(" "));
+            if name == "hype-flow" {
+                println!("  hype-flow: offline dictation, including the Parakeet speech model");
+            } else {
+                println!("  {name}: {}", packages.join(" "));
+            }
         }
         loop {
             let answer = self
@@ -93,7 +101,6 @@ impl Installer {
                     "yay is required for missing AUR packages; install yay, then rerun",
                 ));
             }
-            // The production terminal is checked before phases run; command input stays inherited.
             let mut args = vec!["-Si", "--aur"];
             args.extend(aur.iter().map(String::as_str));
             let result = self.output("yay", &args)?;
@@ -278,10 +285,12 @@ mod tests {
                 Ok(())
             }
         }
-        fn confirm(&self, _: &str) -> Result<bool> {
-            Ok(false)
+        fn confirm(&self, prompt: &str) -> Result<bool> {
+            self.calls.borrow_mut().push(prompt.to_owned());
+            Ok(!self.answer.is_empty())
         }
-        fn input(&self, _: &str) -> Result<String> {
+        fn input(&self, prompt: &str) -> Result<String> {
+            self.calls.borrow_mut().push(prompt.to_owned());
             Ok(self.answer.clone())
         }
         fn available(&self, command: &str) -> bool {
@@ -351,12 +360,49 @@ mod tests {
         });
         installer.install_packages().unwrap();
         assert_eq!(installer.optional_groups, Some(Vec::new()));
+        assert_eq!(calls.borrow()[0], "Install optional extras?");
         assert!(
             !calls
                 .borrow()
                 .iter()
-                .any(|call| call.starts_with("yay ") || call.contains("docker"))
+                .any(|call| call.starts_with("Optional groups")
+                    || call.starts_with("yay ")
+                    || call.contains("docker"))
         );
+    }
+    #[test]
+    fn accepted_extras_install_and_save_the_selected_groups() {
+        let (root, mut installer, calls) = fixture(false, false, false);
+        fs::write(root.path().join("pkglist.txt"), "official\n").unwrap();
+        fs::write(
+            root.path().join("optional-packages.txt"),
+            "[hype-flow]\nmissing\n[bluetooth]\nbluez\n",
+        )
+        .unwrap();
+        installer.optional_groups = None;
+        installer.runner = Box::new(Fake {
+            calls: calls.clone(),
+            metadata_fails: false,
+            install_fails: false,
+            verification_fails: false,
+            yay_available: true,
+            answer: "hype-flow".into(),
+        });
+        installer.install_packages().unwrap();
+        installer.save_optional_groups().unwrap();
+        assert_eq!(
+            fs::read_to_string(installer.user(".config/hype-niri/optional-groups")).unwrap(),
+            "hype-flow\n"
+        );
+        let calls = calls.borrow();
+        assert_eq!(calls[0], "Install optional extras?");
+        assert!(calls[1].starts_with("Optional groups"));
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.starts_with("yay -S ") && call.ends_with("aur/missing"))
+        );
+        assert!(!calls.iter().any(|call| call.contains("bluez")));
     }
     #[test]
     fn selected_aur_group_requires_yay_before_repository_installation() {

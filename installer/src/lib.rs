@@ -5,6 +5,7 @@ use std::{
 };
 pub mod config;
 pub mod core;
+mod flow;
 pub mod packages;
 pub mod system;
 
