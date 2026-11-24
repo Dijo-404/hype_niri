@@ -381,57 +381,72 @@ async fn set_profile(connection: &gio::DBusConnection, profile: &str) -> Result<
 
 async fn power_profile(action: &str) -> Result<()> {
     let connection = bus::system().await?;
-    if action == "menu" {
-        let choices: Vec<String> = ["performance", "balanced", "power-saver"]
-            .into_iter()
-            .map(|profile| {
+    let order = ["performance", "balanced", "power-saver"];
+    let (profile, cycle_lock) = match action {
+        "menu" => {
+            let choices = order.map(|profile| {
                 let (icon, name) = profile_label(profile);
                 format!("{icon} {name}")
-            })
-            .collect();
-        if let Some(index) = dialog::choose("Power Profile", &choices).await? {
-            let profile = ["performance", "balanced", "power-saver"][index];
-            let (icon, name) = profile_label(profile);
-            match set_profile(&connection, profile).await {
-                Ok(()) => {
-                    let _ =
-                        notify::send(2004, &format!("{icon}  Power Mode: {name}"), "", None, "")
-                            .await;
-                }
-                Err(error) => {
-                    let _ = notify::send(
-                        2004,
-                        "Could not set Power Mode",
-                        &error.to_string(),
-                        None,
-                        "",
-                    )
-                    .await;
+            });
+            let selected = dialog::choose("Power Profile", &choices).await?;
+            (selected.map(|index| order[index]), None)
+        }
+        "cycle" => {
+            let lock = runtime::lock("hype-power-profile-cycle.lock", Duration::from_secs(5))?
+                .ok_or_else(|| err("Power profile change is busy"))?;
+            let active = active_profile(&connection).await?;
+            let available = read_available_profiles(&connection).await?;
+            let start = order
+                .iter()
+                .position(|&name| name == active)
+                .map_or(0, |index| index + 1);
+            let next = order[start..]
+                .iter()
+                .chain(&order[..start])
+                .copied()
+                .find(|&name| name != active && available.iter().any(|profile| profile == name));
+            (next, Some(lock))
+        }
+        _ => {
+            match active_profile(&connection).await {
+                Ok(profile) if !profile.is_empty() => println!(
+                    "{}",
+                    json!({"text":"", "tooltip":format!("Power Profile: {profile}"), "class":profile,
+                "percentage":match profile.as_str() { "performance" => 100, "power-saver" => 0, _ => 50 }})
+                ),
+                _ => println!(
+                    "{}",
+                    json!({"text":"", "tooltip":"power profile unavailable", "class":"missing", "percentage":50})
+                ),
+            }
+            return Ok(());
+        }
+    };
+    if let Some(profile) = profile {
+        let result = set_profile(&connection, profile).await;
+        drop(cycle_lock);
+        match result {
+            Ok(()) => {
+                let (icon, name) = profile_label(profile);
+                let _ =
+                    notify::send(2004, &format!("{icon}  Power Mode: {name}"), "", None, "").await;
+            }
+            Err(error) => {
+                let _ = notify::send(
+                    2004,
+                    "Could not set Power Mode",
+                    &error.to_string(),
+                    None,
+                    "",
+                )
+                .await;
+                if action == "cycle" {
+                    return Err(error);
                 }
             }
         }
-        let _ = runtime::signal_waybar(16);
-    } else {
-        match bus::property::<String>(
-            &connection,
-            PROFILES,
-            PROFILES_PATH,
-            PROFILES,
-            "ActiveProfile",
-        )
-        .await
-        {
-            Ok(profile) if !profile.is_empty() => println!(
-                "{}",
-                json!({"text":"", "tooltip":format!("Power Profile: {profile}"), "class":profile,
-                "percentage":match profile.as_str() { "performance" => 100, "power-saver" => 0, _ => 50 }})
-            ),
-            _ => println!(
-                "{}",
-                json!({"text":"", "tooltip":"power profile unavailable", "class":"missing", "percentage":50})
-            ),
-        }
     }
+    let _ = runtime::signal_waybar(16);
     Ok(())
 }
 
@@ -482,6 +497,29 @@ fn available_profiles(profiles: &[HashMap<String, glib::Variant>]) -> Vec<String
         .collect()
 }
 
+async fn active_profile(connection: &gio::DBusConnection) -> Result<String> {
+    bus::property(
+        connection,
+        PROFILES,
+        PROFILES_PATH,
+        PROFILES,
+        "ActiveProfile",
+    )
+    .await
+}
+
+async fn read_available_profiles(connection: &gio::DBusConnection) -> Result<Vec<String>> {
+    bus::property::<Vec<HashMap<String, glib::Variant>>>(
+        connection,
+        PROFILES,
+        PROFILES_PATH,
+        PROFILES,
+        "Profiles",
+    )
+    .await
+    .map(|profiles| available_profiles(&profiles))
+}
+
 async fn read_power(connection: &gio::DBusConnection) -> PowerState {
     let on_battery = bus::property::<bool>(connection, UPOWER, UPOWER_PATH, UPOWER, "OnBattery")
         .await
@@ -495,25 +533,10 @@ async fn read_power(connection: &gio::DBusConnection) -> PowerState {
     let percentage = bus::property::<f64>(connection, UPOWER, BATTERY, DEVICE, "Percentage")
         .await
         .ok();
-    let active = bus::property::<String>(
-        connection,
-        PROFILES,
-        PROFILES_PATH,
-        PROFILES,
-        "ActiveProfile",
-    )
-    .await
-    .unwrap_or_default();
-    let available = bus::property::<Vec<HashMap<String, glib::Variant>>>(
-        connection,
-        PROFILES,
-        PROFILES_PATH,
-        PROFILES,
-        "Profiles",
-    )
-    .await
-    .map(|profiles| available_profiles(&profiles))
-    .unwrap_or_default();
+    let active = active_profile(connection).await.unwrap_or_default();
+    let available = read_available_profiles(connection)
+        .await
+        .unwrap_or_default();
     PowerState {
         on_battery,
         present,

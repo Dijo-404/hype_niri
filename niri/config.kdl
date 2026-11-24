@@ -276,6 +276,7 @@ binds {
 
     Mod+A repeat=false hotkey-overlay-title="Application Launcher" { spawn "~/.config/scripts/hype-control" "app-launcher"; }
     Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn "~/.config/scripts/hype-notch" "--toggle"; }
+    Mod+M repeat=false hotkey-overlay-title="Cycle Power Profile" { spawn "~/.config/scripts/hype-control" "power-profile" "cycle"; }
     Mod+Tab { toggle-overview; }
     Mod+Period repeat=false { spawn "~/.config/scripts/hype-control" "emoji"; }
     Mod+V repeat=false { spawn "~/.config/scripts/hype-control" "clipboard" "pick"; }

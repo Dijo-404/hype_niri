@@ -121,6 +121,7 @@ Desktop commands use the installed binaries. Run the installer help command from
 | `Super+←` / `Super+→`       | Focus the adjacent tiling column         |
 | `Super+1` through `Super+0` | Switch to workspaces 1 through 10        |
 | `Super+N`                   | Toggle the notch drawer                  |
+| `Super+M`                   | Cycle supported power profiles           |
 | `Super+V`                   | Open clipboard history                   |
 | `Super+Shift+H`             | Open hotspot settings                    |
 | `Super+L`                   | Lock the session                         |

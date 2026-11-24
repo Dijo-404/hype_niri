@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 try:
@@ -746,6 +747,45 @@ class NativeRuntimeTests(unittest.TestCase):
         self.assertEqual(profile["ipv6"]["method"], "disabled")
         self.assertEqual(len(profile["802-11-wireless-security"]["psk"]), 24)
         self.assertEqual(profile["802-11-wireless-security"]["pairwise"], ["ccmp"])
+
+    def test_power_profile_cycle_wraps_and_skips_unavailable_modes(self):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            commands = [
+                executor.submit(self.run_control, "power-profile", "cycle")
+                for _ in range(2)
+            ]
+            for command in commands:
+                command.result()
+        self.run_control("power-profile", "cycle")
+        self.assertEqual(
+            self.bus.snapshot()["sets"], ["balanced", "power-saver", "performance"]
+        )
+
+        def supported_profiles(*names):
+            self.bus.invoke(
+                lambda: self.bus.change(
+                    PP_ROOT,
+                    PP,
+                    "Profiles",
+                    GLib.Variant(
+                        "aa{sv}",
+                        [{"Profile": GLib.Variant("s", name)} for name in names],
+                    ),
+                )
+            )
+
+        self.bus.invoke(
+            lambda: self.bus.change(
+                PP_ROOT, PP, "ActiveProfile", GLib.Variant("s", "power-saver")
+            )
+        )
+        supported_profiles("balanced", "power-saver")
+        self.run_control("power-profile", "cycle")
+        self.assertEqual(self.bus.snapshot()["sets"][-1], "balanced")
+
+        supported_profiles("balanced")
+        self.run_control("power-profile", "cycle")
+        self.assertEqual(len(self.bus.snapshot()["sets"]), 4)
 
     def test_power_check_reports_boundaries_without_writing(self):
         for battery, percentage, policy in [
