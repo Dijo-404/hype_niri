@@ -2,6 +2,7 @@ mod controller;
 mod model;
 mod morph;
 mod services;
+mod shelf;
 mod surface;
 mod ui;
 

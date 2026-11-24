@@ -1,13 +1,16 @@
 use crate::{
     model::{FocusTimer, Stopwatch, Weather, WriteQueue},
     services::{Audio, Backlight, Media},
+    shelf::{CachedFile, Shelf},
     ui::View,
 };
 use gtk::{gio, glib, prelude::*};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
+    path::Path,
     rc::Rc,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug)]
@@ -65,6 +68,8 @@ pub struct Controller {
     pub media: RefCell<BTreeMap<String, gio::DBusProxy>>,
     pub selected: RefCell<Option<gio::DBusProxy>>,
     clock: RefCell<Option<glib::SourceId>>,
+    shelf: RefCell<Shelf>,
+    shelf_source: RefCell<Option<glib::SourceId>>,
     weather_source: RefCell<Option<glib::SourceId>>,
     flow_watch: RefCell<Option<gio::WatcherId>>,
     bus_signal: RefCell<Option<gio::SignalSubscription>>,
@@ -89,6 +94,8 @@ impl Controller {
             media: RefCell::new(BTreeMap::new()),
             selected: RefCell::new(None),
             clock: RefCell::new(None),
+            shelf: RefCell::new(Shelf::default()),
+            shelf_source: RefCell::new(None),
             weather_source: RefCell::new(None),
             flow_watch: RefCell::new(None),
             bus_signal: RefCell::new(None),
@@ -138,6 +145,45 @@ impl Controller {
             view.refresh_weather();
             view.refresh_media(&self.media_state());
             view.refresh_flow();
+            view.refresh_shelf(&self.shelf_files());
+        }
+    }
+    pub fn shelf_files(&self) -> Vec<Rc<CachedFile>> {
+        self.shelf.borrow().files()
+    }
+    pub fn store_files(self: &Rc<Self>, files: Vec<CachedFile>) {
+        if !files.is_empty() {
+            self.shelf.borrow_mut().add(files, Instant::now());
+            self.sync_shelf();
+        }
+    }
+    pub fn remove_file(self: &Rc<Self>, path: &Path) {
+        if self.shelf.borrow_mut().remove(path) {
+            self.sync_shelf();
+        }
+    }
+    fn sync_shelf(self: &Rc<Self>) {
+        if let Some(source) = self.shelf_source.take() {
+            source.remove();
+        }
+        let now = Instant::now();
+        self.shelf.borrow_mut().expire(now);
+        let files = self.shelf_files();
+        for view in self.views.borrow().iter() {
+            view.refresh_shelf(&files);
+        }
+        if let Some(expires) = self.shelf.borrow().next_expiry() {
+            let weak = Rc::downgrade(self);
+            let delay = expires
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(1));
+            *self.shelf_source.borrow_mut() =
+                Some(glib::timeout_add_local_once(delay, move || {
+                    if let Some(this) = weak.upgrade() {
+                        this.shelf_source.take();
+                        this.sync_shelf();
+                    }
+                }));
         }
     }
     pub fn notify(&self, completed: Option<&str>) {
@@ -501,6 +547,9 @@ impl Controller {
 impl Drop for Controller {
     fn drop(&mut self) {
         if let Some(source) = self.clock.take() {
+            source.remove();
+        }
+        if let Some(source) = self.shelf_source.take() {
             source.remove();
         }
         if let Some(source) = self.weather_source.take() {

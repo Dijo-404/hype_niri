@@ -6,7 +6,7 @@
 
 **A monochrome Arch Linux desktop with Niri scrollable tiling, Waybar, and native Rust controls.**
 
-[![Latest release](https://img.shields.io/github/v/release/Dijo-404/hype_niri?style=for-the-badge&color=555555)](https://github.com/Dijo-404/hype_niri/releases)
+[![Latest release](https://img.shields.io/badge/Latest%20release-555555?style=for-the-badge)](https://github.com/Dijo-404/hype_niri/releases/latest)
 [![MIT license](https://img.shields.io/badge/License-MIT-555555?style=for-the-badge)](LICENSE)
 ![Arch Linux](https://img.shields.io/badge/Arch_Linux-555555?style=for-the-badge&logo=archlinux&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-555555?style=for-the-badge&logo=rust&logoColor=white)
@@ -131,7 +131,11 @@ See the [full keybinding reference](keybindings.md).
 
 ### Examples
 
-**Use the notch.** Hover over the Finotch-inspired pill below Waybar to see the compact view. Move within it to open the drawer, or press `Super+N` to pin it and focus search. Press `Esc` to close it. The drawer includes media controls, volume and brightness sliders, a 25-minute focus timer with a five-minute break, and a stopwatch. With Hype Flow installed, it also shows dictation status and controls. The speech worker loads on first use and unloads after 10 idle minutes by default.
+**Use the notch.** Hover over the pill below Waybar for a compact view and move within it to open the controls. Press `Super+N` to pin the drawer and focus search. You can also open controls from the grid button in the file shelf. Press `Esc` to close it. The drawer includes media controls, volume and brightness sliders, a 25-minute focus timer with a five-minute break, and a stopwatch. With Hype Flow installed, it also shows dictation status and controls. The speech worker loads on first use and unloads after 10 idle minutes by default.
+
+**Hold files in the notch.** Hover over the notch and press `Ctrl+V` to paste a screenshot, or drag local files onto the pill. Either action opens the file shelf. Use the folder button beside search to reopen the shelf when it contains files. Drag one item or use **Drag all** to copy them to another app. Use the **×** on a tile to remove its cached copy. Copies in `~/.cache/hype-niri/notch-shelf/` expire after 10 minutes.
+
+**Copy and paste in Alacritty.** Select text and press `Ctrl+C` to copy it. Press `Ctrl+V` to paste and `Ctrl+Shift+C` to interrupt a running command.
 
 **Share a connection over Wi-Fi.** Click the hotspot icon in Waybar to toggle sharing. Right-click it or press `Super+Shift+H` for credentials and password settings. The first start creates `Hype-Niri` with a random password. It tries 5 GHz where supported, falls back to 2.4 GHz, and remembers the working band. The hotspot uses WPA2 Personal with AES/CCMP and accepts an 8–63 character ASCII password or a 64-digit hexadecimal key. Internet sharing requires an upstream connection such as Ethernet, USB tethering, or a second Wi-Fi adapter. Starting a hotspot can disconnect Wi-Fi on the selected adapter. Changing an active hotspot password restarts it.
 

@@ -1048,6 +1048,7 @@ dependencies = [
  "libpulse-binding",
  "reqwest",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

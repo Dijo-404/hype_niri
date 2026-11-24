@@ -71,5 +71,22 @@ chars = "\u001B\r"
 
 [[keyboard.bindings]]
 key = "Back"
-mods = "Control"	
+mods = "Control"
 chars = "\u001B\u007F"
+
+[[keyboard.bindings]]
+key = "C"
+mods = "Control"
+mode = "~Search"
+action = "Copy"
+
+[[keyboard.bindings]]
+key = "V"
+mods = "Control"
+action = "Paste"
+
+[[keyboard.bindings]]
+key = "C"
+mods = "Control|Shift"
+mode = "~Vi|~Search"
+chars = "\u0003"

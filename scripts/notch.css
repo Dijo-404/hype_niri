@@ -64,6 +64,44 @@
   padding: 8px 12px;
 }
 
+#notch-shelf {
+  padding: 8px 14px 12px;
+}
+
+#notch-shelf .shelf-drop-area {
+  background-color: @notch_fill;
+  border: 1px dashed @notch_border;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+#niri-notch #notch-shelf.drop-active .shelf-drop-area,
+#niri-notch #notch-shelf.drop-active .shelf-item {
+  background-color: @notch_hover;
+  box-shadow: inset 0 0 0 1px @notch_active;
+}
+
+#niri-notch .shelf-item {
+  background-color: @notch_fill;
+  border-radius: 6px;
+  padding: 3px 5px;
+}
+
+#niri-notch .shelf-item:hover {
+  background-color: @notch_hover;
+}
+
+#niri-notch #notch-shelf button.shelf-remove {
+  background-color: #272727;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+}
+
+#niri-notch #notch-shelf button.shelf-remove:hover {
+  background-color: #555555;
+}
+
 #niri-notch .glance {
   font-weight: 700;
   font-feature-settings: "tnum";

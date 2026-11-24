@@ -3,6 +3,7 @@ use crate::{
     model::{FocusTimer, Stopwatch, stopwatch_text},
     morph::Morph,
     services::{Backlight, Media},
+    shelf::{CachedFile, cache_dir, thumbnail},
     surface::rounded_region,
 };
 use gtk::{cairo, gdk, gio, glib, prelude::*};
@@ -17,6 +18,7 @@ use std::{
 pub enum State {
     Hidden,
     Peek,
+    Shelf,
     Open,
 }
 
@@ -69,12 +71,22 @@ pub struct View {
     pub body: gtk::Box,
     pub search: gtk::Entry,
     pub results: gtk::ListBox,
+    shelf: gtk::Box,
+    shelf_open: gtk::Button,
+    shelf_controls: gtk::Button,
+    shelf_message: gtk::Label,
+    shelf_all: gtk::Label,
+    shelf_scroll: gtk::ScrolledWindow,
+    shelf_items: gtk::Box,
+    shelf_dirty: Cell<bool>,
+    dragging_files: Cell<bool>,
     search_apps: RefCell<Vec<Option<gio::AppInfo>>>,
     pub state: Cell<State>,
     pub pinned: Cell<bool>,
     close_source: RefCell<Option<glib::SourceId>>,
     open_source: RefCell<Option<glib::SourceId>>,
     geometry_tick: RefCell<Option<gtk::TickCallbackId>>,
+    applied_input: RefCell<Option<cairo::Region>>,
     pub summary: gtk::Label,
     compact: gtk::Label,
     media_icon: gtk::Image,
@@ -291,6 +303,7 @@ impl View {
         stage.append(&flow);
         let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
         surface.set_widget_name("notch-surface");
+        surface.set_focusable(true);
         let header = gtk::Button::new();
         header.set_widget_name("notch-header");
         // Mod+N and Escape cover it; as the first focusable widget it would
@@ -332,9 +345,45 @@ impl View {
         let results = gtk::ListBox::new();
         results.set_widget_name("notch-results");
         results.set_visible(false);
-        search_box.append(&search);
+        let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        search.set_hexpand(true);
+        search_row.append(&search);
+        let shelf_open = button("folder-symbolic", "Open file shelf");
+        shelf_open.set_visible(false);
+        search_row.append(&shelf_open);
+        search_box.append(&search_row);
         search_box.append(&results);
         body.append(&search_box);
+        let shelf = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        shelf.set_widget_name("notch-shelf");
+        shelf.set_visible(false);
+        shelf.set_focusable(true);
+        let shelf_heading = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        shelf_heading.append(&gtk::Image::from_icon_name("folder-symbolic"));
+        let shelf_title = label("File shelf", "strong");
+        shelf_title.set_hexpand(true);
+        shelf_heading.append(&shelf_title);
+        let shelf_all = label("", "shelf-item");
+        shelf_all.set_visible(false);
+        shelf_all.set_tooltip_text(Some("Drag all files out of the shelf"));
+        shelf_heading.append(&shelf_all);
+        let shelf_controls = button("view-grid-symbolic", "Open notch controls");
+        shelf_heading.append(&shelf_controls);
+        shelf.append(&shelf_heading);
+        let shelf_message = label("Drop files or paste a screenshot", "muted");
+        shelf_message.add_css_class("shelf-drop-area");
+        shelf_message.set_xalign(0.5);
+        shelf.append(&shelf_message);
+        let shelf_items = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let shelf_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .child(&shelf_items)
+            .visible(false)
+            .build();
+        shelf.append(&shelf_scroll);
+        surface.append(&shelf);
         let flow_card = card("notch-dictation-controls");
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let flow_toggle = button("audio-input-microphone-symbolic", "Start dictation");
@@ -442,6 +491,7 @@ impl View {
         body.append(&message);
         let morph = Morph::new(&surface);
         stage.append(&morph);
+        body.set_visible(false);
         body.set_child_visible(false);
         let this = Rc::new(Self {
             shared: Rc::downgrade(shared),
@@ -453,12 +503,22 @@ impl View {
             body,
             search,
             results,
+            shelf,
+            shelf_open,
+            shelf_controls,
+            shelf_message,
+            shelf_all,
+            shelf_scroll,
+            shelf_items,
+            shelf_dirty: Cell::new(false),
+            dragging_files: Cell::new(false),
             search_apps: RefCell::new(Vec::new()),
             state: Cell::new(State::Hidden),
             pinned: Cell::new(false),
             close_source: RefCell::new(None),
             open_source: RefCell::new(None),
             geometry_tick: RefCell::new(None),
+            applied_input: RefCell::new(None),
             summary,
             compact,
             media_icon,
@@ -505,6 +565,7 @@ impl View {
         this
     }
     fn wire(self: &Rc<Self>, skip: &gtk::Button, reset: &gtk::Button, watch_reset: &gtk::Button) {
+        self.wire_shelf();
         let weak = Rc::downgrade(self);
         self.header.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -512,8 +573,21 @@ impl View {
             }
         });
         let weak = Rc::downgrade(self);
+        self.shelf_controls.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.pin(true);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.shelf_open.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.open_shelf();
+            }
+        });
+        let weak = Rc::downgrade(self);
         self.window.connect_map(move |_| {
             if let Some(this) = weak.upgrade() {
+                this.applied_input.take();
                 this.retarget();
                 this.sync_geometry();
             }
@@ -522,6 +596,9 @@ impl View {
         self.window.connect_is_active_notify(move |window| {
             if !window.is_active()
                 && let Some(this) = weak.upgrade()
+                && !this.dragging_files.get()
+                && !this.shelf.has_css_class("drop-active")
+                && (this.pinned.get() || window.keyboard_mode() == KeyboardMode::Exclusive)
             {
                 this.collapse();
             }
@@ -547,20 +624,34 @@ impl View {
         });
         self.window.add_controller(motion);
         let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
         let weak = Rc::downgrade(self);
-        key.connect_key_pressed(move |_, key, _, _| {
+        key.connect_key_pressed(move |_, key, _, modifiers| {
             let Some(this) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if key != gdk::Key::Escape {
-                return glib::Propagation::Proceed;
+            if this.state.get() != State::Hidden
+                && matches!(key, gdk::Key::v | gdk::Key::V)
+                && modifiers & gtk::accelerator_get_default_mod_mask()
+                    == gdk::ModifierType::CONTROL_MASK
+                && this
+                    .window
+                    .clipboard()
+                    .formats()
+                    .contains_type(gdk::Texture::static_type())
+            {
+                this.paste_to_shelf();
+                return glib::Propagation::Stop;
             }
-            if this.search.text().is_empty() {
-                this.collapse();
-            } else {
-                this.search.set_text("");
+            if key == gdk::Key::Escape {
+                if this.search.text().is_empty() {
+                    this.collapse();
+                } else {
+                    this.search.set_text("");
+                }
+                return glib::Propagation::Stop;
             }
-            glib::Propagation::Stop
+            glib::Propagation::Proceed
         });
         self.window.add_controller(key);
         let weak = Rc::downgrade(self);
@@ -775,6 +866,235 @@ impl View {
                 }
             });
     }
+    fn wire_shelf(self: &Rc<Self>) {
+        let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+        // An outbound drag over another notch view is still a drag from this shelf.
+        target.connect_accept(|target, drop| {
+            drop.drag().is_none()
+                && target
+                    .formats()
+                    .is_some_and(|formats| drop.formats().match_(&formats))
+        });
+        let weak = Rc::downgrade(self);
+        target.connect_enter(move |_, _, _| {
+            let Some(this) = weak.upgrade() else {
+                return gdk::DragAction::empty();
+            };
+            this.shelf.add_css_class("drop-active");
+            this.window.set_keyboard_mode(KeyboardMode::None);
+            this.open_shelf();
+            gdk::DragAction::COPY
+        });
+        let weak = Rc::downgrade(self);
+        target.connect_leave(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.shelf.remove_css_class("drop-active");
+                this.leave();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        target.connect_drop(move |_, value, _, _| {
+            let (Some(this), Ok(files)) = (weak.upgrade(), value.get::<gdk::FileList>()) else {
+                return false;
+            };
+            let files = files.files();
+            let paths: Vec<_> = files
+                .iter()
+                .filter(|file| file.is_native())
+                .filter_map(gio::File::path)
+                .collect();
+            if paths.is_empty() {
+                this.show_shelf_message("Drop a local file");
+                return false;
+            }
+            let weak = Rc::downgrade(&this);
+            let shared = this.shared.clone();
+            let root = cache_dir();
+            let count = files.len();
+            glib::spawn_future_local(async move {
+                let result = gio::spawn_blocking(move || {
+                    paths
+                        .into_iter()
+                        .filter_map(|path| CachedFile::copy(&root, path).ok())
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .unwrap_or_default();
+                let failed = result.len() != count;
+                if let Some(shared) = shared.upgrade() {
+                    shared.store_files(result);
+                }
+                if failed && let Some(this) = weak.upgrade() {
+                    this.show_shelf_message("Some files could not be stored");
+                }
+            });
+            true
+        });
+        // Attach to the window so the collapsed pill can receive a file drag.
+        self.window.add_controller(target);
+        let shared = self.shared.clone();
+        self.wire_file_drag(&self.shelf_all, move || {
+            shared
+                .upgrade()
+                .map_or_else(Vec::new, |shared| shared.shelf_files())
+        });
+    }
+    fn paste_to_shelf(self: &Rc<Self>) {
+        let clipboard = self.window.clipboard();
+        let weak = Rc::downgrade(self);
+        let shared = self.shared.clone();
+        let root = cache_dir();
+        glib::spawn_future_local(async move {
+            let Ok(Some(texture)) = clipboard.read_texture_future().await else {
+                if let Some(this) = weak.upgrade()
+                    && this.state.get() == State::Shelf
+                {
+                    this.show_shelf_message("Copy a screenshot first");
+                }
+                return;
+            };
+            if let Some(this) = weak.upgrade()
+                && this.state.get() != State::Hidden
+            {
+                this.open_shelf();
+            }
+            let result = gio::spawn_blocking(move || CachedFile::screenshot(&root, texture)).await;
+            if let Ok(Ok(file)) = result {
+                if let Some(shared) = shared.upgrade() {
+                    shared.store_files(vec![file]);
+                }
+            } else if let Some(this) = weak.upgrade() {
+                this.show_shelf_message("Could not store screenshot");
+            }
+        });
+    }
+    fn open_shelf(self: &Rc<Self>) {
+        self.pinned.set(false);
+        self.set_state(State::Shelf);
+        if self.window.keyboard_mode() == KeyboardMode::Exclusive {
+            self.shelf.grab_focus();
+        }
+    }
+    fn show_shelf_message(self: &Rc<Self>, text: &str) {
+        self.shelf_message.set_text(text);
+        self.shelf_message.set_visible(true);
+        self.retarget();
+        self.sync_geometry();
+    }
+    fn wire_file_drag(
+        self: &Rc<Self>,
+        widget: &impl IsA<gtk::Widget>,
+        files: impl Fn() -> Vec<Rc<CachedFile>> + 'static,
+    ) {
+        let source = gtk::DragSource::new();
+        source.set_actions(gdk::DragAction::COPY);
+        source.connect_prepare(move |_, _, _| {
+            let files: Vec<_> = files()
+                .iter()
+                .map(|file| gio::File::for_path(file.path()))
+                .collect();
+            (!files.is_empty()).then(|| {
+                gdk::ContentProvider::for_value(&gdk::FileList::from_array(&files).to_value())
+            })
+        });
+        let weak = Rc::downgrade(self);
+        source.connect_drag_begin(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.dragging_files.set(true);
+                this.window.set_keyboard_mode(KeyboardMode::OnDemand);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        source.connect_drag_end(move |_, _, _| {
+            let weak = weak.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.dragging_files.set(false);
+                    if this.shelf_dirty.replace(false)
+                        && let Some(shared) = this.shared.upgrade()
+                    {
+                        this.refresh_shelf(&shared.shelf_files());
+                    }
+                    this.leave();
+                }
+            });
+        });
+        widget.set_cursor_from_name(Some("grab"));
+        widget.add_controller(source);
+    }
+    pub fn refresh_shelf(self: &Rc<Self>, files: &[Rc<CachedFile>]) {
+        if self.dragging_files.get() {
+            self.shelf_dirty.set(true);
+            return;
+        }
+        self.shelf_message
+            .set_text("Drop files or paste a screenshot");
+        self.shelf_message.set_visible(files.is_empty());
+        self.shelf_all
+            .set_text(&format!("Drag all ({})", files.len()));
+        self.shelf_all.set_visible(files.len() > 1);
+        self.shelf_scroll.set_visible(!files.is_empty());
+        self.shelf_open.set_visible(!files.is_empty());
+        while let Some(child) = self.shelf_items.first_child() {
+            self.shelf_items.remove(&child);
+        }
+        for file in files {
+            let name = file.path().file_name().unwrap_or_default();
+            let (content_type, _) = gio::content_type_guess(Some(file.path()), None);
+            let icon = gio::content_type_get_symbolic_icon(&content_type);
+            let stem = file.path().file_stem().unwrap_or(name);
+            let item = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            item.add_css_class("shelf-item");
+            item.set_size_request(62, -1);
+            item.set_tooltip_text(Some(&name.to_string_lossy()));
+            let image = gtk::Image::from_gicon(&icon);
+            image.set_size_request(52, 38);
+            item.append(&image);
+            if content_type.starts_with("image/") {
+                let path = gio::File::for_path(file.path());
+                let image = image.downgrade();
+                glib::spawn_future_local(async move {
+                    if let Some(preview) = thumbnail(path).await
+                        && let Some(image) = image.upgrade()
+                        && let Some(item) = image.parent().and_downcast::<gtk::Box>()
+                    {
+                        let picture = gtk::Picture::for_paintable(&preview);
+                        picture.set_content_fit(gtk::ContentFit::ScaleDown);
+                        picture.set_size_request(52, 38);
+                        item.prepend(&picture);
+                        item.remove(&image);
+                    }
+                });
+            }
+            let text = label(&stem.to_string_lossy(), "");
+            text.set_xalign(0.5);
+            text.set_max_width_chars(7);
+            text.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            item.append(&text);
+            let tile = gtk::Overlay::new();
+            tile.set_child(Some(&item));
+            let remove = button(
+                "window-close-symbolic",
+                &format!("Remove {} from shelf", name.to_string_lossy()),
+            );
+            remove.add_css_class("shelf-remove");
+            remove.set_halign(gtk::Align::End);
+            remove.set_valign(gtk::Align::Start);
+            let path = file.path().to_path_buf();
+            let shared = self.shared.clone();
+            remove.connect_clicked(move |_| {
+                if let Some(shared) = shared.upgrade() {
+                    shared.remove_file(&path);
+                }
+            });
+            tile.add_overlay(&remove);
+            let file = file.clone();
+            self.wire_file_drag(&item, move || vec![file.clone()]);
+            self.shelf_items.append(&tile);
+        }
+        self.retarget();
+        self.sync_geometry();
+    }
     pub fn show_message(self: &Rc<Self>, text: &str) {
         self.message.set_text(text);
         self.message.set_visible(!text.is_empty());
@@ -789,7 +1109,7 @@ impl View {
             State::Hidden
         });
         if self.pinned.get() && focus {
-            // Only an explicit shortcut requests keyboard focus; hover never does.
+            // The shortcut and shelf button focus search when opening the controls.
             self.window.set_keyboard_mode(KeyboardMode::Exclusive);
             self.search.grab_focus();
         }
@@ -806,6 +1126,10 @@ impl View {
             source.remove();
         }
         self.state.set(state);
+        self.shelf.set_visible(state == State::Shelf);
+        self.header.set_visible(state != State::Shelf);
+        self.body.set_visible(state == State::Open);
+        self.body.set_child_visible(state == State::Open);
         self.header
             .update_property(&[gtk::accessible::Property::Label(if state == State::Open {
                 "Close notch controls"
@@ -818,7 +1142,9 @@ impl View {
             self.refresh_levels();
         } else {
             self.search.set_text("");
-            self.update_keyboard();
+            if state == State::Hidden {
+                self.update_keyboard();
+            }
         }
         self.retarget();
         self.sync_geometry();
@@ -857,10 +1183,24 @@ impl View {
                 },
             ));
         }
+        if self.window.keyboard_mode() != KeyboardMode::Exclusive
+            && !self.dragging_files.get()
+            && !self.shelf.has_css_class("drop-active")
+        {
+            self.window.set_keyboard_mode(KeyboardMode::Exclusive);
+            self.surface.grab_focus();
+        }
     }
     fn leave(self: &Rc<Self>) {
-        if self.pinned.get() || !self.search.text().is_empty() {
+        if self.pinned.get()
+            || self.dragging_files.get()
+            || self.shelf.has_css_class("drop-active")
+            || !self.search.text().is_empty()
+        {
             return;
+        }
+        if self.window.keyboard_mode() == KeyboardMode::Exclusive {
+            self.window.set_keyboard_mode(KeyboardMode::None);
         }
         if let Some(source) = self.open_source.take() {
             source.remove();
@@ -880,9 +1220,6 @@ impl View {
         ));
     }
     fn retarget(&self) {
-        if self.state.get() == State::Open {
-            self.body.set_child_visible(true);
-        }
         let header = self
             .header
             .measure(gtk::Orientation::Vertical, 400)
@@ -901,7 +1238,7 @@ impl View {
                 }
             }
             State::Peek => (400.0, f64::from(header)),
-            State::Open => (
+            State::Shelf | State::Open => (
                 400.0,
                 f64::from(self.surface.measure(gtk::Orientation::Vertical, 400).1),
             ),
@@ -921,9 +1258,6 @@ impl View {
             };
             this.update_regions();
             if clock.frame_time() - start >= 200_000 {
-                if this.state.get() != State::Open {
-                    this.body.set_child_visible(false);
-                }
                 this.geometry_tick.take();
                 glib::ControlFlow::Break
             } else {
@@ -933,7 +1267,14 @@ impl View {
     }
     fn update_regions(&self) {
         if let Some(surface) = self.window.surface() {
-            surface.set_input_region(Some(&self.input_region()));
+            let input = self.input_region();
+            let mut applied = self.applied_input.borrow_mut();
+            if applied.as_ref() != Some(&input) {
+                surface.set_input_region(Some(&input));
+                // Wayland applies input regions on commit, even when the contents are idle.
+                self.morph.queue_draw();
+                *applied = Some(input);
+            }
         }
     }
     fn input_region(&self) -> cairo::Region {

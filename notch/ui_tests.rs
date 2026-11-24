@@ -66,11 +66,14 @@ fn gtk4_parity_and_native_dbus() {
     settle();
     assert_eq!(view.state.get(), State::Peek);
     assert_eq!(view.morph.width(), 400);
+    assert!(!view.shelf.is_visible());
     assert!(!view.body.is_child_visible());
+    assert!(view.morph.height() < 160);
+    assert_eq!(view.window.keyboard_mode(), KeyboardMode::Exclusive);
     view.hover();
     settle();
-    settle();
     assert_eq!(view.state.get(), State::Open);
+    assert!(!view.shelf.is_visible());
     assert!(view.body.is_child_visible());
     assert!(view.morph.height() > 200);
     let bounds = view.morph.compute_bounds(&view.window).unwrap();
@@ -82,12 +85,43 @@ fn gtk4_parity_and_native_dbus() {
     ));
 
     assert_eq!(view.window.height(), 820);
-    view.collapse();
+    let fixture = tempfile::tempdir().unwrap();
+    let files = (1..=5)
+        .map(|index| {
+            let path = fixture.path().join(format!("shot {index}.txt"));
+            std::fs::write(&path, "shelf item").unwrap();
+            CachedFile::copy(&fixture.path().join("cache"), path).unwrap()
+        })
+        .collect();
+    shared.store_files(files);
     settle();
-    view.pin(true);
+    assert_eq!(view.state.get(), State::Open);
+    for other in shared.views.borrow().iter() {
+        assert_eq!(other.shelf_all.text(), "Drag all (5)");
+        assert_eq!(other.shelf_items.observe_children().n_items(), 5);
+    }
+    let cached = shared.shelf_files()[0].path().to_path_buf();
+    assert!(view.shelf_open.is_visible());
+    view.shelf_open.emit_clicked();
     settle();
+    assert_eq!(view.state.get(), State::Shelf);
+    let tile = view.shelf_items.first_child().unwrap();
+    let remove = tile
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap();
+    remove.emit_clicked();
+    drop(remove);
+    drop(tile);
+    settle();
+    assert_eq!(shared.shelf_files().len(), 4);
+    assert!(!cached.exists());
+    assert!(fixture.path().join("shot 1.txt").exists());
+    view.shelf_controls.emit_clicked();
+    settle();
+    assert_eq!(view.state.get(), State::Open);
     assert!(view.pinned.get());
-    assert_eq!(view.window.keyboard_mode(), KeyboardMode::Exclusive);
     assert!(
         gtk::prelude::RootExt::focus(&view.window)
             .is_some_and(|focus| focus == view.search || focus.is_ancestor(&view.search))
@@ -126,11 +160,11 @@ fn gtk4_parity_and_native_dbus() {
     settle();
     view.watch_button.emit_clicked();
     assert_eq!(view.watch_state.text(), "Paused");
-    assert!(view.compact.is_visible());
+    assert!(view.compact.property::<bool>("visible"));
     *shared.timer.borrow_mut() = FocusTimer::default();
     *shared.stopwatch.borrow_mut() = Stopwatch::default();
     shared.sync_clocks();
-    assert!(!view.compact.is_visible());
+    assert!(!view.compact.property::<bool>("visible"));
     *shared.weather.borrow_mut() =
         crate::model::Weather::parse("Smoky haze|+26°C|+28°C|77%|Chennai, Tamil Nadu, IN");
     view.refresh_weather();
@@ -226,14 +260,14 @@ fn gtk4_parity_and_native_dbus() {
     assert!(!view.title.uses_markup());
     assert!(!view.previous.is_sensitive());
     assert!(view.play.is_sensitive());
-    assert!(view.header_wave.is_visible());
+    assert!(view.header_wave.property::<bool>("visible"));
     view.play.emit_clicked();
-    until(|| !view.header_wave.is_visible());
+    until(|| !view.header_wave.property::<bool>("visible"));
     assert_eq!(view.play.tooltip_text().as_deref(), Some("Play"));
     view.next.emit_clicked();
     until(|| view.title.text() == "Next test track");
     gio::bus_unown_name(owner);
-    until(|| !view.media_card.is_visible());
+    until(|| !view.media_card.property::<bool>("visible"));
     assert_eq!(view.summary.text(), "No media playing");
     bus.unregister_object(registration).unwrap();
     let group = gio::SimpleActionGroup::new();
