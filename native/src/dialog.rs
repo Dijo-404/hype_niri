@@ -28,18 +28,19 @@ const STYLE: &str = r#"
         padding: 4px 6px;
         border-radius: 4px;
     }
-    #hype-native-dialog .picker-search {
+    #hype-native-dialog .picker-search-row {
         margin: 15px 20px 8px;
-        min-height: 22px;
         padding: 0 6px;
+    }
+    #hype-native-dialog .picker-search {
+        margin: 0;
+        min-height: 22px;
+        padding: 0;
         background: transparent;
         color: #d4d4d4;
         border: none;
         box-shadow: none;
         outline: none;
-    }
-    #hype-native-dialog .picker-search:focus-within {
-        box-shadow: inset 0 -1px #888;
     }
     #hype-native-dialog .picker-search placeholder { color: #aaa; opacity: 1; }
     #hype-native-dialog scrolledwindow { margin: 0 20px 19px; }
@@ -203,12 +204,15 @@ async fn pick(
     window.set_decorated(false);
     let selected = Rc::new(RefCell::new(None));
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    search_row.add_css_class("picker-search-row");
+    search_row.append(&gtk::Label::new(Some(">")));
     let search = gtk::Entry::new();
     search.add_css_class("picker-search");
-    search.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, Some("go-next-symbolic"));
-    search.set_icon_activatable(gtk::EntryIconPosition::Primary, false);
+    search.set_hexpand(true);
     search.set_placeholder_text(Some(title));
-    content.append(&search);
+    search_row.append(&search);
+    content.append(&search_row);
 
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     let choices: Vec<_> = choices
@@ -548,6 +552,8 @@ mod tests {
                 .iter()
                 .find_map(|widget| widget.downcast_ref::<gtk::Entry>())
                 .unwrap();
+            let prefix = search.prev_sibling().and_downcast::<gtk::Label>().unwrap();
+            assert_eq!(prefix.label(), ">");
             search.set_text("fallback");
             search.emit_activate();
         });

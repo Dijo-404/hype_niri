@@ -29,6 +29,17 @@ pub async fn run() -> Result<()> {
     choose("Applications", &applications(None)).await
 }
 
+pub(crate) async fn launch_copilot_editor() -> Result<()> {
+    if let Some(code) = ["com.microsoft.VSCode.desktop", "code.desktop"]
+        .into_iter()
+        .find_map(gio_unix::DesktopAppInfo::new)
+    {
+        code.launch(&[], None::<&gio::AppLaunchContext>)?;
+        return Ok(());
+    }
+    launch_default("editor").await
+}
+
 pub async fn launch_default(kind: &str) -> Result<()> {
     if kind == "color-picker" {
         return match std::process::Command::new("hyprpicker").arg("-a").spawn() {

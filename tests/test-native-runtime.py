@@ -338,14 +338,16 @@ class DesktopBus:
                 settings.get("802-11-wireless-security", {}).pop("psk", None)
                 invocation.return_value(GLib.Variant("(a{sa{sv}})", (settings,)))
             elif method == "GetSecrets":
+                assert args.unpack() == ("802-11-wireless-security",), args
                 invocation.return_value(
                     GLib.Variant(
                         "(a{sa{sv}})",
                         (
                             {
+                                "802-11-wireless": {},
                                 "802-11-wireless-security": self.profiles[path].get(
                                     "802-11-wireless-security", {}
-                                )
+                                ),
                             },
                         ),
                     )
@@ -682,6 +684,12 @@ class NativeRuntimeTests(unittest.TestCase):
             state["profiles"][profile]["802-11-wireless-security"]["psk"],
             "saved-fixture-password",
         )
+
+    def test_hotspot_credentials_read_ssid_from_saved_settings(self):
+        self.run_control("hotspot", "start")
+        self.environment.pop("WAYLAND_SOCKET", None)
+        result = self.run_control("hotspot", "credentials", success=False)
+        self.assertIn("Cannot open desktop dialog", result.stderr)
 
     def test_hotspot_reuses_saved_adapter_instead_of_first_wifi_device(self):
         def second_adapter():

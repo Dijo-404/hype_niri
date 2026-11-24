@@ -333,6 +333,26 @@ class RuntimeTests(RuntimeFixture):
         self.isolated('control launch-default browser\nwait_for "$FIXTURE_LOG"')
         self.assertEqual(self.log.read_text().splitlines(), ["browser"])
 
+    def test_copilot_single_press_prefers_vs_code_to_default_editor(self):
+        self.mock("fixture-app", 'printf "%s\\n" "$@" > "$FIXTURE_LOG"')
+        self.desktop_entry(
+            "com.microsoft.VSCode.desktop",
+            "Name=Visual Studio Code\nExec=fixture-app vscode\n",
+        )
+        self.desktop_entry(
+            "fixture-editor.desktop",
+            "Name=Default editor\nExec=fixture-app editor\nMimeType=text/plain;\n",
+        )
+        (self.home / ".config/mimeapps.list").write_text(
+            "[Default Applications]\ntext/plain=fixture-editor.desktop;\n"
+        )
+        self.isolated('control copilot-shortcut\nwait_for "$FIXTURE_LOG"')
+        self.assertEqual(self.log.read_text().splitlines(), ["vscode"])
+        self.log.unlink()
+        (self.root / "locked").touch()
+        self.control("copilot-shortcut")
+        self.assertFalse(self.log.exists())
+
     def test_stealth_indicator_preserves_markup_and_hides_inactive_service(self):
         (self.root / "stealth").mkdir()
         (self.root / "stealth/active").touch()

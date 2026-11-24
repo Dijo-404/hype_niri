@@ -2,6 +2,7 @@
 niri
 xdg-desktop-portal-gnome
 xdg-utils
+xdg-terminal-exec
 zsh
 zsh-completions
 zsh-autosuggestions

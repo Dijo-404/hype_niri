@@ -129,9 +129,9 @@ impl Runner for ProcessRunner {
     }
     fn input(&self, prompt: &str) -> Result<String> {
         if terminal_color(io::stderr().is_terminal()) {
-            eprint!("  \x1b[1;33m?\x1b[0m {prompt}");
+            eprint!("  \x1b[1;33m>\x1b[0m {prompt}");
         } else {
-            eprint!("{prompt}");
+            eprint!("  > {prompt}");
         }
         io::stderr().flush()?;
         let mut answer = String::new();

@@ -393,7 +393,7 @@ async fn stop(manager: &Manager) -> Result<()> {
     Ok(())
 }
 async fn credentials(manager: &Manager) -> Result<()> {
-    let (object, mut settings) = profile(manager)
+    let (object, settings) = profile(manager)
         .await?
         .ok_or_else(|| err("Start the hotspot once to create its saved profile."))?;
     if active(manager, object.as_str()).await?.is_none() {
@@ -410,8 +410,7 @@ async fn credentials(manager: &Manager) -> Result<()> {
         .get::<(Settings,)>()
         .ok_or_else(|| err("Invalid credentials response"))?
         .0;
-    settings.extend(secrets);
-    let password = text(&settings, "802-11-wireless-security", "psk")
+    let password = text(&secrets, "802-11-wireless-security", "psk")
         .ok_or_else(|| err("Hotspot password unavailable"))?;
     let ssid = settings
         .get("802-11-wireless")

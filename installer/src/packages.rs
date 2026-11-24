@@ -6,7 +6,9 @@ impl Installer {
         let groups = optional_groups(&fs::read_to_string(
             self.source.join("optional-packages.txt"),
         )?)?;
-        println!("  Extras include apps, themes, compatibility tools, and Hype Flow dictation.");
+        println!("  Enter / y  Full desktop with all {} extras", groups.len());
+        println!("  n          Core desktop only");
+        println!("  custom     Choose extras by group\n");
         let selected = loop {
             let answer = self.runner.input("Install extras? [Y/n/custom] ")?;
             match answer.to_ascii_lowercase().as_str() {
@@ -16,18 +18,27 @@ impl Installer {
                 _ => eprintln!("  Please answer y, n, or custom."),
             }
         };
+        if selected.is_empty() {
+            println!("  Selected core desktop only.");
+        } else {
+            println!(
+                "  Selected {} of {} extra groups.",
+                selected.len(),
+                groups.len()
+            );
+        }
         self.optional_groups = Some(selected);
         Ok(())
     }
 
     fn choose_groups(&self, groups: &PackageGroups) -> Result<Vec<String>> {
-        for (name, _) in groups {
-            println!("    {name}");
+        for (index, (name, _)) in groups.iter().enumerate() {
+            println!("  {:>2}. {name}", index + 1);
         }
         loop {
             let answer = self
                 .runner
-                .input("Groups (space-separated, Enter for all): ")?;
+                .input("Groups (numbers or names, space-separated, Enter for all): ")?;
             if answer.is_empty() {
                 return Ok(groups.iter().map(|(name, _)| name.clone()).collect());
             }
@@ -211,12 +222,14 @@ fn optional_groups(contents: &str) -> Result<PackageGroups> {
 }
 fn select_groups(answer: &str, groups: &PackageGroups) -> Result<Vec<String>> {
     let mut selected = Vec::new();
-    for name in answer.split_whitespace() {
-        if !groups.iter().any(|(group, _)| group == name) {
-            return Err(error(format!("Unknown optional group: {name}")));
-        }
-        if !selected.iter().any(|group| group == name) {
-            selected.push(name.to_owned());
+    for choice in answer.split_whitespace() {
+        let group = match choice.parse::<usize>() {
+            Ok(number) => number.checked_sub(1).and_then(|index| groups.get(index)),
+            Err(_) => groups.iter().find(|(name, _)| name == choice),
+        };
+        let (name, _) = group.ok_or_else(|| error(format!("Unknown optional group: {choice}")))?;
+        if !selected.contains(name) {
+            selected.push(name.clone());
         }
     }
     Ok(selected)
@@ -343,10 +356,12 @@ mod tests {
         let groups = optional_groups("[docker]\ndocker\n[bluetooth]\nbluez\n").unwrap();
         assert!(select_groups("", &groups).unwrap().is_empty());
         assert_eq!(
-            select_groups("docker bluetooth docker", &groups).unwrap(),
+            select_groups("1 bluetooth docker 2", &groups).unwrap(),
             ["docker", "bluetooth"]
         );
-        assert!(select_groups("typo", &groups).is_err());
+        for invalid in ["typo", "0", "3"] {
+            assert!(select_groups(invalid, &groups).is_err());
+        }
         for invalid in ["docker", "[a]\na\n[a]\nb", "[bad group]\na", "[a]\n--bad"] {
             assert!(optional_groups(invalid).is_err(), "{invalid}");
         }
@@ -392,7 +407,7 @@ mod tests {
             install_fails: false,
             verification_fails: false,
             yay_available: true,
-            answers: RefCell::new(["custom".into(), "hype-flow".into()].into()),
+            answers: RefCell::new(["custom".into(), "1".into()].into()),
         });
         installer.install_packages().unwrap();
         installer.save_optional_groups().unwrap();

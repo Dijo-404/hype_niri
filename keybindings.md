@@ -70,7 +70,7 @@ These are the primary default keybindings for the Hype Niri environment.
 | `Super + Shift + D`  | `monitor-refresh`        | Toggle monitor settings and save refresh-rate defaults             |
 | `Super + U`          | `open-drives`            | Mount/unlock known external/secondary drives, then launch Nautilus |
 | `Super + C`          | `launch-default editor`  | Launch the installed default text editor                           |
-| `Super + Copilot`    | `copilot-shortcut`       | Open the default editor after a 400ms double-press window          |
+| `Super + Copilot`    | `copilot-shortcut`       | Open VS Code after a 400ms double-press window                     |
 | `Super + B`          | `launch-default browser` | Launch the installed default browser                               |
 | `Ctrl + Shift + Esc` | `launch-default monitor` | Launch an installed system monitor                                 |
 | `Super + A`          | `app-launcher`           | Toggle the native application picker                               |
@@ -78,15 +78,15 @@ These are the primary default keybindings for the Hype Niri environment.
 | `Super + .`          | `emoji`                  | Toggle the native emoji picker                                     |
 | `Super + V`          | `clipboard pick`         | Toggle native clipboard history                                    |
 
-For the Copilot shortcuts, hold Super and press Copilot once to open the default editor, or twice within 400ms to lock and turn off the displays without opening the editor. Ordinary keyboard and mouse input leaves the displays off. Repeat Super + double Copilot to show Hyprlock's password prompt, then enter your Linux account password (normally the same password used by sudo) to unlock the desktop. A single press while locked does nothing.
+For the Copilot shortcuts, hold Super and press Copilot once to open VS Code, or twice within 400ms to lock and turn off the displays without opening the editor. A single press uses the default text editor if VS Code is unavailable. Ordinary keyboard and mouse input leaves the displays off. Repeat Super + double Copilot to show Hyprlock's password prompt, then enter your Linux account password (normally the same password used by sudo) to unlock the desktop. A single press while locked does nothing.
 
 This mode temporarily disables the enabled outputs, waits one second, then starts Hyprlock while the displays are off. It restores the outputs on the next double press; monitor modes and scales in the configuration remain unchanged. The native controller confirms Niri's session lock through logind before restoring outputs. If locking fails, it keeps the displays off and allows another double press to retry.
 
 Sleep takes priority over this mode: after lid-close suspend or another system sleep, resume restores the saved displays and shows Hyprlock automatically. Your password is still required; another Copilot shortcut is unnecessary. Ordinary idle activity continues to leave the manual blackout in effect.
 
-These bindings support the common `Super+Shift+F23` Copilot sequence and `Super+XF86Assistant` keyboards. Some Copilot keys send Super themselves, so Copilot alone can also activate these shortcuts.
+Press Copilot alone on keyboards that send `Super+Shift+F23` or `XF86Assistant`. `Super+XF86Assistant` is also supported.
 
-With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff`, even though Super+Shift produces `XF86Assistant`. Niri matches the base symbol and held modifiers, so `Super+Shift+XF86TouchpadOff` is also bound to the same handler. This keeps Copilot working after the keyboard-map update without binding the standalone touchpad-disable key.
+With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff` and Super+Shift produces `XF86Assistant`. Both symbols are bound with Super+Shift. Terminal editors such as Neovim open through `xdg-terminal-exec`.
 
 ## Audio & Brightness
 

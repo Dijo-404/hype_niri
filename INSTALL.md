@@ -36,7 +36,7 @@ If you prefer to selectively apply configurations, follow these manual steps. Ba
 
 ### 1. Install Required Packages
 
-`pkglist.txt` contains core desktop and build requirements. Press Enter or answer `y` at the extras prompt to install all groups in `optional-packages.txt`. Answer `n` for core only or `custom` to enter specific group names, such as `browser-firefox editor-neovim bluetooth`. Existing packages are retained when you change the selection. See [Dependencies and Services](DEPENDENCIES.md).
+`pkglist.txt` contains core desktop and build requirements. Press Enter or answer `y` at the extras prompt to install all groups in `optional-packages.txt`. Answer `n` for core only or `custom` to select groups by number or name. For example, enter `browser-firefox editor-neovim bluetooth`. Existing packages are retained when you change the selection. See [Dependencies and Services](DEPENDENCIES.md).
 
 The default extras include `hype-flow` and the English Parakeet model. The `desktop-integrations` phase sets up the Niri shortcuts and background startup. When run inside Niri, it also requests an immediate background launch. New Hype Flow configurations use `Alt+Space` for dictation.
 

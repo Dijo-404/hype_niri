@@ -265,10 +265,12 @@ binds {
     Mod+Shift+D repeat=false hotkey-overlay-title="Display Refresh Rate" { spawn "~/.config/scripts/hype-control" "monitor-refresh"; }
     Mod+U { spawn "~/.config/scripts/hype-control" "open-drives"; }
     Mod+C { spawn "~/.config/scripts/hype-control" "launch-default" "editor"; }
-    Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: default editor / double press: lock displays or show password prompt" { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    Mod+Shift+XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+F23 repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
+    XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+B hotkey-overlay-title="Default Browser" { spawn "~/.config/scripts/hype-control" "launch-default" "browser"; }
     Ctrl+Shift+Escape { spawn "~/.config/scripts/hype-control" "launch-default" "monitor"; }
 

@@ -450,7 +450,7 @@ async fn copilot_shortcut() -> Result<()> {
             if !matches!(locked_hint(&conn).await, Ok(false)) {
                 return Ok(());
             }
-            crate::launcher::launch_default("editor").await?;
+            crate::launcher::launch_copilot_editor().await?;
             return Ok(());
         }
     }

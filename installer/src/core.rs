@@ -35,51 +35,15 @@ pub const PHASES: &[(&str, Phase)] = &[
 ];
 
 fn heading(title: &str, phase: Option<(usize, usize)>) {
-    let stdout = io::stdout();
-    let color = terminal_color(stdout.is_terminal());
-    let cyan = if color { "\x1b[36m" } else { "" };
-    let bold = if color { "\x1b[1m" } else { "" };
-    let reset = if color { "\x1b[0m" } else { "" };
-    let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
-    // Long command output can still wrap on narrow terminals.
-    let columns =
-        if unsafe { libc::ioctl(stdout.as_raw_fd(), libc::TIOCGWINSZ, size.as_mut_ptr()) } == 0 {
-            usize::from(unsafe { size.assume_init() }.ws_col)
-        } else {
-            0
-        };
-    if columns < 44 {
-        if let Some((current, total)) = phase {
-            println!("\nPhase {current}/{total} · {title}");
-        } else {
-            println!("\n{title}");
-        }
-        return;
-    }
-    let width = (columns - 4).min(60);
-    let tag = phase.map_or(String::new(), |(current, total)| {
-        format!("─ {bold}Phase {current}/{total}{reset}{cyan} ")
-    });
-    let tag_width = phase.map_or(0, |(current, total)| {
-        format!("─ Phase {current}/{total} ").chars().count()
-    });
-    println!("\n  {cyan}╭{tag}{}╮{reset}", "─".repeat(width - tag_width));
-    println!(
-        "  {cyan}│{reset} {bold}{title:<width$}{reset}{cyan}│{reset}",
-        width = width - 1
-    );
-    println!("  {cyan}╰{}╯{reset}", "─".repeat(width));
+    let (accent, reset) = if terminal_color(io::stdout().is_terminal()) {
+        ("\x1b[1;36m", "\x1b[0m")
+    } else {
+        ("", "")
+    };
     if let Some((current, total)) = phase {
-        let completed = current - 1;
-        let bar = width - 6;
-        let filled = completed * bar / total;
-        let percent = completed * 100 / total;
-        let green = if color { "\x1b[32m" } else { "" };
-        println!(
-            "  {green}{}{reset}{}  {percent:>3}%\n",
-            "█".repeat(filled),
-            "░".repeat(bar - filled)
-        );
+        println!("\n{accent}[{current:>2}/{total}]{reset} {title}");
+    } else {
+        println!("\n{accent}{title}{reset}");
     }
 }
 
@@ -396,6 +360,8 @@ impl Installer {
     }
     pub fn run_all(&mut self) -> Result<()> {
         heading("Hype Niri · Arch Linux desktop setup", None);
+        println!("  Update Arch, install the desktop, and set up your chosen extras.");
+        println!("  Existing desktop configs require a backup before replacement.\n");
         if !self.confirm("Start installation?")? {
             println!("Installation cancelled");
             return Ok(());
@@ -405,6 +371,9 @@ impl Installer {
             run(self).map_err(|e| error(format!("Phase '{name}' failed: {e}")))?;
         }
         heading("Installation complete", None);
+        if let Some(backup) = &self.backup {
+            println!("  Configuration backup: {}", backup.display());
+        }
         println!("  Reboot, then select niri-session.");
         println!("  Super+A opens the launcher. Super+T opens a terminal.");
         if self.selected("hype-flow") {

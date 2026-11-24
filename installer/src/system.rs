@@ -634,6 +634,7 @@ impl Installer {
             "cc",
             "pkg-config",
             "niri",
+            "xdg-terminal-exec",
             "waybar",
             "hyprlock",
             "hypridle",
