@@ -3,30 +3,36 @@ use std::{collections::HashSet, fs, io::Write};
 
 impl Installer {
     pub fn select_optional_groups(&mut self) -> Result<()> {
-        if !self.confirm("Install optional extras?")? {
-            self.optional_groups = Some(Vec::new());
-            return Ok(());
-        }
         let groups = optional_groups(&fs::read_to_string(
             self.source.join("optional-packages.txt"),
         )?)?;
-        println!("Core desktop is always installed. Optional groups:");
-        for (name, packages) in &groups {
-            if name == "hype-flow" {
-                println!("  hype-flow: offline dictation, including the Parakeet speech model");
-            } else {
-                println!("  {name}: {}", packages.join(" "));
+        println!("  Extras include apps, themes, compatibility tools, and Hype Flow dictation.");
+        let selected = loop {
+            let answer = self.runner.input("Install extras? [Y/n/custom] ")?;
+            match answer.to_ascii_lowercase().as_str() {
+                "" | "y" | "yes" => break groups.iter().map(|(name, _)| name.clone()).collect(),
+                "n" | "no" => break Vec::new(),
+                "custom" => break self.choose_groups(&groups)?,
+                _ => eprintln!("  Please answer y, n, or custom."),
             }
+        };
+        self.optional_groups = Some(selected);
+        Ok(())
+    }
+
+    fn choose_groups(&self, groups: &PackageGroups) -> Result<Vec<String>> {
+        for (name, _) in groups {
+            println!("    {name}");
         }
         loop {
             let answer = self
                 .runner
-                .input("Optional groups (space-separated names; Enter for core only): ")?;
-            match select_groups(&answer, &groups) {
-                Ok(selected) => {
-                    self.optional_groups = Some(selected);
-                    return Ok(());
-                }
+                .input("Groups (space-separated, Enter for all): ")?;
+            if answer.is_empty() {
+                return Ok(groups.iter().map(|(name, _)| name.clone()).collect());
+            }
+            match select_groups(&answer, groups) {
+                Ok(selected) => return Ok(selected),
                 Err(cause) => eprintln!("{cause}"),
             }
         }
@@ -213,9 +219,6 @@ fn select_groups(answer: &str, groups: &PackageGroups) -> Result<Vec<String>> {
             selected.push(name.to_owned());
         }
     }
-    if selected.contains(&"browser-firefox".into()) && selected.contains(&"browser-brave".into()) {
-        return Err(error("Select one default browser group"));
-    }
     Ok(selected)
 }
 
@@ -238,7 +241,7 @@ fn package_failure(log: tempfile::NamedTempFile, message: &str) -> Box<dyn std::
 mod tests {
     use super::*;
     use crate::{CommandOutput, Runner};
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
     struct Fake {
         calls: Rc<RefCell<Vec<String>>>,
@@ -246,7 +249,7 @@ mod tests {
         install_fails: bool,
         verification_fails: bool,
         yay_available: bool,
-        answer: String,
+        answers: RefCell<VecDeque<String>>,
     }
     impl Runner for Fake {
         fn output(&self, p: &str, a: &[&str]) -> Result<CommandOutput> {
@@ -287,11 +290,14 @@ mod tests {
         }
         fn confirm(&self, prompt: &str) -> Result<bool> {
             self.calls.borrow_mut().push(prompt.to_owned());
-            Ok(!self.answer.is_empty())
+            Ok(false)
         }
         fn input(&self, prompt: &str) -> Result<String> {
             self.calls.borrow_mut().push(prompt.to_owned());
-            Ok(self.answer.clone())
+            self.answers
+                .borrow_mut()
+                .pop_front()
+                .ok_or_else(|| error("Unexpected prompt"))
         }
         fn available(&self, command: &str) -> bool {
             command != "yay" || self.yay_available
@@ -327,13 +333,13 @@ mod tests {
                 install_fails,
                 verification_fails,
                 yay_available: true,
-                answer: String::new(),
+                answers: RefCell::default(),
             }),
         };
         (root, installer, calls)
     }
     #[test]
-    fn selection_defaults_to_core_deduplicates_and_rejects_unknown_groups() {
+    fn custom_selection_deduplicates_and_rejects_unknown_groups() {
         let groups = optional_groups("[docker]\ndocker\n[bluetooth]\nbluez\n").unwrap();
         assert!(select_groups("", &groups).unwrap().is_empty());
         assert_eq!(
@@ -356,16 +362,16 @@ mod tests {
             install_fails: false,
             verification_fails: false,
             yay_available: false,
-            answer: String::new(),
+            answers: RefCell::new(["n".into()].into()),
         });
         installer.install_packages().unwrap();
         assert_eq!(installer.optional_groups, Some(Vec::new()));
-        assert_eq!(calls.borrow()[0], "Install optional extras?");
+        assert_eq!(calls.borrow()[0], "Install extras? [Y/n/custom] ");
         assert!(
             !calls
                 .borrow()
                 .iter()
-                .any(|call| call.starts_with("Optional groups")
+                .any(|call| call.starts_with("Groups (")
                     || call.starts_with("yay ")
                     || call.contains("docker"))
         );
@@ -386,7 +392,7 @@ mod tests {
             install_fails: false,
             verification_fails: false,
             yay_available: true,
-            answer: "hype-flow".into(),
+            answers: RefCell::new(["custom".into(), "hype-flow".into()].into()),
         });
         installer.install_packages().unwrap();
         installer.save_optional_groups().unwrap();
@@ -395,14 +401,46 @@ mod tests {
             "hype-flow\n"
         );
         let calls = calls.borrow();
-        assert_eq!(calls[0], "Install optional extras?");
-        assert!(calls[1].starts_with("Optional groups"));
+        assert_eq!(calls[0], "Install extras? [Y/n/custom] ");
+        assert!(calls[1].starts_with("Groups ("));
         assert!(
             calls
                 .iter()
                 .any(|call| call.starts_with("yay -S ") && call.ends_with("aur/missing"))
         );
         assert!(!calls.iter().any(|call| call.contains("bluez")));
+    }
+
+    #[test]
+    fn enter_installs_and_saves_all_extras_including_hype_flow() {
+        let (root, mut installer, calls) = fixture(false, false, false);
+        fs::write(root.path().join("pkglist.txt"), "official\n").unwrap();
+        fs::write(
+            root.path().join("optional-packages.txt"),
+            "[browser-firefox]\nfirefox\n[browser-brave]\nbrave-bin\n[hype-flow]\nmissing\n",
+        )
+        .unwrap();
+        installer.optional_groups = None;
+        installer.runner = Box::new(Fake {
+            calls: calls.clone(),
+            metadata_fails: false,
+            install_fails: false,
+            verification_fails: false,
+            yay_available: true,
+            answers: RefCell::new([String::new()].into()),
+        });
+        installer.install_packages().unwrap();
+        installer.save_optional_groups().unwrap();
+        assert_eq!(
+            fs::read_to_string(installer.user(".config/hype-niri/optional-groups")).unwrap(),
+            "browser-firefox\nbrowser-brave\nhype-flow\n"
+        );
+        assert!(
+            calls
+                .borrow()
+                .iter()
+                .any(|call| call.starts_with("yay -S ") && call.ends_with("aur/missing"))
+        );
     }
     #[test]
     fn selected_aur_group_requires_yay_before_repository_installation() {
@@ -420,7 +458,7 @@ mod tests {
             install_fails: false,
             verification_fails: false,
             yay_available: false,
-            answer: "docker".into(),
+            answers: RefCell::new(["y".into()].into()),
         });
         assert!(
             installer

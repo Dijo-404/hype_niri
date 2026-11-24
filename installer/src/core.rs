@@ -1,7 +1,8 @@
-use crate::{Installer, Result, error};
+use crate::{Installer, Result, error, terminal_color};
 use std::os::unix::fs::DirBuilderExt;
 use std::{
     fs,
+    io::{self, IsTerminal},
     os::unix::{
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
         io::AsRawFd,
@@ -32,6 +33,55 @@ pub const PHASES: &[(&str, Phase)] = &[
     ("Stealth routing", Installer::setup_stealth),
     ("Validation", Installer::validate),
 ];
+
+fn heading(title: &str, phase: Option<(usize, usize)>) {
+    let stdout = io::stdout();
+    let color = terminal_color(stdout.is_terminal());
+    let cyan = if color { "\x1b[36m" } else { "" };
+    let bold = if color { "\x1b[1m" } else { "" };
+    let reset = if color { "\x1b[0m" } else { "" };
+    let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
+    // Long command output can still wrap on narrow terminals.
+    let columns =
+        if unsafe { libc::ioctl(stdout.as_raw_fd(), libc::TIOCGWINSZ, size.as_mut_ptr()) } == 0 {
+            usize::from(unsafe { size.assume_init() }.ws_col)
+        } else {
+            0
+        };
+    if columns < 44 {
+        if let Some((current, total)) = phase {
+            println!("\nPhase {current}/{total} · {title}");
+        } else {
+            println!("\n{title}");
+        }
+        return;
+    }
+    let width = (columns - 4).min(60);
+    let tag = phase.map_or(String::new(), |(current, total)| {
+        format!("─ {bold}Phase {current}/{total}{reset}{cyan} ")
+    });
+    let tag_width = phase.map_or(0, |(current, total)| {
+        format!("─ Phase {current}/{total} ").chars().count()
+    });
+    println!("\n  {cyan}╭{tag}{}╮{reset}", "─".repeat(width - tag_width));
+    println!(
+        "  {cyan}│{reset} {bold}{title:<width$}{reset}{cyan}│{reset}",
+        width = width - 1
+    );
+    println!("  {cyan}╰{}╯{reset}", "─".repeat(width));
+    if let Some((current, total)) = phase {
+        let completed = current - 1;
+        let bar = width - 6;
+        let filled = completed * bar / total;
+        let percent = completed * 100 / total;
+        let green = if color { "\x1b[32m" } else { "" };
+        println!(
+            "  {green}{}{reset}{}  {percent:>3}%\n",
+            "█".repeat(filled),
+            "░".repeat(bar - filled)
+        );
+    }
+}
 
 pub struct InstallLock {
     _file: fs::File,
@@ -345,19 +395,22 @@ impl Installer {
         Ok(())
     }
     pub fn run_all(&mut self) -> Result<()> {
-        println!("HYPE NIRI — Arch Linux + Niri desktop setup");
+        heading("Hype Niri · Arch Linux desktop setup", None);
         if !self.confirm("Start installation?")? {
             println!("Installation cancelled");
             return Ok(());
         }
         for (index, (name, run)) in PHASES.iter().enumerate() {
-            println!("\nPhase {} / {}: {name}", index + 1, PHASES.len());
+            heading(name, Some((index + 1, PHASES.len())));
             run(self).map_err(|e| error(format!("Phase '{name}' failed: {e}")))?;
         }
-        println!(
-            "Installation complete. Reboot, then select niri-session. Run p10k configure to customize Zsh."
-        );
-        println!("Keybindings: https://github.com/Dijo-404/hype_niri/blob/main/keybindings.md");
+        heading("Installation complete", None);
+        println!("  Reboot, then select niri-session.");
+        println!("  Super+A opens the launcher. Super+T opens a terminal.");
+        if self.selected("hype-flow") {
+            println!("  Alt+Space starts or finishes dictation with the default shortcut.");
+        }
+        println!();
         if self.confirm("Restart now?")? {
             self.command("systemctl", &["reboot"])?;
         } else {

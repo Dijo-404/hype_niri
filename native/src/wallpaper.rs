@@ -469,10 +469,14 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
                 .map(PathBuf::from)
                 .unwrap_or(runtime::home()?.join(".cache"))
                 .join("hype-niri/wallpapers");
-            let items: Vec<_> = images.iter().map(|p| (label(p), p.clone())).collect();
+            let items: Vec<_> = images
+                .iter()
+                .map(|path| (label(path.strip_prefix(&dir).unwrap_or(path)), path.clone()))
+                .collect();
             let Some(index) = crate::dialog::images_lazy("Wallpaper", &items, move |path| {
                 thumbnail(path, &cache).ok()
-            })?
+            })
+            .await?
             else {
                 return Ok(());
             };

@@ -389,7 +389,7 @@ async fn power_profile(action: &str) -> Result<()> {
                 format!("{icon} {name}")
             })
             .collect();
-        if let Some(index) = dialog::choose("Power Profile", &choices)? {
+        if let Some(index) = dialog::choose("Power Profile", &choices).await? {
             let profile = ["performance", "balanced", "power-saver"][index];
             let (icon, name) = profile_label(profile);
             match set_profile(&connection, profile).await {

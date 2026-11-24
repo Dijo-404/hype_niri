@@ -1,10 +1,8 @@
 use crate::{Installer, Result, config::path_arg, error};
-use std::{fs, os::unix::fs::symlink, path::Path};
+use std::{os::unix::fs::symlink, path::Path};
 
 const REPOSITORY: &str = "https://github.com/Dijo-404/hype_flow.git";
-const REVISION: &str = "7938c5a8e883f18499aded4b0884d8c2ca668d0f";
-// Remove the patch when the pinned Hype Flow revision includes headless setup and lazy startup.
-const INTEGRATION: &str = include_str!("hype-flow.patch");
+const REVISION: &str = "43003ef205c448433bb57f801f6678121c28d606";
 
 impl Installer {
     pub(crate) fn setup_hype_flow(&self) -> Result<()> {
@@ -20,10 +18,8 @@ impl Installer {
         let staging = tempfile::Builder::new().prefix("hype-flow-").tempdir()?;
         let checkout = staging.path().join("source");
         let target = staging.path().join("target");
-        let patch = staging.path().join("hype-flow.patch");
         let host = self.cargo_host()?;
         let repo = path_arg(&checkout)?;
-        fs::write(&patch, INTEGRATION)?;
         self.command("git", &["init", "--quiet", repo])?;
         self.command(
             "git",
@@ -39,7 +35,6 @@ impl Installer {
             ],
         )?;
         self.command("git", &["-C", repo, "checkout", "--detach", REVISION])?;
-        self.command("git", &["-C", repo, "apply", "--", path_arg(&patch)?])?;
         self.command(
             "cargo",
             &[

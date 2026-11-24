@@ -1,8 +1,8 @@
 # Dependencies and services
 
-Hype Niri installs the core Wayland desktop. Answer `n` at the extras prompt for core only. Answer `y` or `yes` to choose extra applications, compatibility tools, hardware-specific drivers, and service integrations.
+Hype Niri installs the core Wayland desktop and all extra groups by default. Answer `n` at the extras prompt for core only or `custom` for a subset.
 
-The previous package list contained 124 direct requirements. The core now contains 49: 76 previous defaults were removed and `adwaita-cursors` was added. These are explicit package requests, not the total installed package count. Pacman can still install libraries and tools as dependencies of retained applications.
+The core requests 49 packages. With all extras selected, the installer requests 121 unique packages and builds Hype Flow from source. Pacman may install additional dependencies.
 
 ## Native replacements
 
@@ -40,7 +40,7 @@ The installer enables essential network, audio, power and OOM services. Desktop 
 
 ## Optional packages
 
-The exact source of truth is [optional-packages.txt](optional-packages.txt). Enter one or more group names separated by spaces, for example:
+The exact group list is [optional-packages.txt](optional-packages.txt). At the custom prompt, enter group names separated by spaces, for example:
 
 ```text
 browser-firefox editor-neovim bluetooth
@@ -48,7 +48,7 @@ browser-firefox editor-neovim bluetooth
 
 | Groups                                                        | Purpose                                                                                          |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `browser-firefox`, `browser-brave`                            | Choose one browser; system defaults are preserved when neither is selected                       |
+| `browser-firefox`, `browser-brave`                            | Both browsers by default. Brave is the default browser when both are selected.                   |
 | `editor-neovim`, `editor-kate`, `editor-gnome`, `editor-code` | Optional editors; Neovim selection includes LazyVim setup                                        |
 | `chat`, `notes`, `media`                                      | Chat, notes, media playback and recording applications                                           |
 | `hype-flow`                                                   | Offline dictation, Parakeet model setup, `wl-clipboard`, `wtype` and Bubblewrap                  |
@@ -66,7 +66,7 @@ Selections are recorded in `~/.config/hype-niri/optional-groups`. Missing or emp
 
 Changing selections does not uninstall packages or stop previously enabled services. Existing running applications and personal package choices remain under the user's control. Review obsolete packages and services separately before removing them. Manual named phases explicitly request their operation; generic phases follow saved selections.
 
-The core uses Pacman packages. Yay is required only when a selected missing requirement needs the AUR; installed providers remain supported. AUR group selection is an explicit choice to use those packages, not a claim that they have the same distribution support as official repository packages.
+The core uses Pacman packages. Yay is required when a selected missing requirement needs the AUR. Installed providers remain supported.
 
 ## Remaining executable boundaries
 

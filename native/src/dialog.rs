@@ -1,4 +1,5 @@
 use crate::{Result, err};
+use futures_channel::oneshot;
 use gtk::{gio, glib, prelude::*};
 use std::{
     cell::RefCell,
@@ -12,11 +13,49 @@ thread_local! {
     static APPLICATION: RefCell<Option<gtk::Application>> = const { RefCell::new(None) };
 }
 
-fn window(
-    title: &str,
-    width: i32,
-    height: i32,
-) -> Result<Option<(gtk::Application, gtk::ApplicationWindow, glib::MainLoop)>> {
+const STYLE: &str = r#"
+    #hype-native-dialog {
+        background: rgba(20, 20, 20, 0.87);
+        color: #d4d4d4;
+        border: 2px solid #fff;
+        border-radius: 4px;
+        font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+        font-size: 11pt;
+        box-shadow: none;
+    }
+    #hype-native-dialog entry {
+        margin: 8px;
+        padding: 4px 6px;
+        border-radius: 4px;
+    }
+    #hype-native-dialog .picker-search {
+        margin: 15px 20px 8px;
+        min-height: 22px;
+        padding: 0 6px;
+        background: transparent;
+        color: #d4d4d4;
+        border: none;
+        box-shadow: none;
+        outline: none;
+    }
+    #hype-native-dialog .picker-search:focus-within {
+        box-shadow: inset 0 -1px #888;
+    }
+    #hype-native-dialog .picker-search placeholder { color: #aaa; opacity: 1; }
+    #hype-native-dialog scrolledwindow { margin: 0 20px 19px; }
+    #hype-native-dialog listview { background: transparent; color: #d4d4d4; }
+    #hype-native-dialog row {
+        min-height: 22px;
+        padding: 0 6px;
+        border-radius: 4px;
+        transition: background-color 180ms ease-out, color 180ms ease-out;
+    }
+    #hype-native-dialog row:hover { background: #303030; color: #fff; }
+    #hype-native-dialog row:selected { background: #404040; color: #fff; }
+    #hype-native-dialog button { margin: 8px; }
+"#;
+
+fn window(title: &str, width: i32, height: i32) -> Result<Option<gtk::ApplicationWindow>> {
     gtk::init().map_err(|e| err(format!("Cannot open desktop dialog: {e}")))?;
     let application = APPLICATION.with(|slot| -> Result<gtk::Application> {
         if let Some(application) = slot.borrow().as_ref() {
@@ -51,18 +90,12 @@ fn window(
         .build();
     window.set_widget_name("hype-native-dialog");
     let style = gtk::CssProvider::new();
-    style.load_from_string("#hype-native-dialog { background: rgba(0,0,0,0.88); color:white; font-family:Roboto,sans-serif; font-size:14px; border:2px solid rgba(200,200,200,0.45); border-radius:12px; } #hype-native-dialog entry { margin:8px; padding:8px; border-radius:8px; } #hype-native-dialog list, #hype-native-dialog listview { background:transparent; } #hype-native-dialog row { padding:10px; border-radius:8px; } #hype-native-dialog row:selected { background:#e0e0e0; color:#121212; } #hype-native-dialog button { margin:8px; }");
+    style.load_from_string(STYLE);
     gtk::style_context_add_provider_for_display(
         &gtk::prelude::WidgetExt::display(&window),
         &style,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
-    let event_loop = glib::MainLoop::new(None, false);
-    let closed = event_loop.clone();
-    window.connect_close_request(move |_| {
-        closed.quit();
-        glib::Propagation::Proceed
-    });
     let key = gtk::EventControllerKey::new();
     let weak = window.downgrade();
     key.connect_key_pressed(move |_, key, _, _| {
@@ -76,69 +109,116 @@ fn window(
         }
     });
     window.add_controller(key);
-    Ok(Some((application, window, event_loop)))
+    Ok(Some(window))
 }
-pub fn choose(title: &str, choices: &[String]) -> Result<Option<usize>> {
-    pick(title, choices.iter().map(|label| (label, None)), None)
+
+async fn show(window: &gtk::ApplicationWindow, focus: &impl IsA<gtk::Widget>) {
+    let (sender, closed) = oneshot::channel();
+    let sender = RefCell::new(Some(sender));
+    window.connect_close_request(move |_| {
+        if let Some(sender) = sender.take() {
+            let _ = sender.send(());
+        }
+        glib::Propagation::Proceed
+    });
+    // Keep a single GLib event loop so thumbnail tasks can run while the picker is open.
+    window.present();
+    focus.grab_focus();
+    let _ = closed.await;
+    window.destroy();
+}
+
+pub async fn choose(title: &str, choices: &[String]) -> Result<Option<usize>> {
+    pick(
+        title,
+        choices.iter().cloned().map(|label| (label, None)),
+        None,
+        None,
+    )
+    .await
+}
+
+pub async fn choose_apps(title: &str, apps: &[gio::AppInfo]) -> Result<Option<usize>> {
+    let fallback = gio::ThemedIcon::new("application-x-executable");
+    let choices = apps.iter().map(|app| {
+        let icon = app.icon().unwrap_or_else(|| fallback.clone().upcast());
+        (app.display_name().to_string(), Some(Artwork::Icon(icon)))
+    });
+    pick(title, choices, Some(20), None).await
 }
 
 type Thumbnail = dyn Fn(&Path) -> Option<PathBuf> + Send;
 
-pub fn images_lazy(
+enum Artwork {
+    Icon(gio::Icon),
+    Preview(PathBuf),
+}
+
+pub async fn images_lazy(
     title: &str,
     choices: &[(String, PathBuf)],
     thumbnail: impl Fn(&Path) -> Option<PathBuf> + Send + 'static,
 ) -> Result<Option<usize>> {
     pick(
         title,
-        choices.iter().map(|(label, path)| (label, Some(path))),
+        choices
+            .iter()
+            .cloned()
+            .map(|(label, path)| (label, Some(Artwork::Preview(path)))),
+        Some(96),
         Some(Box::new(thumbnail)),
     )
+    .await
 }
 
 struct Choice {
     index: usize,
     label: String,
     searchable: String,
-    path: Option<PathBuf>,
+    artwork: Option<Artwork>,
 }
 
 fn choice(item: &glib::Object) -> &glib::BoxedAnyObject {
     item.downcast_ref().expect("Picker model contains choices")
 }
 
-fn pick<'a>(
+async fn pick(
     title: &str,
-    choices: impl ExactSizeIterator<Item = (&'a String, Option<&'a PathBuf>)>,
+    choices: impl ExactSizeIterator<Item = (String, Option<Artwork>)>,
+    image_size: Option<i32>,
     thumbnail: Option<Box<Thumbnail>>,
 ) -> Result<Option<usize>> {
     if choices.len() == 0 {
         return Ok(None);
     }
-    let images = thumbnail.is_some();
-    let Some((_application, window, event_loop)) = window(
+    let previews = thumbnail.is_some();
+    let Some(window) = window(
         title,
-        if images { 640 } else { 400 },
-        if images { 640 } else { 420 },
+        if previews { 540 } else { 394 },
+        if previews { 480 } else { 328 },
     )?
     else {
         return Ok(None);
     };
+    window.set_decorated(false);
     let selected = Rc::new(RefCell::new(None));
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let search = gtk::Entry::new();
+    search.add_css_class("picker-search");
+    search.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, Some("go-next-symbolic"));
+    search.set_icon_activatable(gtk::EntryIconPosition::Primary, false);
     search.set_placeholder_text(Some(title));
     content.append(&search);
 
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     let choices: Vec<_> = choices
         .enumerate()
-        .map(|(index, (label, path))| {
+        .map(|(index, (label, artwork))| {
             glib::BoxedAnyObject::new(Choice {
                 index,
-                label: label.clone(),
                 searchable: label.to_lowercase(),
-                path: path.cloned(),
+                label,
+                artwork,
             })
         })
         .collect();
@@ -158,11 +238,11 @@ fn pick<'a>(
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().unwrap();
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        if images {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, if previews { 12 } else { 8 });
+        if let Some(size) = image_size {
             let image = gtk::Image::new();
-            image.set_pixel_size(96);
-            image.set_size_request(96, 96);
+            image.set_pixel_size(size);
+            image.set_size_request(size, size);
             row.append(&image);
         }
         let label = gtk::Label::new(None);
@@ -185,30 +265,39 @@ fn pick<'a>(
             let row = item.child().unwrap();
             let label = row.last_child().unwrap().downcast::<gtk::Label>().unwrap();
             label.set_label(&value.label);
-            if let (Some(load), Some(path)) = (thumbnail.clone(), value.path.clone()) {
-                let image = row.first_child().unwrap().downcast::<gtk::Image>().unwrap();
-                image.clear();
-                let image = image.downgrade();
-                let cancel = gio::Cancellable::new();
-                pending.borrow_mut().insert(item.clone(), cancel.clone());
-                glib::spawn_future_local(async move {
-                    let cancelled = cancel.clone();
-                    let result = gio::spawn_blocking(move || {
-                        // Cap concurrent decoding of full-sized source images.
-                        let load = load.lock().ok()?;
-                        if cancelled.is_cancelled() {
-                            None
-                        } else {
-                            load(&path)
+            let Some(artwork) = &value.artwork else {
+                return;
+            };
+            let image = row.first_child().unwrap().downcast::<gtk::Image>().unwrap();
+            match (artwork, &thumbnail) {
+                (Artwork::Icon(icon), _) => image.set_from_gicon(icon),
+                (Artwork::Preview(path), Some(load)) => {
+                    let load = load.clone();
+                    let path = path.clone();
+                    image.clear();
+                    let image = image.downgrade();
+                    let cancel = gio::Cancellable::new();
+                    pending.borrow_mut().insert(item.clone(), cancel.clone());
+                    glib::spawn_future_local(async move {
+                        let cancelled = cancel.clone();
+                        let result = gio::spawn_blocking(move || {
+                            // Cap concurrent decoding of full-sized source images.
+                            let load = load.lock().ok()?;
+                            if cancelled.is_cancelled() {
+                                None
+                            } else {
+                                load(&path)
+                            }
+                        })
+                        .await;
+                        if !cancel.is_cancelled()
+                            && let (Some(image), Ok(Some(path))) = (image.upgrade(), result)
+                        {
+                            image.set_from_file(Some(path));
                         }
-                    })
-                    .await;
-                    if !cancel.is_cancelled()
-                        && let (Some(image), Ok(Some(path))) = (image.upgrade(), result)
-                    {
-                        image.set_from_file(Some(path));
-                    }
-                });
+                    });
+                }
+                _ => {}
             }
         }
     });
@@ -223,6 +312,7 @@ fn pick<'a>(
     let scroll = gtk::ScrolledWindow::builder()
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::External)
         .child(&list)
         .build();
     content.append(&scroll);
@@ -266,15 +356,12 @@ fn pick<'a>(
         glib::Propagation::Stop
     });
     search.add_controller(keys);
-    window.present();
-    search.grab_focus();
-    event_loop.run();
-    window.destroy();
+    show(&window, &search).await;
     let result = *selected.borrow();
     Ok(result)
 }
-pub fn prompt(title: &str, secret: bool) -> Result<Option<String>> {
-    let Some((_application, window, event_loop)) = window(title, 400, 150)? else {
+pub async fn prompt(title: &str, secret: bool) -> Result<Option<String>> {
+    let Some(window) = window(title, 400, 150)? else {
         return Ok(None);
     };
     let value = Rc::new(RefCell::new(None));
@@ -305,15 +392,12 @@ pub fn prompt(title: &str, secret: bool) -> Result<Option<String>> {
     accept.connect_clicked(move |_| {
         text.emit_activate();
     });
-    window.present();
-    entry.grab_focus();
-    event_loop.run();
-    window.destroy();
+    show(&window, &entry).await;
     let result = value.borrow_mut().take();
     Ok(result)
 }
-pub fn credentials(title: &str, ssid: &str, password: &str) -> Result<()> {
-    let Some((_application, window, event_loop)) = window(title, 360, 450)? else {
+pub async fn credentials(title: &str, ssid: &str, password: &str) -> Result<()> {
+    let Some(window) = window(title, 360, 450)? else {
         return Ok(());
     };
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -363,9 +447,7 @@ pub fn credentials(title: &str, ssid: &str, password: &str) -> Result<()> {
     });
     content.append(&close);
     window.set_child(Some(&content));
-    window.present();
-    event_loop.run();
-    window.destroy();
+    show(&window, &close).await;
     Ok(())
 }
 fn wifi_escape(text: &str) -> String {
@@ -403,6 +485,10 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated session bus and Wayland compositor"]
     fn gtk4_search_password_qr_and_remote_toggle() {
+        glib::MainContext::default().block_on(search_password_qr_and_remote_toggle());
+    }
+
+    async fn search_password_qr_and_remote_toggle() {
         interact(|window| {
             let children = widgets(window.upcast_ref());
             let search = children
@@ -425,9 +511,47 @@ mod tests {
             search.emit_activate();
         });
         assert_eq!(
-            choose("Fixture", &["First".into(), "Second".into()]).unwrap(),
+            choose("Fixture", &["First".into(), "Second".into()])
+                .await
+                .unwrap(),
             Some(1)
         );
+        let apps = [
+            ("Terminal fixture", Some("utilities-terminal")),
+            ("Fallback fixture", None),
+        ]
+        .map(|(name, icon)| {
+            let entry = glib::KeyFile::new();
+            entry.set_string("Desktop Entry", "Type", "Application");
+            entry.set_string("Desktop Entry", "Name", name);
+            entry.set_string("Desktop Entry", "Exec", "/usr/bin/true");
+            if let Some(icon) = icon {
+                entry.set_string("Desktop Entry", "Icon", icon);
+            }
+            gio_unix::DesktopAppInfo::from_keyfile(&entry)
+                .unwrap()
+                .upcast()
+        });
+        interact(|window| {
+            let children = widgets(window.upcast_ref());
+            let icons: Vec<_> = children
+                .iter()
+                .filter_map(|widget| widget.downcast_ref::<gtk::Image>())
+                .filter(|image| image.pixel_size() == 20)
+                .filter_map(gtk::Image::gicon)
+                .collect();
+            for expected in ["utilities-terminal", "application-x-executable"] {
+                let expected = gio::ThemedIcon::new(expected);
+                assert!(icons.iter().any(|icon| icon.equal(Some(&expected))));
+            }
+            let search = children
+                .iter()
+                .find_map(|widget| widget.downcast_ref::<gtk::Entry>())
+                .unwrap();
+            search.set_text("fallback");
+            search.emit_activate();
+        });
+        assert_eq!(choose_apps("Applications", &apps).await.unwrap(), Some(1));
         interact(|window| {
             let entry = widgets(window.upcast_ref())
                 .into_iter()
@@ -438,7 +562,7 @@ mod tests {
             entry.emit_activate();
         });
         assert_eq!(
-            prompt("Unlock fixture", true).unwrap().as_deref(),
+            prompt("Unlock fixture", true).await.unwrap().as_deref(),
             Some("private fixture password")
         );
         interact(|window| {
@@ -454,15 +578,51 @@ mod tests {
             "Test;SSID",
             "private fixture password",
         )
+        .await
         .unwrap();
         interact(|window| {
             // A second process uses this same bus activation to toggle the open menu.
             window.application().unwrap().activate();
         });
         assert_eq!(
-            choose("Toggle fixture", &["Never select".into()]).unwrap(),
+            choose("Toggle fixture", &["Never select".into()])
+                .await
+                .unwrap(),
             None
         );
+    }
+
+    #[test]
+    #[ignore = "requires an isolated session bus and Wayland compositor"]
+    fn gtk4_wallpaper_preview_loads_inside_the_control_event_loop() {
+        let fixture = tempfile::tempdir().unwrap();
+        let image = fixture.path().join("preview.png");
+        image::RgbImage::new(2, 2).save(&image).unwrap();
+        interact(|window| {
+            let children = widgets(window.upcast_ref());
+            let search = children
+                .iter()
+                .find_map(|widget| widget.clone().downcast::<gtk::Entry>().ok())
+                .unwrap();
+            let preview = children
+                .into_iter()
+                .filter_map(|widget| widget.downcast::<gtk::Image>().ok())
+                .find(|image| image.pixel_size() == 96)
+                .unwrap();
+            if preview.paintable().is_some() {
+                search.emit_activate();
+            } else {
+                preview.connect_paintable_notify(move |_| search.emit_activate());
+            }
+            glib::timeout_add_local_once(std::time::Duration::from_secs(5), move || window.close());
+        });
+        let choices = [("Wallpaper fixture".into(), image)];
+        let result = glib::MainContext::default()
+            .block_on(images_lazy("Wallpaper", &choices, |image| {
+                Some(image.to_owned())
+            }))
+            .unwrap();
+        assert_eq!(result, Some(0));
     }
     #[test]
     fn qr_escapes_wifi_delimiters() {

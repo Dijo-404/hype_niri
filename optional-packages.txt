@@ -1,4 +1,4 @@
-# Answer yes to the extras prompt to choose groups for installation and setup.
+# All groups are selected by default. Choose custom to install a subset.
 [browser-firefox]
 firefox
 [browser-brave]

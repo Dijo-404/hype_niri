@@ -17,20 +17,16 @@ fn applications(category: Option<&str>) -> Vec<gio::AppInfo> {
     apps
 }
 
-fn choose(title: &str, apps: &[gio::AppInfo]) -> Result<()> {
-    let labels: Vec<_> = apps
-        .iter()
-        .map(|app| app.display_name().to_string())
-        .collect();
-    let Some(index) = dialog::choose(title, &labels)? else {
+async fn choose(title: &str, apps: &[gio::AppInfo]) -> Result<()> {
+    let Some(index) = dialog::choose_apps(title, apps).await? else {
         return Ok(());
     };
     apps[index].launch(&[], None::<&gio::AppLaunchContext>)?;
     Ok(())
 }
 
-pub fn run() -> Result<()> {
-    choose("Applications", &applications(None))
+pub async fn run() -> Result<()> {
+    choose("Applications", &applications(None)).await
 }
 
 pub async fn launch_default(kind: &str) -> Result<()> {
@@ -77,7 +73,7 @@ pub async fn launch_default(kind: &str) -> Result<()> {
     if apps.len() == 1 {
         apps[0].launch(&[], None::<&gio::AppLaunchContext>)?;
     } else if !apps.is_empty() {
-        choose(title, &apps)?;
+        choose(title, &apps).await?;
     } else {
         let message = format!(
             "Install an application for {title} or choose one in the application launcher."

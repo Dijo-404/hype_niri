@@ -38,7 +38,7 @@ pub async fn run(args: &[String]) -> Result<()> {
     };
     let rows = choices();
     let labels: Vec<_> = rows.iter().map(|(_, label)| label.clone()).collect();
-    let Some(index) = dialog::choose("Search emoji", &labels)? else {
+    let Some(index) = dialog::choose("Search emoji", &labels).await? else {
         return Ok(());
     };
     // Process the picker's destroy request before returning focus to the previous client.

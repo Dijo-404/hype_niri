@@ -34,7 +34,7 @@ Hype Niri is a set of dotfiles and an interactive installer for a Niri desktop o
 - **Keep controls close.** Waybar shows system status. The notch provides app search, weather, media controls, a Pomodoro timer, and a stopwatch on each display.
 - **Manage displays and connections.** Pick a wallpaper with previews, set monitor refresh rates, and manage a saved NetworkManager hotspot from the desktop.
 - **Switch power profiles automatically.** Use Performance on AC where supported, Balanced on battery at 30% or above, and Power Saver below 30%.
-- **Choose your extras.** Add browsers, tools, Bluetooth, or offline dictation with Hype Flow during installation.
+- **Get the full desktop by default.** The installer includes browsers, tools, Bluetooth, and offline dictation with Hype Flow.
 
 ## Requirements
 
@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh 
 
 The bootstrap builds the Rust installer locally. It offers to install missing build tools. The installer requires a full Arch upgrade before installing desktop packages and asks before backing up and replacing existing user configurations.
 
-Answer `n` at **Install optional extras?** for the core desktop. Answer `y` or `yes` and enter space-separated [group names](optional-packages.txt), such as `browser-firefox editor-neovim bluetooth`. Selected groups are installed and configured. Select `hype-flow` to build Hype Flow, download and verify the English Parakeet model, and set up dictation shortcuts.
+Press Enter or answer `y` at **Install extras?** to install every extra. Answer `n` for the core desktop, or `custom` to choose [groups](optional-packages.txt). The default install builds Hype Flow, downloads and verifies the English Parakeet model, and configures Hype Flow to start in the background at Niri login. Press `Alt+Space` to dictate with the default shortcut.
 
 <details>
 <summary><b>Install from a local checkout</b></summary>
@@ -215,7 +215,7 @@ flowchart LR
 ├── systemd/               # Power profile and memory pressure configuration
 ├── tests/                 # Bootstrap and desktop regression suites
 ├── pkglist.txt            # Core packages
-└── optional-packages.txt  # Opt-in groups
+└── optional-packages.txt  # Extras enabled by default
 ```
 
 ## Development

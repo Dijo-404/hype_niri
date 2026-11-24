@@ -1007,6 +1007,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "emojis",
+ "futures-channel",
  "gio-unix",
  "glib-unix",
  "gtk4",

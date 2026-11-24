@@ -117,6 +117,10 @@ def main():
                         "hype-desktop",
                         "dialog::tests::gtk4_search_password_qr_and_remote_toggle",
                     ),
+                    (
+                        "hype-desktop",
+                        "dialog::tests::gtk4_wallpaper_preview_loads_inside_the_control_event_loop",
+                    ),
                     ("hype-notch", "ui::tests::gtk4_parity_and_native_dbus"),
                     (
                         "hype-desktop",

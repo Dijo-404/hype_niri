@@ -8,6 +8,7 @@ rust-version = "1.92"
 gtk = { package = "gtk4", version = "0.11", features = ["v4_24"] }
 glib-unix = "0.22"
 gio-unix = { version = "0.22", features = ["v2_58"] }
+futures-channel = "0.3"
 wl-clipboard-rs = "0.9.5"
 wayland-client = "0.31"
 wayland-protocols-misc = { version = "0.3", features = ["client"] }

@@ -1,5 +1,5 @@
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -12,6 +12,12 @@ pub mod system;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub fn error(message: impl Into<String>) -> Box<dyn std::error::Error> {
     io::Error::other(message.into()).into()
+}
+
+fn terminal_color(is_terminal: bool) -> bool {
+    is_terminal
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var_os("TERM").as_deref() != Some("dumb".as_ref())
 }
 #[derive(Debug, Default, Clone)]
 pub struct CommandOutput {
@@ -122,7 +128,11 @@ impl Runner for ProcessRunner {
         }
     }
     fn input(&self, prompt: &str) -> Result<String> {
-        eprint!("{prompt}");
+        if terminal_color(io::stderr().is_terminal()) {
+            eprint!("  \x1b[1;33m?\x1b[0m {prompt}");
+        } else {
+            eprint!("{prompt}");
+        }
         io::stderr().flush()?;
         let mut answer = String::new();
         if io::stdin().read_line(&mut answer)? == 0 {

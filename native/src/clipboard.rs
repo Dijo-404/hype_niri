@@ -494,7 +494,9 @@ pub async fn run(args: &[String]) -> Result<()> {
             if let Some(index) = dialog::choose(
                 "Clipboard history",
                 &entries.iter().map(Entry::label).collect::<Vec<_>>(),
-            )? {
+            )
+            .await?
+            {
                 start_owner(&entries[index])?;
             }
             Ok(())

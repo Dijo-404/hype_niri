@@ -36,9 +36,9 @@ If you prefer to selectively apply configurations, follow these manual steps. Ba
 
 ### 1. Install Required Packages
 
-`pkglist.txt` contains core desktop and build requirements. Answer `n` at the extras prompt for core only. Answer `y` or `yes` to select groups from `optional-packages.txt` for installation and setup. For example, choose `browser-firefox editor-neovim bluetooth` to add those features. Firewall, Docker, Bluetooth, VPNs, Stealth, Ly, compatibility packages and Intel-specific drivers are optional. See [Dependencies and Services](DEPENDENCIES.md). Existing packages are retained; deselecting a group does not remove packages or disable existing services.
+`pkglist.txt` contains core desktop and build requirements. Press Enter or answer `y` at the extras prompt to install all groups in `optional-packages.txt`. Answer `n` for core only or `custom` to enter specific group names, such as `browser-firefox editor-neovim bluetooth`. Existing packages are retained when you change the selection. See [Dependencies and Services](DEPENDENCIES.md).
 
-Select `hype-flow` to build offline dictation and install the English Parakeet model. With a saved selection, the `desktop-integrations` phase configures the shortcuts and background startup after the Niri config is in place.
+The default extras include `hype-flow` and the English Parakeet model. The `desktop-integrations` phase sets up the Niri shortcuts and background startup. When run inside Niri, it also requests an immediate background launch. New Hype Flow configurations use `Alt+Space` for dictation.
 
 For smoother downloads, refresh mirrors before installing packages. If `reflector` is already installed, use it:
 
@@ -258,7 +258,7 @@ chsh -s /usr/bin/zsh
 
 ### 7. Optional Networking
 
-The base package list includes ufw and Cloudflare WARP; enabling and configuring them is **opt-in**. The automated installer asks before each setup step. Stealth installation is also **opt-in**, and its packages are installed only when accepted.
+The default extras include UFW, Cloudflare WARP, and Stealth dependencies. The installer asks before configuring the firewall, connecting WARP, or installing the Stealth backend and service.
 
 #### Firewall (ufw)
 

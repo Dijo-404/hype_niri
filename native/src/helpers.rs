@@ -108,7 +108,7 @@ fn menu_toggle(args: &[OsString]) -> Result<i32> {
     Ok(exit_code(child.wait()?))
 }
 
-fn password_prompt(args: &[OsString]) -> Result<i32> {
+async fn password_prompt(args: &[OsString]) -> Result<i32> {
     let title = match args {
         [] => "Password",
         [flag, title] if flag == "-p" || flag == "--prompt" => title
@@ -120,7 +120,7 @@ fn password_prompt(args: &[OsString]) -> Result<i32> {
             .ok_or_else(|| err("Usage: password-prompt [-p|--prompt TITLE]"))?,
         _ => return Err(err("Usage: password-prompt [-p|--prompt TITLE]")),
     };
-    let Some(password) = dialog::prompt(title, true)? else {
+    let Some(password) = dialog::prompt(title, true).await? else {
         return Ok(1);
     };
     println!("{password}");
@@ -143,7 +143,7 @@ async fn logind_power(method: &str) -> Result<()> {
 
 async fn power_menu() -> Result<()> {
     let choices = ["Lock", "Sleep", "Logout", "Shutdown", "Reboot"].map(str::to_owned);
-    let Some(choice) = dialog::choose("Power", &choices)? else {
+    let Some(choice) = dialog::choose("Power", &choices).await? else {
         return Ok(());
     };
     match choice {
@@ -337,12 +337,12 @@ pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
         "fullscreen-toggle" if args.is_empty() => {
             ipc::action(json!({"FullscreenWindow": {"id": null}}))?;
         }
-        "app-launcher" if args.is_empty() => launcher::run()?,
+        "app-launcher" if args.is_empty() => launcher::run().await?,
         "launch-default" if args.len() == 1 => {
             launcher::launch_default(&args[0].to_string_lossy()).await?;
         }
         "menu-toggle" => return menu_toggle(args),
-        "password-prompt" => return password_prompt(args),
+        "password-prompt" => return password_prompt(args).await,
         "power-menu" if args.is_empty() => power_menu().await?,
         "start-idle" if args.is_empty() => {
             // Keep the restart synchronous so fallback only runs when the service fails.

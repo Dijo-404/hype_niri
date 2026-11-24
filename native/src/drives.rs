@@ -197,7 +197,7 @@ async fn unlock(conn: &gio::DBusConnection, devices: &Objects) -> Result<()> {
                     .display()
                     .to_string()
             });
-        let Some(passphrase) = dialog::prompt(&format!("Unlock {name}"), true)? else {
+        let Some(passphrase) = dialog::prompt(&format!("Unlock {name}"), true).await? else {
             continue;
         };
         if passphrase.is_empty() {

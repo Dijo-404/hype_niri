@@ -418,13 +418,13 @@ async fn credentials(manager: &Manager) -> Result<()> {
         .and_then(|p| p.get("ssid"))
         .and_then(|v| v.get::<Vec<u8>>())
         .ok_or_else(|| err("Hotspot name unavailable"))?;
-    dialog::credentials("Hotspot credentials", std::str::from_utf8(&ssid)?, password)
+    dialog::credentials("Hotspot credentials", std::str::from_utf8(&ssid)?, password).await
 }
 async fn password(manager: &Manager) -> Result<()> {
     let (object, mut settings) = profile(manager)
         .await?
         .ok_or_else(|| err("Start the hotspot once to create its saved profile."))?;
-    let Some(password) = dialog::prompt("New hotspot password", true)? else {
+    let Some(password) = dialog::prompt("New hotspot password", true).await? else {
         return Ok(());
     };
     if password.is_empty() {
@@ -632,7 +632,7 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
             "Edit hotspot",
         ]
         .map(String::from);
-        let Some(choice) = dialog::choose("Hotspot", &choices)? else {
+        let Some(choice) = dialog::choose("Hotspot", &choices).await? else {
             return Ok(());
         };
         action = ["start", "stop", "credentials", "password", "edit"][choice];

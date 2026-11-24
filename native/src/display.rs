@@ -379,7 +379,7 @@ async fn refresh() -> Result<()> {
             )
         })
         .collect();
-    let Some(index) = crate::dialog::choose("Monitor", &labels)? else {
+    let Some(index) = crate::dialog::choose("Monitor", &labels).await? else {
         return Ok(());
     };
     let output = outputs
@@ -405,7 +405,8 @@ async fn refresh() -> Result<()> {
             )
         })
         .collect();
-    let Some(index) = crate::dialog::choose(&format!("{} refresh", output.name), &labels)? else {
+    let Some(index) = crate::dialog::choose(&format!("{} refresh", output.name), &labels).await?
+    else {
         return Ok(());
     };
     let (mode, _) = modes
