@@ -106,7 +106,7 @@
   "tray": {
     "icon-size": 15,
     "spacing": 5,
-    "orders": { "nm-applet": -1 }
+    "orders": { "nm-applet": -1, "blueman": 1 }
   },
 
   "group/connectivity": {

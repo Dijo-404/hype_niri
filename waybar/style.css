@@ -66,7 +66,12 @@ window#waybar.hidden {
 /* NetworkManager sorts first in the tray. */
 #connectivity #tray > widget:first-child image {
   -gtk-icon-transform: none;
-  padding: 2px 0 0 4px;
+  padding: 2px 2px 0 2px;
+}
+
+/* shortcut: WARP is the middle icon in the three-item tray. */
+#connectivity #tray > widget:nth-child(2):nth-last-child(2) image {
+  -gtk-icon-transform: translateY(1px);
 }
 
 #custom-hotspot {
