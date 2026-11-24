@@ -36,6 +36,33 @@ class RuntimeTests(RuntimeFixture):
         self.control("fullscreen-toggle")
         self.assertEqual(self.niri_actions(), [{"FullscreenWindow": {"id": None}}])
 
+    def test_idle_start_exports_environment_before_restart_and_falls_back(self):
+        self.mock(
+            "dbus-update-activation-environment",
+            'printf "env %s\n" "$*" >> "$FIXTURE_LOG"',
+        )
+        self.mock(
+            "systemctl",
+            'printf "systemctl %s\n" "$*" >> "$FIXTURE_LOG"\n'
+            'exit "${FIXTURE_RESTART_STATUS:-0}"',
+        )
+        self.mock("hypridle", 'printf "hypridle\n" >> "$FIXTURE_LOG"')
+        self.control("start-idle")
+        expected = [
+            "env --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_ID NIRI_SOCKET",
+            "systemctl --user restart hypridle.service",
+        ]
+        self.assertEqual(self.log.read_text().splitlines(), expected)
+        self.control("start-idle", extra_env={"FIXTURE_RESTART_STATUS": "1"})
+        self.assertEqual(
+            self.log.read_text().splitlines(), [*expected, *expected, "hypridle"]
+        )
+
+    def test_flow_start_preserves_background_argument(self):
+        self.mock("hype-flow", 'printf "%s\n" "$*" >> "$FIXTURE_LOG"')
+        self.control("start-flow")
+        self.assertEqual(self.log.read_text().splitlines(), ["--background"])
+
     def test_legacy_dispatch_accepts_installer_transition_symlink(self):
         (self.root / "fullscreen-toggle.sh").symlink_to(self.binary)
         self.isolated('exec "$FIXTURE_ROOT/fullscreen-toggle.sh"')

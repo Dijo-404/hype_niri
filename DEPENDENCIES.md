@@ -71,7 +71,9 @@ The core uses Pacman packages. Yay is required only when a selected missing requ
 
 Package managers, Cargo, Git, sudo/Polkit elevation, authoritative configuration validators and infrastructure applications remain separate programs. The installer still uses tools such as systemctl, gsettings/dconf, nmcli, UFW and optional vendor CLIs during setup. WARP still uses its vendor `warp-cli`; a private daemon protocol was not introduced. The advanced network editor, file manager, locker and wallpaper daemon keep their existing application responsibilities.
 
-Simple Niri keybindings use direct argument-vector spawning. Two startup shell expressions remain for optional Hype Flow availability and session-environment/hypridle fallback. The generic `menu-toggle` command remains only for custom/legacy callers; the default desktop no longer uses Wofi or shell clipboard pipelines.
+Niri keybindings and desktop startup use direct argument-vector spawning. Rust startup commands launch optional Hype Flow and export the session environment before starting Hypridle. The generic `menu-toggle` command remains for custom and legacy callers. Default menus use native GTK dialogs.
+
+Waybar runs the headless `hype-status` binary for hotspot and temperature. Hotspot follows NetworkManager events. Temperature keeps the existing sensor selection and samples every five seconds, emitting only changes.
 
 ## Library maintenance and compatibility
 

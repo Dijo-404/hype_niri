@@ -344,6 +344,32 @@ pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
         "menu-toggle" => return menu_toggle(args),
         "password-prompt" => return password_prompt(args),
         "power-menu" if args.is_empty() => power_menu().await?,
+        "start-flow" if args.is_empty() => {
+            let error = Command::new("hype-flow").arg("--background").exec();
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(error.into());
+            }
+        }
+        "start-idle" if args.is_empty() => {
+            // Keep the restart synchronous so fallback only runs when the service fails.
+            let _ = Command::new("dbus-update-activation-environment")
+                .args([
+                    "--systemd",
+                    "WAYLAND_DISPLAY",
+                    "XDG_CURRENT_DESKTOP",
+                    "XDG_SESSION_TYPE",
+                    "XDG_SESSION_ID",
+                    "NIRI_SOCKET",
+                ])
+                .status();
+            if !Command::new("systemctl")
+                .args(["--user", "restart", "hypridle.service"])
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                return Err(Command::new("hypridle").exec().into());
+            }
+        }
         "start-tray-applets" if args.is_empty() => start_tray_applets()?,
         "stop-waybar" if args.is_empty() => {
             terminate_named("waybar");

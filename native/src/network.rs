@@ -1,7 +1,11 @@
 use crate::{Result, bus, dialog, err, notify, runtime};
 use gtk::{gio, glib, prelude::*};
 use std::{
+    cell::Cell,
     collections::HashMap,
+    io::Write,
+    rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 pub const NM: &str = "org.freedesktop.NetworkManager";
@@ -450,8 +454,175 @@ async fn password(manager: &Manager) -> Result<()> {
     .await;
     Ok(())
 }
+async fn is_active(manager: &Manager, profile: Option<&ObjectPath>) -> Result<bool> {
+    match profile {
+        Some(profile) => Ok(active(manager, profile.as_str()).await?.is_some()),
+        None => Ok(false),
+    }
+}
+
+fn status_json(status: Result<bool>) -> serde_json::Value {
+    let (class, tooltip) = match status {
+        Ok(true) => (
+            "active",
+            "Hotspot on · Click to stop · Right-click for credentials",
+        ),
+        Ok(false) => (
+            "inactive",
+            "Hotspot off · Click to start (may disconnect Wi-Fi) · Right-click for menu",
+        ),
+        Err(error) => {
+            eprintln!("{error}");
+            (
+                "unavailable",
+                "Hotspot unavailable · Open hotspot menu for details",
+            )
+        }
+    };
+    serde_json::json!({"text":"󰀂", "class":class, "tooltip":tooltip})
+}
+
+async fn status(manager: &Manager) -> Result<bool> {
+    let saved = profile(manager).await?;
+    is_active(manager, saved.as_ref().map(|(object, _)| object)).await
+}
+
+async fn watch(manager: Manager) -> Result<()> {
+    let connection = &manager.connection;
+    let pending = Arc::new(Mutex::new(gio::Cancellable::new()));
+    let profiles_dirty = Rc::new(Cell::new(true));
+    let mut subscriptions = Vec::new();
+    for (interface, member, path) in [
+        (
+            "org.freedesktop.NetworkManager.Settings",
+            "NewConnection",
+            Some(SETTINGS),
+        ),
+        (
+            "org.freedesktop.NetworkManager.Settings",
+            "ConnectionRemoved",
+            Some(SETTINGS),
+        ),
+        (
+            "org.freedesktop.NetworkManager.Settings.Connection",
+            "Updated",
+            None,
+        ),
+        (
+            "org.freedesktop.NetworkManager.Settings.Connection",
+            "Removed",
+            None,
+        ),
+    ] {
+        let profiles_dirty = profiles_dirty.clone();
+        let pending = pending.clone();
+        subscriptions.push(connection.subscribe_to_signal(
+            Some(NM),
+            Some(interface),
+            Some(member),
+            path,
+            None,
+            gio::DBusSignalFlags::NONE,
+            move |_| {
+                profiles_dirty.set(true);
+                pending.lock().unwrap().cancel();
+            },
+        ));
+    }
+    let changed = pending.clone();
+    subscriptions.push(connection.subscribe_to_signal(
+        Some(NM),
+        Some("org.freedesktop.DBus.Properties"),
+        Some("PropertiesChanged"),
+        Some(ROOT),
+        Some(NM),
+        gio::DBusSignalFlags::NONE,
+        move |signal| {
+            if signal
+                .parameters
+                .get::<(String, Properties, Vec<String>)>()
+                .is_some_and(|(_, changed, invalidated)| {
+                    changed.contains_key("ActiveConnections")
+                        || invalidated.iter().any(|key| key == "ActiveConnections")
+                })
+            {
+                changed.lock().unwrap().cancel();
+            }
+        },
+    ));
+    let restarted = pending.clone();
+    let dirty = profiles_dirty.clone();
+    subscriptions.push(connection.subscribe_to_signal(
+        Some("org.freedesktop.DBus"),
+        Some("org.freedesktop.DBus"),
+        Some("NameOwnerChanged"),
+        Some("/org/freedesktop/DBus"),
+        Some(NM),
+        gio::DBusSignalFlags::NONE,
+        move |_| {
+            dirty.set(true);
+            restarted.lock().unwrap().cancel();
+        },
+    ));
+    let disconnected = pending.clone();
+    let handler = connection.connect_closed(move |_, _, _| disconnected.lock().unwrap().cancel());
+    let result = async {
+        let mut saved = None;
+        let mut previous = None;
+        while !connection.is_closed() {
+            let event = gio::Cancellable::new();
+            *pending.lock().unwrap() = event.clone();
+            let status = async {
+                if profiles_dirty.replace(false) {
+                    saved = match profile(&manager).await {
+                        Ok(profile) => profile.map(|(path, _)| path),
+                        Err(error) => {
+                            profiles_dirty.set(true);
+                            return Err(error);
+                        }
+                    };
+                }
+                is_active(&manager, saved.as_ref()).await
+            }
+            .await;
+            let retry = status.is_err();
+            let output = status_json(status);
+            if previous.as_ref() != Some(&output) {
+                let mut out = std::io::stdout().lock();
+                writeln!(out, "{output}")?;
+                out.flush()?;
+                previous = Some(output);
+            }
+            if retry {
+                glib::timeout_future(Duration::from_secs(5)).await;
+            } else if !connection.is_closed() {
+                event.future().await;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    connection.disconnect(handler);
+    result
+}
+
+pub async fn watch_status() -> Result<()> {
+    watch(Manager::new().await?).await
+}
+
 pub async fn run(_command: &str, args: &[String]) -> Result<()> {
     let mut action = args.first().map(String::as_str).unwrap_or("status");
+    if action == "watch" {
+        return watch_status().await;
+    }
+    if action == "status" {
+        let status = match Manager::new().await {
+            Ok(manager) => status(&manager).await,
+            Err(error) => Err(error),
+        };
+        println!("{}", status_json(status));
+        return Ok(());
+    }
     if action == "menu" {
         let choices = [
             "Start hotspot",
@@ -466,28 +637,49 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
         };
         action = ["start", "stop", "credentials", "password", "edit"][choice];
     }
-    let result=async{
-        let _lock=if matches!(action,"start"|"stop"|"toggle"|"password"){let Some(lock)=runtime::lock("hype-hotspot.lock",Duration::ZERO)?else{let _=notify::send(0,"Hotspot busy","Another hotspot action is still running.",None,"hotspot").await;return Ok(())};Some(lock)}else{None};
-        let manager=Manager::new().await?;
-        match action{
-            "status"=>{let on=if let Some((object,_))=profile(&manager).await?{active(&manager,object.as_str()).await?.is_some()}else{false};println!("{}",if on{serde_json::json!({"text":"󰀂","class":"active","tooltip":"Hotspot on · Click to stop · Right-click for credentials"})}else{serde_json::json!({"text":"󰀂","class":"inactive","tooltip":"Hotspot off · Click to start (may disconnect Wi-Fi) · Right-click for menu"})});},
-            "start"=>start(&manager).await?,"stop"=>stop(&manager).await?,
-            "toggle"=>{let on=if let Some((object,_))=profile(&manager).await?{active(&manager,object.as_str()).await?.is_some()}else{false};if on{stop(&manager).await?}else{start(&manager).await?}},
-            "credentials"=>credentials(&manager).await?,"password"=>password(&manager).await?,
-            "edit"=>{let (_,settings)=profile(&manager).await?.ok_or_else(||err("Start the hotspot once to create its saved profile."))?;let uuid=text(&settings,"connection","uuid").ok_or_else(||err("Missing profile UUID"))?;std::process::Command::new("nm-connection-editor").arg(format!("--edit={uuid}")).spawn()?;},
-            _=>return Err(err("Usage: hype-control hotspot {status|menu|toggle|start|stop|credentials|password|edit}")),
+    let result = async {
+        let _lock = if matches!(action, "start" | "stop" | "toggle" | "password") {
+            let Some(lock) = runtime::lock("hype-hotspot.lock", Duration::ZERO)? else {
+                let _ = notify::send(
+                    0, "Hotspot busy", "Another hotspot action is still running.", None, "hotspot",
+                ).await;
+                return Ok(());
+            };
+            Some(lock)
+        } else {
+            None
+        };
+        let manager = Manager::new().await?;
+        match action {
+            "start" => start(&manager).await?,
+            "stop" => stop(&manager).await?,
+            "toggle" => {
+                if status(&manager).await? {
+                    stop(&manager).await?;
+                } else {
+                    start(&manager).await?;
+                }
+            }
+            "credentials" => credentials(&manager).await?,
+            "password" => password(&manager).await?,
+            "edit" => {
+                let (_, settings) = profile(&manager)
+                    .await?
+                    .ok_or_else(|| err("Start the hotspot once to create its saved profile."))?;
+                let uuid = text(&settings, "connection", "uuid").ok_or_else(|| err("Missing profile UUID"))?;
+                std::process::Command::new("nm-connection-editor")
+                    .arg(format!("--edit={uuid}"))
+                    .spawn()?;
+            }
+            _ => return Err(err("Usage: hype-control hotspot {status|watch|menu|toggle|start|stop|credentials|password|edit}")),
         }
-        if matches!(action,"start"|"stop"|"toggle"){let _=runtime::signal_waybar(17);}Ok(())
-    }.await;
+        if matches!(action, "start" | "stop" | "toggle") {
+            let _ = runtime::signal_waybar(17);
+        }
+        Ok(())
+    }
+    .await;
     if let Err(error) = result {
-        if action == "status" {
-            println!(
-                "{}",
-                serde_json::json!({"text":"󰀂","class":"unavailable","tooltip":"Hotspot unavailable · Open hotspot menu for details"})
-            );
-            eprintln!("{error}");
-            return Ok(());
-        }
         let _ = notify::send(0, "Hotspot failed", &error.to_string(), None, "hotspot").await;
         return Err(error);
     }

@@ -1208,11 +1208,12 @@ impl View {
         };
         if !shared.volume_writes.borrow().busy() {
             let revision = shared.volume_writes.borrow().revision();
+            let audio = shared.audio.clone();
             let weak = Rc::downgrade(self);
             glib::spawn_future_local(async move {
-                let result = gio::spawn_blocking(|| crate::services::volume(None)).await;
+                let result = audio.volume(None).await;
                 if let Some(this) = weak.upgrade() {
-                    this.volume_read_done(revision, result.ok().and_then(|result| result.ok()));
+                    this.volume_read_done(revision, result.ok());
                 }
             });
         }

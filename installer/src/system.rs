@@ -652,6 +652,7 @@ impl Installer {
             ".config/waybar/style.css",
             ".config/scripts/hype-notch",
             ".config/scripts/hype-control",
+            ".config/scripts/hype-status",
             ".config/alacritty/alacritty.toml",
             ".config/mako/config",
             ".config/hypr/hyprlock.conf",
@@ -738,7 +739,7 @@ impl Installer {
                 all_ok = false;
             }
         }
-        for name in ["hype-notch", "hype-control"] {
+        for name in crate::config::DESKTOP_PROGRAMS {
             let path = self.user(&format!(".config/scripts/{name}"));
             if executable(&path) && self.command(path_arg(&path)?, &["--check"]).is_ok() {
                 println!("{name} runtime available");
@@ -906,7 +907,8 @@ impl Installer {
             ],
         )?;
 
-        let binary = self.build_programs()?.join("stealth");
+        let build = self.build_stealth()?;
+        let binary = build.path().join("stealth");
         let share = self.user(".local/share");
         fs::create_dir_all(&share)?;
         let temporary = tempfile::Builder::new()

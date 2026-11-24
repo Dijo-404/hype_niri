@@ -51,6 +51,7 @@ impl Runner for Rc<Fake> {
             })
         };
         match (program, args) {
+            ("cargo", ["-vV"]) => success("host: x86_64-unknown-linux-gnu\n".into()),
             ("systemctl", ["--user", "show-environment"]) if self.manager_running => {
                 success("HOME=/home/example".into())
             }
@@ -76,10 +77,17 @@ impl Runner for Rc<Fake> {
         self.record(program, args);
         match (program, args) {
             ("cargo", _) if self.build_fails => Err(error("cargo failed")),
-            ("cargo", [.., "--target-dir", target]) => {
-                let release = Path::new(target).join("release");
-                fs::create_dir(&release)?;
-                for name in ["hype-notch", "hype-control", "stealth"] {
+            ("cargo", [targets @ .., "--target-dir", target]) => {
+                let host = targets
+                    .windows(2)
+                    .find(|pair| pair[0] == "--target")
+                    .unwrap()[1];
+                let release = Path::new(target).join(host).join("release");
+                fs::create_dir_all(&release)?;
+                for name in targets
+                    .windows(2)
+                    .filter_map(|pair| (pair[0] == "--bin").then_some(pair[1]))
+                {
                     let binary = release.join(name);
                     fs::write(&binary, b"staged executable")?;
                     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
@@ -288,7 +296,7 @@ fn failed_directory_publication_leaves_previous_config() {
 
 #[test]
 fn build_and_binary_validation_failures_leave_configs_untouched() {
-    for binary in ["cargo", "hype-notch", "hype-control", "stealth"] {
+    for binary in ["cargo", "hype-notch", "hype-control", "hype-status"] {
         let (_temp, mut installer, _) = fixture(Fake {
             build_fails: binary == "cargo",
             binary_fails: binary,
@@ -300,6 +308,23 @@ fn build_and_binary_validation_failures_leave_configs_untouched() {
         assert_eq!(fs::read_to_string(old).unwrap(), "previous config");
         assert!(!installer.user(".config/scripts").exists(), "{binary}");
     }
+}
+
+#[test]
+fn only_the_stealth_build_requests_its_binary_and_uses_the_desktop_cache() {
+    let (_temp, mut installer, fake) = fixture(Fake::default());
+    let release = installer.build_programs().unwrap();
+    assert!(!release.join("stealth").exists());
+    let stealth = installer.build_stealth().unwrap();
+    assert!(stealth.path().join("stealth").exists());
+    assert!(!release.join("stealth").exists());
+    let calls = fake.calls.borrow();
+    let builds: Vec<_> = calls
+        .iter()
+        .filter(|call| call[..2] == ["cargo", "build"])
+        .collect();
+    assert_eq!(builds.len(), 2);
+    assert_eq!(builds[0].last(), builds[1].last());
 }
 
 #[test]
@@ -386,7 +411,7 @@ fn binaries_are_executable_and_legacy_links_retire_after_publish() {
         fake.calls
             .borrow()
             .iter()
-            .filter(|call| call[0] == "cargo")
+            .filter(|call| call[..2] == ["cargo", "build"])
             .count(),
         1
     );

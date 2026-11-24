@@ -8,6 +8,7 @@ network namespace, /proc, /run and /sys so Waybar signals cannot escape tests.
 
 import json
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -26,6 +27,7 @@ REPO = Path(__file__).resolve().parents[1]
 BINARY = Path(
     os.environ.get("HYPE_CONTROL_BINARY", REPO / "target/debug/hype-control")
 ).resolve()
+STATUS = BINARY.with_name("hype-status")
 NM = "org.freedesktop.NetworkManager"
 NM_ROOT = "/org/freedesktop/NetworkManager"
 SETTINGS = NM_ROOT + "/Settings"
@@ -115,6 +117,7 @@ class DesktopBus:
             self.expected_device = DEVICE
             self.power_sets = []
             self.power_reads = 0
+            self.profile_reads = 0
             self.props = {
                 (NM_ROOT, NM): {"ActiveConnections": GLib.Variant("ao", [])},
                 (DEVICE, NM + ".Device"): {
@@ -327,6 +330,7 @@ class DesktopBus:
                 )
                 invocation.return_value(GLib.Variant("(o)", (device,)))
             elif method == "GetSettings":
+                self.profile_reads += 1
                 settings = {
                     section: dict(values)
                     for section, values in self.profiles[path].items()
@@ -440,6 +444,7 @@ class DesktopBus:
                 "events": list(self.events),
                 "sets": list(self.power_sets),
                 "reads": self.power_reads,
+                "profile_reads": self.profile_reads,
                 "profiles": {
                     p: {
                         s: {k: v.unpack() for k, v in values.items()}
@@ -594,6 +599,55 @@ class NativeRuntimeTests(unittest.TestCase):
             "More than one", self.run_control("hotspot", "start", success=False).stderr
         )
         self.assertEqual(self.bus.snapshot()["events"], [])
+
+    @unittest.skipUnless(STATUS.is_file(), "Build the hype-status binary")
+    def test_hotspot_stream_updates_from_active_connections_without_profile_rescan(
+        self,
+    ):
+        profile = self.bus.invoke(self.bus.add_profile)
+        process = subprocess.Popen(
+            self.launch[:-1] + [str(STATUS), "hotspot"],
+            env=self.environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        self.addCleanup(self.stop_policy, process)
+
+        def read():
+            ready, _, _ = select.select([process.stdout], [], [], 2)
+            self.assertTrue(ready, "Hotspot stream did not publish an update")
+            return json.loads(process.stdout.readline())["class"]
+
+        self.assertEqual(read(), "inactive")
+        before = self.bus.snapshot()["profile_reads"]
+        active = NM_ROOT + "/ActiveConnection/1"
+
+        def activate():
+            self.bus.props[active, NM + ".Connection.Active"] = {
+                "Connection": GLib.Variant("o", profile)
+            }
+            self.bus.register(
+                active,
+                interface(
+                    NM + ".Connection.Active",
+                    properties=[("Connection", "o", "read")],
+                ),
+            )
+            self.bus.change(
+                NM_ROOT, NM, "ActiveConnections", GLib.Variant("ao", [active])
+            )
+
+        self.bus.invoke(activate)
+        self.assertEqual(read(), "active")
+        self.bus.invoke(
+            lambda: self.bus.change(
+                NM_ROOT, NM, "ActiveConnections", GLib.Variant("ao", [])
+            )
+        )
+        self.assertEqual(read(), "inactive")
+        self.assertEqual(self.bus.snapshot()["profile_reads"], before)
 
     def test_hotspot_fallback_and_saved_password_survive_restart(self):
         profile = self.bus.invoke(self.bus.add_profile)

@@ -1,6 +1,12 @@
 use crate::{Result, err};
 use gtk::{gio, glib, prelude::*};
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 thread_local! {
     static APPLICATION: RefCell<Option<gtk::Application>> = const { RefCell::new(None) };
@@ -45,7 +51,7 @@ fn window(
         .build();
     window.set_widget_name("hype-native-dialog");
     let style = gtk::CssProvider::new();
-    style.load_from_string("#hype-native-dialog { background: rgba(0,0,0,0.88); color:white; font-family:Roboto,sans-serif; font-size:14px; border:2px solid rgba(200,200,200,0.45); border-radius:12px; } #hype-native-dialog entry { margin:8px; padding:8px; border-radius:8px; } #hype-native-dialog list { background:transparent; } #hype-native-dialog row { padding:10px; border-radius:8px; } #hype-native-dialog row:selected { background:#e0e0e0; color:#121212; } #hype-native-dialog button { margin:8px; }");
+    style.load_from_string("#hype-native-dialog { background: rgba(0,0,0,0.88); color:white; font-family:Roboto,sans-serif; font-size:14px; border:2px solid rgba(200,200,200,0.45); border-radius:12px; } #hype-native-dialog entry { margin:8px; padding:8px; border-radius:8px; } #hype-native-dialog list, #hype-native-dialog listview { background:transparent; } #hype-native-dialog row { padding:10px; border-radius:8px; } #hype-native-dialog row:selected { background:#e0e0e0; color:#121212; } #hype-native-dialog button { margin:8px; }");
     gtk::style_context_add_provider_for_display(
         &gtk::prelude::WidgetExt::display(&window),
         &style,
@@ -73,29 +79,43 @@ fn window(
     Ok(Some((application, window, event_loop)))
 }
 pub fn choose(title: &str, choices: &[String]) -> Result<Option<usize>> {
+    pick(title, choices.iter().map(|label| (label, None)), None)
+}
+
+type Thumbnail = dyn Fn(&Path) -> Option<PathBuf> + Send;
+
+pub fn images_lazy(
+    title: &str,
+    choices: &[(String, PathBuf)],
+    thumbnail: impl Fn(&Path) -> Option<PathBuf> + Send + 'static,
+) -> Result<Option<usize>> {
     pick(
         title,
-        &choices
-            .iter()
-            .map(|s| (s.clone(), None))
-            .collect::<Vec<_>>(),
-        false,
+        choices.iter().map(|(label, path)| (label, Some(path))),
+        Some(Box::new(thumbnail)),
     )
 }
-pub fn images(title: &str, choices: &[(String, PathBuf)]) -> Result<Option<usize>> {
-    pick(
-        title,
-        &choices
-            .iter()
-            .map(|(label, path)| (label.clone(), Some(path.clone())))
-            .collect::<Vec<_>>(),
-        true,
-    )
+
+struct Choice {
+    index: usize,
+    label: String,
+    searchable: String,
+    path: Option<PathBuf>,
 }
-fn pick(title: &str, choices: &[(String, Option<PathBuf>)], images: bool) -> Result<Option<usize>> {
-    if choices.is_empty() {
+
+fn choice(item: &glib::Object) -> &glib::BoxedAnyObject {
+    item.downcast_ref().expect("Picker model contains choices")
+}
+
+fn pick<'a>(
+    title: &str,
+    choices: impl ExactSizeIterator<Item = (&'a String, Option<&'a PathBuf>)>,
+    thumbnail: Option<Box<Thumbnail>>,
+) -> Result<Option<usize>> {
+    if choices.len() == 0 {
         return Ok(None);
     }
+    let images = thumbnail.is_some();
     let Some((_application, window, event_loop)) = window(
         title,
         if images { 640 } else { 400 },
@@ -109,23 +129,97 @@ fn pick(title: &str, choices: &[(String, Option<PathBuf>)], images: bool) -> Res
     let search = gtk::Entry::new();
     search.set_placeholder_text(Some(title));
     content.append(&search);
-    let list = gtk::ListBox::new();
-    list.set_activate_on_single_click(true);
-    for (label, path) in choices {
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        if let Some(path) = path.as_ref().filter(|path| path.is_file()) {
-            let image = gtk::Image::from_file(path);
-            image.set_pixel_size(96);
-            line.append(&image);
+
+    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+    let choices: Vec<_> = choices
+        .enumerate()
+        .map(|(index, (label, path))| {
+            glib::BoxedAnyObject::new(Choice {
+                index,
+                label: label.clone(),
+                searchable: label.to_lowercase(),
+                path: path.cloned(),
+            })
+        })
+        .collect();
+    model.extend_from_slice(&choices);
+    let query = Rc::new(RefCell::new(String::new()));
+    let filter = gtk::CustomFilter::new({
+        let query = query.clone();
+        move |item| {
+            choice(item)
+                .borrow::<Choice>()
+                .searchable
+                .contains(query.borrow().as_str())
         }
-        let label = gtk::Label::new(Some(label));
+    });
+    let filtered = gtk::FilterListModel::new(Some(model), Some(filter.clone()));
+    let selection = gtk::SingleSelection::new(Some(filtered));
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(move |_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        if images {
+            let image = gtk::Image::new();
+            image.set_pixel_size(96);
+            image.set_size_request(96, 96);
+            row.append(&image);
+        }
+        let label = gtk::Label::new(None);
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_hexpand(true);
-        line.append(&label);
-        list.append(&line);
-    }
-    list.select_row(list.row_at_index(0).as_ref());
+        row.append(&label);
+        item.set_child(Some(&row));
+    });
+    let thumbnail = thumbnail.map(|load| Arc::new(Mutex::new(load)));
+    let pending = Rc::new(RefCell::new(
+        HashMap::<gtk::ListItem, gio::Cancellable>::new(),
+    ));
+    factory.connect_bind({
+        let pending = pending.clone();
+        move |_, item| {
+            let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+            let value = item.item().unwrap();
+            let value = choice(&value).borrow::<Choice>();
+            let row = item.child().unwrap();
+            let label = row.last_child().unwrap().downcast::<gtk::Label>().unwrap();
+            label.set_label(&value.label);
+            if let (Some(load), Some(path)) = (thumbnail.clone(), value.path.clone()) {
+                let image = row.first_child().unwrap().downcast::<gtk::Image>().unwrap();
+                image.clear();
+                let image = image.downgrade();
+                let cancel = gio::Cancellable::new();
+                pending.borrow_mut().insert(item.clone(), cancel.clone());
+                glib::spawn_future_local(async move {
+                    let cancelled = cancel.clone();
+                    let result = gio::spawn_blocking(move || {
+                        // Cap concurrent decoding of full-sized source images.
+                        let load = load.lock().ok()?;
+                        if cancelled.is_cancelled() {
+                            None
+                        } else {
+                            load(&path)
+                        }
+                    })
+                    .await;
+                    if !cancel.is_cancelled()
+                        && let (Some(image), Ok(Some(path))) = (image.upgrade(), result)
+                    {
+                        image.set_from_file(Some(path));
+                    }
+                });
+            }
+        }
+    });
+    factory.connect_unbind(move |_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+        if let Some(cancel) = pending.borrow_mut().remove(item) {
+            cancel.cancel();
+        }
+    });
+    let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
+    list.set_single_click_activate(true);
     let scroll = gtk::ScrolledWindow::builder()
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -133,61 +227,41 @@ fn pick(title: &str, choices: &[(String, Option<PathBuf>)], images: bool) -> Res
         .build();
     content.append(&scroll);
     window.set_child(Some(&content));
-    let result = selected.clone();
-    let close = window.downgrade();
-    list.connect_row_activated(move |_, row| {
-        *result.borrow_mut() = Some(row.index() as usize);
-        if let Some(window) = close.upgrade() {
-            window.close();
-        }
-    });
-    let options: Vec<_> = choices
-        .iter()
-        .map(|(label, _)| label.to_lowercase())
-        .collect();
-    let items = list.clone();
-    search.connect_changed(move |entry| {
-        let query = entry.text().to_lowercase();
-        let mut first = None;
-        for (index, label) in options.iter().enumerate() {
-            if let Some(row) = items.row_at_index(index as i32) {
-                let shown = label.contains(&query);
-                row.set_visible(shown);
-                if shown && first.is_none() {
-                    first = Some(row);
+
+    let activate = {
+        let result = selected.clone();
+        let close = window.downgrade();
+        move |selection: &gtk::SingleSelection, position| {
+            if let Some(item) = selection.item(position) {
+                *result.borrow_mut() = Some(choice(&item).borrow::<Choice>().index);
+                if let Some(window) = close.upgrade() {
+                    window.close();
                 }
             }
         }
-        items.select_row(first.as_ref());
-    });
-    let items = list.clone();
-    let close = window.downgrade();
-    let result = selected.clone();
-    search.connect_activate(move |_| {
-        if let Some(row) = items.selected_row() {
-            *result.borrow_mut() = Some(row.index() as usize);
-            if let Some(window) = close.upgrade() {
-                window.close();
-            }
-        }
+    };
+    let items = selection.clone();
+    let activate_row = activate.clone();
+    list.connect_activate(move |_, position| activate_row(&items, position));
+    let items = selection.clone();
+    search.connect_activate(move |_| activate(&items, items.selected()));
+    let items = selection.clone();
+    search.connect_changed(move |entry| {
+        *query.borrow_mut() = entry.text().to_lowercase();
+        filter.changed(gtk::FilterChange::Different);
+        items.set_selected(0);
     });
     let keys = gtk::EventControllerKey::new();
-    let items = list.clone();
     keys.connect_key_pressed(move |_, key, _, _| {
-        let direction = if key == gtk::gdk::Key::Down {
-            1
-        } else if key == gtk::gdk::Key::Up {
-            -1
-        } else {
-            return glib::Propagation::Proceed;
+        let current = selection.selected();
+        let next = match key {
+            gtk::gdk::Key::Down => current.saturating_add(1),
+            gtk::gdk::Key::Up => current.saturating_sub(1),
+            _ => return glib::Propagation::Proceed,
         };
-        let mut index = items.selected_row().map(|row| row.index()).unwrap_or(0) + direction;
-        while let Some(row) = items.row_at_index(index) {
-            if row.is_visible() {
-                items.select_row(Some(&row));
-                break;
-            }
-            index += direction;
+        if next < selection.n_items() {
+            selection.set_selected(next);
+            list.scroll_to(next, gtk::ListScrollFlags::NONE, None);
         }
         glib::Propagation::Stop
     });
@@ -337,11 +411,17 @@ mod tests {
                 .unwrap();
             let list = children
                 .iter()
-                .find_map(|widget| widget.clone().downcast::<gtk::ListBox>().ok())
+                .find_map(|widget| widget.clone().downcast::<gtk::ListView>().ok())
                 .unwrap();
             search.set_text("second");
-            assert!(!list.row_at_index(0).unwrap().is_visible());
-            assert_eq!(list.selected_row().unwrap().index(), 1);
+            let selection = list
+                .model()
+                .unwrap()
+                .downcast::<gtk::SingleSelection>()
+                .unwrap();
+            assert_eq!(selection.n_items(), 1);
+            let item = selection.selected_item().unwrap();
+            assert_eq!(choice(&item).borrow::<Choice>().index, 1);
             search.emit_activate();
         });
         assert_eq!(

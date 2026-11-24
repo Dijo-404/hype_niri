@@ -14,7 +14,7 @@ use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{BufReader, Cursor},
+    io::Cursor,
     num::NonZeroU8,
     os::{
         fd::OwnedFd,
@@ -24,6 +24,10 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant, UNIX_EPOCH},
 };
+
+const MAX_ANIMATION_FRAMES: usize = 600;
+const MAX_ANIMATION_FRAME_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_ANIMATION_WORK_BYTES: u64 = 1024 * 1024 * 1024;
 
 fn wallpaper_dir() -> Result<PathBuf> {
     Ok(std::env::var_os("WALLPAPER_DIR")
@@ -61,7 +65,11 @@ fn images(dir: &Path) -> Result<Vec<PathBuf>> {
     images.sort();
     Ok(images)
 }
-fn update_link(link: &Path, image: &Path) -> Result<()> {
+fn update_link(
+    link: &Path,
+    image: &Path,
+    accept: impl FnOnce(&Path) -> Result<bool>,
+) -> Result<()> {
     let image = image.canonicalize()?;
     if !image.is_file() {
         return Err(err("Wallpaper must be a regular image file"));
@@ -74,19 +82,20 @@ fn update_link(link: &Path, image: &Path) -> Result<()> {
         .prefix(".current-wallpaper.")
         .tempdir_in(dir)?;
     let staged = temporary.path().join("link");
-    symlink(image, &staged)?;
-    fs::rename(staged, link)?;
+    symlink(&image, &staged)?;
+    if accept(&image)? {
+        fs::rename(staged, link)?;
+    }
     Ok(())
 }
-fn ensure(link: &Path, dir: &Path) -> Result<bool> {
+fn ensure(link: &Path, dir: &Path) -> Result<()> {
     if link.is_file() {
-        return Ok(true);
+        return Ok(());
     }
     let Some(first) = images(dir)?.into_iter().next() else {
-        return Ok(false);
+        return Ok(());
     };
-    update_link(link, &first)?;
-    Ok(true)
+    update_link(link, &first, |_| Ok(true))
 }
 fn decode(path: &Path) -> Result<DynamicImage> {
     let reader = ImageReader::open(path)?.with_guessed_format()?;
@@ -211,15 +220,19 @@ fn transition(animate: bool) -> Transition {
         invert_y: false,
     }
 }
-fn pixels(image: &DynamicImage, dim: (u32, u32), format: PixelFormat) -> Result<Box<[u8]>> {
+fn check_output_dimensions(dim: (u32, u32)) -> Result<()> {
     if dim.0 == 0 || dim.1 == 0 || u64::from(dim.0) * u64::from(dim.1) > 134_217_728 {
         return Err(err("Invalid or excessive wallpaper output dimensions"));
     }
+    Ok(())
+}
+fn pixels(image: &DynamicImage, dim: (u32, u32), format: PixelFormat) -> Result<Box<[u8]>> {
+    check_output_dimensions(dim)?;
     let resized = image.resize_to_fill(dim.0, dim.1, FilterType::Lanczos3);
     let mut bytes = if format.channels() == 3 {
-        resized.to_rgb8().into_raw()
+        resized.into_rgb8().into_raw()
     } else {
-        resized.to_rgba8().into_raw()
+        resized.into_rgba8().into_raw()
     };
     if format.must_swap_r_and_b_channels() {
         for pixel in bytes.chunks_exact_mut(format.channels() as usize) {
@@ -228,28 +241,51 @@ fn pixels(image: &DynamicImage, dim: (u32, u32), format: PixelFormat) -> Result<
     }
     Ok(bytes.into_boxed_slice())
 }
-fn animation(path: &Path, dim: (u32, u32), format: PixelFormat) -> Result<Option<ipc::Animation>> {
+fn animation(
+    path: &Path,
+    dim: (u32, u32),
+    format: PixelFormat,
+    budget: &mut u64,
+) -> Result<Option<ipc::Animation>> {
     let reader = ImageReader::open(path)?.with_guessed_format()?;
-    let file = BufReader::new(fs::File::open(path)?);
-    let frames = match reader.format() {
+    let source_format = reader.format();
+    let file = reader.into_inner();
+    let (source_dim, mut frames) = match source_format {
         Some(ImageFormat::WebP) => {
             let decoder = image::codecs::webp::WebPDecoder::new(file)?;
             if !decoder.has_animation() {
                 return Ok(None);
             }
-            decoder.into_frames()
+            (decoder.dimensions(), decoder.into_frames())
         }
         Some(ImageFormat::Png) => {
-            let decoder = image::codecs::png::PngDecoder::new(file)?;
+            let decoder =
+                image::codecs::png::PngDecoder::with_limits(file, image::Limits::default())?;
             if !decoder.is_apng()? {
                 return Ok(None);
             }
-            decoder.apng()?.into_frames()
+            (decoder.dimensions(), decoder.apng()?.into_frames())
         }
-        Some(ImageFormat::Gif) => image::codecs::gif::GifDecoder::new(file)?.into_frames(),
+        Some(ImageFormat::Gif) => {
+            let decoder = image::codecs::gif::GifDecoder::new(file)?;
+            (decoder.dimensions(), decoder.into_frames())
+        }
         _ => return Ok(None),
     };
-    let mut frames = frames;
+    let decoded_bytes = (u64::from(source_dim.0) * u64::from(source_dim.1)).saturating_mul(4);
+    let target_pixels = u64::from(dim.0) * u64::from(dim.1);
+    if decoded_bytes > MAX_ANIMATION_FRAME_BYTES || target_pixels > MAX_ANIMATION_FRAME_BYTES / 4 {
+        return Err(err("Wallpaper animation frames are too large"));
+    }
+    // Count raw frame work and allow for awww's changed-pixel run markers.
+    let frame_cost = decoded_bytes + target_pixels * 5;
+    let mut charge_frame = || -> Result<()> {
+        *budget = budget
+            .checked_sub(frame_cost)
+            .ok_or_else(|| err("Wallpaper animation exceeds the request's processing budget"))?;
+        Ok(())
+    };
+    charge_frame()?;
     let Some(first) = frames.next() else {
         return Ok(None);
     };
@@ -259,27 +295,47 @@ fn animation(path: &Path, dim: (u32, u32), format: PixelFormat) -> Result<Option
         Nanos::from_nanos((u64::from(n) * 1_000_000) / u64::from(d.max(1)))
     };
     let mut first_duration = delay(&first);
-    let first = pixels(&DynamicImage::ImageRgba8(first.into_buffer()), dim, format)?;
-    let mut previous = first.clone();
+    // awww compresses RGB triplets even when the daemon uses a four-channel framebuffer.
+    let animation_format = if format.must_swap_r_and_b_channels() {
+        PixelFormat::Rgb
+    } else {
+        PixelFormat::Bgr
+    };
+    let render = |frame: image::Frame| {
+        pixels(
+            &DynamicImage::ImageRgba8(frame.into_buffer()),
+            dim,
+            animation_format,
+        )
+    };
+    let first = render(first)?;
+    let mut previous = None;
     let mut compressor = Compressor::new();
     let mut compressed: Vec<(_, Nanos)> = Vec::new();
-    for frame in frames {
+    for (index, frame) in frames.enumerate() {
+        if index >= MAX_ANIMATION_FRAMES - 1 {
+            return Err(err("Wallpaper animation has too many frames"));
+        }
+        charge_frame()?;
         let frame = frame?;
         let duration = delay(&frame);
-        let current = pixels(&DynamicImage::ImageRgba8(frame.into_buffer()), dim, format)?;
-        if let Some(pack) = compressor.compress(&previous, &current, format) {
+        let current = render(frame)?;
+        let prior = previous.as_deref().unwrap_or(first.as_ref());
+        if let Some(pack) = compressor.compress(prior, &current, format) {
             compressed.push((pack, duration));
         } else if let Some(last) = compressed.last_mut() {
             last.1 += duration;
         } else {
             first_duration += duration;
         }
-        previous = current;
+        previous = Some(current);
     }
-    if let Some(pack) = compressor.compress(&previous, &first, format) {
-        compressed.push((pack, first_duration));
-    } else if let Some(last) = compressed.last_mut() {
-        last.1 += first_duration;
+    if let Some(previous) = previous {
+        if let Some(pack) = compressor.compress(&previous, &first, format) {
+            compressed.push((pack, first_duration));
+        } else if let Some(last) = compressed.last_mut() {
+            last.1 += first_duration;
+        }
     }
     if compressed.is_empty() {
         Ok(None)
@@ -289,6 +345,35 @@ fn animation(path: &Path, dim: (u32, u32), format: PixelFormat) -> Result<Option
         }))
     }
 }
+
+struct OutputGroup {
+    dim: (u32, u32),
+    format: PixelFormat,
+    names: Vec<String>,
+}
+
+fn group_outputs(outputs: &[BgInfo]) -> Vec<OutputGroup> {
+    let mut groups: Vec<OutputGroup> = Vec::new();
+    for output in outputs {
+        let dim = output.real_dim();
+        let format = output.pixel_format;
+        let name = output.name.to_string();
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|g| g.dim == dim && g.format == format)
+        {
+            group.names.push(name);
+        } else {
+            groups.push(OutputGroup {
+                dim,
+                format,
+                names: vec![name],
+            });
+        }
+    }
+    groups
+}
+
 fn build_request(
     path: &Path,
     outputs: &[BgInfo],
@@ -299,33 +384,38 @@ fn build_request(
         .to_str()
         .ok_or_else(|| err("awww requires UTF-8 image paths"))?
         .to_owned();
-    let image = decode(&path)?;
-    let mut builder = ImageRequestBuilder::new(transition(animate))?;
     if outputs.len() > u8::MAX as usize {
         return Err(err("Too many wallpaper outputs"));
     }
-    for output in outputs {
-        let dim = output.real_dim();
-        let bytes = pixels(&image, dim, output.pixel_format)?;
-        let animation = animation(&path, dim, output.pixel_format)?;
+    let image = decode(&path)?;
+    let mut budget = MAX_ANIMATION_WORK_BYTES;
+    let groups = group_outputs(outputs);
+    let mut prepared = Vec::with_capacity(groups.len());
+    for group in groups {
+        check_output_dimensions(group.dim)?;
+        let animation = animation(&path, group.dim, group.format, &mut budget)?;
+        prepared.push((group, animation));
+    }
+    let mut builder = ImageRequestBuilder::new(transition(animate))?;
+    for (OutputGroup { dim, format, names }, animation) in prepared {
         builder.push(
             ImgSend {
                 path: path_string.clone(),
                 dim,
-                format: output.pixel_format,
-                img: bytes,
+                format,
+                img: pixels(&image, dim, format)?,
             },
             "",
             "crop",
             None,
             "Lanczos3",
-            &[output.name.to_string()],
+            &names,
             animation,
         );
     }
     Ok(builder.build())
 }
-fn apply(path: &Path, animate: bool) -> Result<()> {
+fn apply(path: &Path, animate: bool) -> Result<bool> {
     ensure_daemon()?;
     let socket = socket_path();
     let outputs = match request_at(&socket, RequestSend::Query)? {
@@ -333,11 +423,11 @@ fn apply(path: &Path, animate: bool) -> Result<()> {
         _ => return Err(err("awww returned an invalid output query response")),
     };
     if outputs.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let request = build_request(path, &outputs, animate)?;
     match request_at(&socket, RequestSend::Img(request))? {
-        Answer::Ok => Ok(()),
+        Answer::Ok => Ok(true),
         _ => Err(err("awww did not accept the wallpaper")),
     }
 }
@@ -356,16 +446,17 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
             ensure(&current, &dir)?;
         }
         "init" | "current" | "restore" | "sync" => {
-            if ensure(&current, &dir)? {
+            if current.is_file() {
                 apply(&current, false)?;
+            } else if let Some(first) = images(&dir)?.into_iter().next() {
+                update_link(&current, &first, |path| apply(path, false))?;
             }
         }
         "random" => {
             let images = images(&dir)?;
             if !images.is_empty() {
                 let image = &images[rand::rng().random_range(0..images.len())];
-                update_link(&current, image)?;
-                apply(image, true)?;
+                update_link(&current, image, |path| apply(path, true))?;
             }
         }
         "select" => {
@@ -378,11 +469,11 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
                 .map(PathBuf::from)
                 .unwrap_or(runtime::home()?.join(".cache"))
                 .join("hype-niri/wallpapers");
-            let items: Vec<_> = images
-                .iter()
-                .map(|p| (label(p), thumbnail(p, &cache).unwrap_or_default()))
-                .collect();
-            let Some(index) = crate::dialog::images("Wallpaper", &items)? else {
+            let items: Vec<_> = images.iter().map(|p| (label(p), p.clone())).collect();
+            let Some(index) = crate::dialog::images_lazy("Wallpaper", &items, move |path| {
+                thumbnail(path, &cache).ok()
+            })?
+            else {
                 return Ok(());
             };
             let image = images
@@ -392,8 +483,7 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
                 return Ok(());
             };
             if image.is_file() {
-                update_link(&current, image)?;
-                apply(image, true)?;
+                update_link(&current, image, |path| apply(path, true))?;
             }
         }
         path => {
@@ -403,8 +493,7 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
                     "Usage: hype-control wallpaper {ensure|init|current|restore|sync|random|select|<path>}",
                 ));
             }
-            update_link(&current, image)?;
-            apply(image, true)?;
+            update_link(&current, image, |path| apply(path, true))?;
         }
     }
     Ok(())
@@ -422,10 +511,31 @@ mod tests {
         let image = dir.join("one\ntwo.PNG");
         fs::write(&image, []).unwrap();
         let link = temp.path().join("state/current_wallpaper");
-        assert!(ensure(&link, &dir).unwrap());
+        ensure(&link, &dir).unwrap();
         assert_eq!(link.canonicalize().unwrap(), image);
         assert_eq!(label(&image), format!("{}/one\\ntwo.PNG", dir.display()));
         assert_eq!(fs::read_dir(link.parent().unwrap()).unwrap().count(), 1);
+    }
+    #[test]
+    fn unapplied_wallpaper_preserves_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old.png");
+        let new = temp.path().join("new.png");
+        let link = temp.path().join("state/current_wallpaper");
+        fs::write(&old, []).unwrap();
+        fs::write(&new, []).unwrap();
+        update_link(&link, &old, |_| Ok(true)).unwrap();
+        assert!(update_link(&link, &new, |_| Err(err("Rejected"))).is_err());
+        update_link(&link, &new, |_| Ok(false)).unwrap();
+        assert_eq!(fs::read_link(&link).unwrap(), old);
+        assert_eq!(fs::read_dir(link.parent().unwrap()).unwrap().count(), 1);
+        update_link(&link, &new, |image| {
+            assert_eq!(image, new);
+            assert_eq!(fs::read_link(&link).unwrap(), old);
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(fs::read_link(&link).unwrap(), new);
     }
     #[test]
     fn discovery_recurses_without_following_symlink_directories() {
@@ -466,6 +576,26 @@ mod tests {
             &*pixels(&image, (1, 1), PixelFormat::Abgr).unwrap(),
             &[10, 20, 30, 255]
         );
+    }
+    #[test]
+    fn outputs_share_matching_physical_size_and_format() {
+        let output = |name: &str, dim, scale, pixel_format| BgInfo {
+            name: name.into(),
+            dim,
+            scale_factor: ipc::Scale::Output(std::num::NonZeroI32::new(scale).unwrap()),
+            img: ipc::BgImg::Color([0, 0, 0, 255]),
+            pixel_format,
+        };
+        let outputs = [
+            output("DP-1", (1920, 1080), 1, PixelFormat::Bgr),
+            output("DP-2", (960, 540), 2, PixelFormat::Bgr),
+            output("DP-3", (1920, 1080), 1, PixelFormat::Abgr),
+        ];
+        let groups = group_outputs(&outputs);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].dim, (1920, 1080));
+        assert_eq!(groups[0].names, ["DP-1", "DP-2"]);
+        assert_eq!(groups[1].names, ["DP-3"]);
     }
     #[test]
     fn upstream_native_wire_roundtrip_has_center_timing_and_pixels() {
@@ -558,8 +688,26 @@ mod tests {
                 encoder.encode_frame(frame).unwrap();
             }
         }
-        let animation = animation(&path, (4, 4), PixelFormat::Bgr).unwrap().unwrap();
-        assert_eq!(animation.animation.len(), 2);
-        assert_eq!(animation.animation[0].1.into_timespec().tv_nsec, 80_000_000);
+        for format in [PixelFormat::Bgr, PixelFormat::Abgr, PixelFormat::Argb] {
+            let mut budget = 200;
+            let sequence = animation(&path, (4, 4), format, &mut budget)
+                .unwrap()
+                .unwrap();
+            assert_eq!(sequence.animation.len(), 2);
+            assert_eq!(sequence.animation[0].1.into_timespec().tv_nsec, 80_000_000);
+            let first_frame =
+                DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([255, 0, 0])));
+            let mut buffer = pixels(&first_frame, (4, 4), format).unwrap();
+            awww_common::compression::Decompressor::new()
+                .decompress(&sequence.animation[0].0, &mut buffer, format)
+                .unwrap();
+            let blue = if format.must_swap_r_and_b_channels() {
+                [255, 0, 0]
+            } else {
+                [0, 0, 255]
+            };
+            assert_eq!(&buffer[..3], &blue);
+            assert!(animation(&path, (4, 4), format, &mut budget).is_err());
+        }
     }
 }

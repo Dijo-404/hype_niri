@@ -2,11 +2,12 @@ use crate::{Result, dialog, err, runtime};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, OpenOptions},
-    io::{Read, Write},
+    io::{BufReader, BufWriter, Read, Write},
+    net::Shutdown,
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::{AsFd, AsRawFd},
         unix::{
-            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::UnixStream,
         },
     },
@@ -24,6 +25,8 @@ const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FILE_BYTES: usize = MAX_TOTAL_BYTES + MAX_ENTRIES * 300 + 16;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
+const OWNER_TIMEOUT: Duration = Duration::from_secs(4);
+const OWNER_TOKEN_PREFIX: &str = "application/x-hype-clipboard-";
 const MAGIC: &[u8] = b"HYPECLIP1";
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
@@ -37,6 +40,34 @@ impl Entry {
             return Err(err("Invalid clipboard entry or size limit exceeded"));
         }
         Ok(())
+    }
+    fn write_to(&self, mut writer: impl Write) -> Result<()> {
+        self.validate()?;
+        writer.write_all(&(self.mime.len() as u16).to_le_bytes())?;
+        writer.write_all(&(self.data.len() as u32).to_le_bytes())?;
+        writer.write_all(self.mime.as_bytes())?;
+        writer.write_all(&self.data)?;
+        Ok(())
+    }
+    fn read_from(mut reader: impl Read, budget: usize) -> Result<Self> {
+        let mut mime_length = [0; 2];
+        let mut data_length = [0; 4];
+        reader.read_exact(&mut mime_length)?;
+        reader.read_exact(&mut data_length)?;
+        let mime_length = u16::from_le_bytes(mime_length) as usize;
+        let data_length = u32::from_le_bytes(data_length) as usize;
+        if mime_length > 255 || data_length > MAX_ENTRY_BYTES || data_length > budget {
+            return Err(err("Clipboard history size limit exceeded"));
+        }
+        let mut mime = vec![0; mime_length];
+        reader.read_exact(&mut mime)?;
+        let mime = String::from_utf8(mime)?;
+        if !supported_mime(&mime) || data_length == 0 {
+            return Err(err("Invalid clipboard entry"));
+        }
+        let mut data = vec![0; data_length];
+        reader.read_exact(&mut data)?;
+        Ok(Self { mime, data })
     }
     fn id(&self) -> String {
         let mut hash = Sha256::new();
@@ -61,8 +92,11 @@ struct History {
     entries: Vec<Entry>,
 }
 impl History {
-    fn insert(&mut self, entry: Entry) -> Result<()> {
+    fn insert(&mut self, entry: Entry) -> Result<bool> {
         entry.validate()?;
+        if self.entries.first() == Some(&entry) {
+            return Ok(false);
+        }
         self.entries.retain(|old| old != &entry);
         self.entries.insert(0, entry);
         let mut bytes = 0;
@@ -71,58 +105,39 @@ impl History {
             bytes += entry.data.len();
             bytes <= MAX_TOTAL_BYTES
         });
+        Ok(true)
+    }
+    fn write_to(&self, mut writer: impl Write) -> Result<()> {
+        writer.write_all(MAGIC)?;
+        writer.write_all(&(self.entries.len() as u32).to_le_bytes())?;
+        for entry in &self.entries {
+            entry.write_to(&mut writer)?;
+        }
         Ok(())
     }
-    fn encode(&self) -> Result<Vec<u8>> {
-        let mut bytes = MAGIC.to_vec();
-        bytes.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
-        for entry in &self.entries {
-            entry.validate()?;
-            bytes.extend_from_slice(&(entry.mime.len() as u16).to_le_bytes());
-            bytes.extend_from_slice(&(entry.data.len() as u32).to_le_bytes());
-            bytes.extend_from_slice(entry.mime.as_bytes());
-            bytes.extend_from_slice(&entry.data);
-        }
-        Ok(bytes)
-    }
-    fn decode(mut bytes: &[u8]) -> Result<Self> {
-        fn take<'a>(bytes: &mut &'a [u8], length: usize) -> Result<&'a [u8]> {
-            if length > bytes.len() {
-                return Err(err("Truncated clipboard history"));
-            }
-            let (value, rest) = bytes.split_at(length);
-            *bytes = rest;
-            Ok(value)
-        }
-        if bytes.len() > MAX_FILE_BYTES || take(&mut bytes, MAGIC.len())? != MAGIC {
+    fn read_from(mut reader: impl Read) -> Result<Self> {
+        let mut header = [0; MAGIC.len()];
+        reader.read_exact(&mut header)?;
+        if header.as_slice() != MAGIC {
             return Err(err("Invalid clipboard history header"));
         }
-        let count = u32::from_le_bytes(take(&mut bytes, 4)?.try_into()?) as usize;
+        let mut count = [0; 4];
+        reader.read_exact(&mut count)?;
+        let count = u32::from_le_bytes(count) as usize;
         if count > MAX_ENTRIES {
             return Err(err("Clipboard history entry limit exceeded"));
         }
         let mut entries = Vec::with_capacity(count);
-        let mut total = 0;
+        let mut budget = MAX_TOTAL_BYTES;
         for _ in 0..count {
-            let mime_length = u16::from_le_bytes(take(&mut bytes, 2)?.try_into()?) as usize;
-            let data_length = u32::from_le_bytes(take(&mut bytes, 4)?.try_into()?) as usize;
-            if mime_length > 255 || data_length > MAX_ENTRY_BYTES {
-                return Err(err("Clipboard history size limit exceeded"));
-            }
-            total += data_length;
-            if total > MAX_TOTAL_BYTES {
-                return Err(err("Clipboard history total limit exceeded"));
-            }
-            let mime = std::str::from_utf8(take(&mut bytes, mime_length)?)?.to_owned();
-            let data = take(&mut bytes, data_length)?.to_vec();
-            let entry = Entry { mime, data };
-            entry.validate()?;
+            let entry = Entry::read_from(&mut reader, budget)?;
+            budget -= entry.data.len();
             if entries.contains(&entry) {
                 return Err(err("Duplicate clipboard history entry"));
             }
             entries.push(entry);
         }
-        if !bytes.is_empty() {
+        if reader.read(&mut [0])? != 0 {
             return Err(err("Trailing clipboard history data"));
         }
         Ok(Self { entries })
@@ -213,21 +228,34 @@ fn load(path: &Path) -> Result<History> {
     {
         return Err(err("Unsafe clipboard history file"));
     }
-    let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    History::decode(&bytes)
+    History::read_from(BufReader::new(file))
 }
 fn update(entry: Option<Entry>) -> Result<()> {
     let _lock = runtime::lock_blocking("clipboard-history.lock")?;
     let path = state_path()?;
     let mut history = load(&path)?;
-    if let Some(entry) = entry {
-        history.insert(entry)?;
-    } else {
-        history.entries.clear();
+    let changed = match entry {
+        Some(entry) => history.insert(entry)?,
+        None => !std::mem::take(&mut history.entries).is_empty(),
+    };
+    if !changed {
+        return Ok(());
     }
-    runtime::atomic_write(&path, &history.encode()?)
+    let directory = path
+        .parent()
+        .ok_or_else(|| err("Missing clipboard directory"))?;
+    let mut staged = tempfile::NamedTempFile::new_in(directory)?;
+    staged
+        .as_file()
+        .set_permissions(fs::Permissions::from_mode(0o600))?;
+    {
+        let mut writer = BufWriter::new(staged.as_file_mut());
+        history.write_to(&mut writer)?;
+        writer.flush()?;
+    }
+    staged.as_file().sync_all()?;
+    staged.persist(&path)?;
+    Ok(())
 }
 fn snapshot() -> Result<History> {
     let _lock = runtime::lock_blocking("clipboard-history.lock")?;
@@ -355,47 +383,59 @@ async fn watch() -> Result<()> {
         .map_err(err)
 }
 fn start_owner(entry: &Entry) -> Result<()> {
-    let token = format!(
-        "application/x-hype-clipboard-{:032x}",
-        rand::random::<u128>()
-    );
+    let token = format!("{OWNER_TOKEN_PREFIX}{:032x}", rand::random::<u128>());
     let (mut parent, child_socket) = UnixStream::pair()?;
-    parent.set_read_timeout(Some(Duration::from_secs(4)))?;
+    parent.set_read_timeout(Some(OWNER_TIMEOUT))?;
+    parent.set_write_timeout(Some(OWNER_TIMEOUT))?;
     let mut child = Command::new(std::env::current_exe()?)
-        .args(["clipboard", "owner", &entry.id(), &token])
+        .args(["clipboard", "owner", &token])
         .stdin(Stdio::from(std::os::fd::OwnedFd::from(child_socket)))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    let mut ready = [0; 1];
-    match parent.read_exact(&mut ready) {
-        Ok(()) if ready == [1] => {
+    let transfer = (|| -> Result<()> {
+        entry.write_to(&mut parent)?;
+        parent.shutdown(Shutdown::Write)?;
+        let mut ready = [0; 1];
+        parent.read_exact(&mut ready)?;
+        if ready != [1] {
+            return Err(err("Unexpected clipboard owner response"));
+        }
+        Ok(())
+    })();
+    match transfer {
+        Ok(()) => {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
             Ok(())
         }
-        _ => {
+        Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            Err(err("Clipboard owner did not confirm selection readiness"))
+            Err(err(format!(
+                "Clipboard owner did not confirm selection readiness: {error}"
+            )))
         }
     }
 }
-fn owner(id: &str, token: &str) -> Result<()> {
-    if id.len() != 64
-        || !id.bytes().all(|b| b.is_ascii_hexdigit())
-        || !token.starts_with("application/x-hype-clipboard-")
-        || token.len() != 61
-        || !token[29..].bytes().all(|b| b.is_ascii_hexdigit())
+fn owner(token: &str) -> Result<()> {
+    if !token
+        .strip_prefix(OWNER_TOKEN_PREFIX)
+        .is_some_and(|suffix| {
+            suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
     {
         return Err(err("Invalid clipboard owner request"));
     }
-    let entry = snapshot()?
-        .entries
-        .into_iter()
-        .find(|entry| entry.id() == id)
-        .ok_or_else(|| err("Clipboard entry no longer exists"))?;
+    // The selecting process passes one entry over a private inherited socket.
+    let mut socket = UnixStream::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+    socket.set_read_timeout(Some(OWNER_TIMEOUT))?;
+    socket.set_write_timeout(Some(OWNER_TIMEOUT))?;
+    let entry = Entry::read_from(&mut socket, MAX_ENTRY_BYTES)?;
+    if socket.read(&mut [0])? != 0 {
+        return Err(err("Trailing clipboard owner data"));
+    }
     let mut watcher = Watcher::new(ClipboardType::Regular, paste::Seat::Unspecified)?;
     let cancel = watcher.cancel_handle();
     let token_seen = token.to_owned();
@@ -404,8 +444,6 @@ fn owner(id: &str, token: &str) -> Result<()> {
             if let ClipboardEvent::Changed { mime_types, .. } = event
                 && mime_types.contains(&token_seen)
             {
-                // stdin is a private inherited socket, never the user's terminal.
-                let mut socket = unsafe { UnixStream::from_raw_fd(0) };
                 let _ = socket.write_all(&[1]);
                 break;
             }
@@ -442,7 +480,7 @@ pub async fn run(args: &[String]) -> Result<()> {
             }
             Ok(())
         }
-        "owner" if args.len() == 3 => owner(&args[1], &args[2]),
+        "owner" if args.len() == 2 => owner(&args[1]),
         "copy" if args.len() == 2 => {
             let entry = snapshot()?
                 .entries
@@ -469,6 +507,11 @@ pub async fn run(args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn encode(history: &History) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        history.write_to(&mut bytes).unwrap();
+        bytes
+    }
     fn entry(mime: &str, data: &[u8]) -> Entry {
         Entry {
             mime: mime.into(),
@@ -523,10 +566,10 @@ mod tests {
     }
     #[test]
     fn state_rejects_symlinks_public_permissions_and_malformed_bytes() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
+        use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("history");
-        runtime::atomic_write(&path, &History::default().encode().unwrap()).unwrap();
+        runtime::atomic_write(&path, &encode(&History::default())).unwrap();
         assert!(load(&path).is_ok());
         let link = temp.path().join("link");
         symlink(&path, &link).unwrap();
@@ -552,15 +595,24 @@ mod tests {
         history
             .insert(entry("text/plain;charset=utf-8", "👩🏽‍💻\0".as_bytes()))
             .unwrap();
-        let saved = History::decode(&history.encode().unwrap()).unwrap();
+        let saved = History::read_from(encode(&history).as_slice()).unwrap();
         assert_eq!(saved.entries, history.entries);
+    }
+    #[test]
+    fn reads_existing_history_without_changing_its_format() {
+        let fixture = b"HYPECLIP1\x01\0\0\0\x09\0\x06\0\0\0image/png\x89PNG\0\xff";
+        let history = History::read_from(fixture.as_slice()).unwrap();
+        assert_eq!(history.entries, [entry("image/png", b"\x89PNG\0\xff")]);
+        assert_eq!(encode(&history), fixture);
+        assert!(Entry::read_from(&fixture[13..], 5).is_err());
     }
     #[test]
     fn duplicate_moves_to_front_and_retention_is_bounded() {
         let mut history = History::default();
-        history.insert(entry("text/plain", b"old")).unwrap();
+        assert!(history.insert(entry("text/plain", b"old")).unwrap());
         history.insert(entry("text/plain", b"new")).unwrap();
-        history.insert(entry("text/plain", b"old")).unwrap();
+        assert!(history.insert(entry("text/plain", b"old")).unwrap());
+        assert!(!history.insert(entry("text/plain", b"old")).unwrap());
         assert_eq!(history.entries.len(), 2);
         assert_eq!(history.entries[0].data, b"old");
         for value in 0..100u8 {
@@ -588,7 +640,7 @@ mod tests {
     }
     #[test]
     fn malformed_state_and_oversized_entries_fail_closed() {
-        assert!(History::decode(b"{}").is_err());
+        assert!(History::read_from(b"{}".as_slice()).is_err());
         let mut history = History::default();
         assert!(
             history
@@ -601,11 +653,11 @@ mod tests {
                 .is_err()
         );
         assert!(history.insert(entry("text/plain", b"ok")).is_ok());
-        let mut bytes = history.encode().unwrap();
+        let mut bytes = encode(&history);
         bytes.push(0);
-        assert!(History::decode(&bytes).is_err());
+        assert!(History::read_from(bytes.as_slice()).is_err());
         bytes.truncate(12);
-        assert!(History::decode(&bytes).is_err());
+        assert!(History::read_from(bytes.as_slice()).is_err());
     }
 }
 

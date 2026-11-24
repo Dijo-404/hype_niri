@@ -59,6 +59,8 @@ impl Runner for Fake {
                 )
             } else if args == ["version"] {
                 (0, "stealth-transparent-v2\n".into())
+            } else if program == "cargo" && args == ["-vV"] {
+                (0, "host: x86_64-unknown-linux-gnu\n".into())
             } else if program == "systemctl" && args.contains(&"list-unit-files") {
                 (0, format!("{} enabled\n", args[args.len() - 2]))
             } else if program == "systemctl" && args == ["--version"] {
@@ -656,6 +658,7 @@ fn validation_checks_required_services_and_live_oom_settings() {
         ".config/waybar/style.css",
         ".config/scripts/hype-notch",
         ".config/scripts/hype-control",
+        ".config/scripts/hype-status",
         ".config/alacritty/alacritty.toml",
         ".config/nvim/init.lua",
         ".config/nvim/lua/config/lazy.lua",
@@ -782,12 +785,11 @@ fn stealth_publishes_only_rust_payload_after_elevated_install_succeeds() {
         &f.installer.source.join("zsh/stealth.zsh"),
         "alias stealth-start='hype-control stealth start'\n",
     );
-    let build = tempfile::tempdir().unwrap();
-    put(
-        &build.path().join("release/stealth"),
-        fs::read(payload.join("stealth")).unwrap(),
-    );
-    f.installer.build_dir = Some(build);
+    let binary = f
+        .installer
+        .user(".cache/hype-niri/cargo-target/x86_64-unknown-linux-gnu/release/stealth");
+    put(&binary, fs::read(payload.join("stealth")).unwrap());
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
     let destination = f.installer.user(".local/share/stealth");
     let legacy = f.installer.user(".local/share/privacy-shield");
     put(&destination.join("old-user-file"), "old payload");

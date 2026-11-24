@@ -1,6 +1,6 @@
 use crate::{
     model::{FocusTimer, Stopwatch, Weather, WriteQueue},
-    services::{Backlight, Media},
+    services::{Audio, Backlight, Media},
     ui::View,
 };
 use gtk::{gio, glib, prelude::*};
@@ -50,6 +50,7 @@ impl FlowState {
 pub type LevelRequest = (f64, Option<Backlight>);
 
 pub struct Controller {
+    pub audio: Audio,
     pub volume_writes: RefCell<WriteQueue<LevelRequest>>,
     pub brightness_writes: RefCell<WriteQueue<LevelRequest>>,
     pub app: gtk::Application,
@@ -74,6 +75,7 @@ impl Controller {
     pub fn new(app: &gtk::Application) -> Rc<Self> {
         let this = Rc::new(Self {
             app: app.clone(),
+            audio: Audio::default(),
             volume_writes: RefCell::new(WriteQueue::default()),
             brightness_writes: RefCell::new(WriteQueue::default()),
             views: RefCell::new(Vec::new()),
@@ -440,6 +442,7 @@ impl Controller {
     }
     fn start_level_write(self: &Rc<Self>, brightness: bool, (value, device): LevelRequest) {
         let weak = Rc::downgrade(self);
+        let audio = self.audio.clone();
         glib::spawn_future_local(async move {
             let result = if brightness {
                 match device {
@@ -447,10 +450,7 @@ impl Controller {
                     None => Err("No backlight device".into()),
                 }
             } else {
-                match gio::spawn_blocking(move || crate::services::volume(Some(value))).await {
-                    Ok(result) => result.map(|_| ()),
-                    Err(_) => Err("Audio worker failed".into()),
-                }
+                audio.volume(Some(value)).await.map(|_| ())
             };
             let Some(this) = weak.upgrade() else {
                 return;

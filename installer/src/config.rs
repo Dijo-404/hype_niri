@@ -5,12 +5,14 @@ use std::{
     io::{self, Write},
     os::unix::{
         ffi::OsStrExt,
-        fs::{PermissionsExt, symlink},
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
     },
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tempfile::{Builder, NamedTempFile};
+
+pub(crate) const DESKTOP_PROGRAMS: &[&str] = &["hype-notch", "hype-control", "hype-status"];
 
 const DESKTOP_DIRS: &[&str] = &[
     "scripts",
@@ -154,52 +156,117 @@ impl Installer {
 
     pub fn build_programs(&mut self) -> Result<PathBuf> {
         if let Some(build) = &self.build_dir {
-            return Ok(build.path().join("release"));
+            return Ok(build.path().to_owned());
         }
         println!("Building native Rust desktop programs");
-        let build = Builder::new().prefix("hype-niri-build.").tempdir()?;
-        let manifest = self.source.join("Cargo.toml");
-        self.command(
-            "cargo",
+        let build = self.build_rust(
             &[
-                "build",
-                "--workspace",
-                "--bins",
-                "--release",
-                "--locked",
-                "--manifest-path",
-                path_arg(&manifest)?,
-                "--target-dir",
-                path_arg(build.path())?,
+                "--package",
+                "hype-notch",
+                "--bin",
+                "hype-notch",
+                "--package",
+                "hype-desktop",
+                "--bin",
+                "hype-control",
+                "--bin",
+                "hype-status",
             ],
+            DESKTOP_PROGRAMS,
+            "--check",
+        )?;
+        let release = build.path().to_owned();
+        self.build_dir = Some(build);
+        Ok(release)
+    }
+
+    pub(crate) fn build_stealth(&self) -> Result<tempfile::TempDir> {
+        self.build_rust(
+            &["--package", "hype-desktop", "--bin", "stealth"],
+            &["stealth"],
+            "version",
         )
-        .map_err(|err| {
+    }
+
+    fn build_rust(
+        &self,
+        targets: &[&str],
+        binaries: &[&str],
+        check: &str,
+    ) -> Result<tempfile::TempDir> {
+        let target = self.prepare_user_directory(".cache/hype-niri/cargo-target")?;
+        let metadata = fs::symlink_metadata(&target)?;
+        if !metadata.is_dir()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(error("Unsafe Cargo build cache directory"));
+        }
+        let lease = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(target.join("hype-install.lock"))?;
+        if !lease.metadata()?.is_file() {
+            return Err(error("Unsafe Cargo build cache lock"));
+        }
+        lease.lock()?;
+        let cargo = self.output("cargo", &["-vV"])?;
+        let host = cargo
+            .stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("host: "))
+            .filter(|host| {
+                cargo.success()
+                    && !host.is_empty()
+                    && host
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+            })
+            .ok_or_else(|| error("Could not determine Cargo's host target"))?;
+        let manifest = self.source.join("Cargo.toml");
+        // An inherited build.target must not redirect the build away from the binaries we publish.
+        let mut args = vec!["build", "--release", "--locked", "--target", host];
+        args.extend_from_slice(targets);
+        args.extend([
+            "--manifest-path",
+            path_arg(&manifest)?,
+            "--target-dir",
+            path_arg(&target)?,
+        ]);
+        self.command("cargo", &args).map_err(|err| {
             error(format!(
                 "Could not build native desktop programs: {err}. Check rust, gtk4, gtk4-layer-shell and libpulse."
             ))
         })?;
-
-        let release = build.path().join("release");
-        for (binary, check) in [
-            ("hype-notch", "--check"),
-            ("hype-control", "--check"),
-            ("stealth", "version"),
-        ] {
-            let path = release.join(binary);
-            let runnable = fs::symlink_metadata(&path).is_ok_and(|metadata| {
-                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-            });
-            if !runnable {
-                return Err(error(format!(
-                    "Built program is missing or not executable: {}",
-                    path.display()
-                )));
-            }
-            self.command(path_arg(&path)?, &[check])
-                .map_err(|err| error(format!("Built program {binary} failed validation: {err}")))?;
+        let release = target.join(host).join("release");
+        let staged = Builder::new().prefix("hype-niri-binaries.").tempdir()?;
+        // Publish from a private snapshot in case another install reuses the cache.
+        for name in binaries {
+            let binary = release.join(name);
+            self.validate_binary(&binary, check)?;
+            copy_regular(&binary, &staged.path().join(name), Some(0o755), false)?;
         }
-        self.build_dir = Some(build);
-        Ok(release)
+        Ok(staged)
+    }
+
+    fn validate_binary(&self, path: &Path, check: &str) -> Result<()> {
+        let runnable = fs::symlink_metadata(path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0);
+        if !runnable {
+            return Err(error(format!(
+                "Built program {} is missing or not executable",
+                path.display()
+            )));
+        }
+        self.command(path_arg(path)?, &[check]).map_err(|err| {
+            error(format!(
+                "Built program {} failed validation: {err}",
+                path.display()
+            ))
+        })
     }
 
     pub fn copy_configs(&mut self) -> Result<()> {
@@ -216,7 +283,7 @@ impl Installer {
 
             match *dir {
                 "scripts" => {
-                    for binary in ["hype-notch", "hype-control"] {
+                    for binary in DESKTOP_PROGRAMS {
                         copy_regular(
                             &release.join(binary),
                             &staged.join(binary),

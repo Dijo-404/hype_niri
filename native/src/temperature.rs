@@ -211,7 +211,10 @@ fn threshold(name: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-pub async fn run(_command: &str, _args: &[String]) -> Result<()> {
+pub async fn run(_command: &str, args: &[String]) -> Result<()> {
+    use std::io::Write;
+
+    let watch = args == ["watch"];
     let hwmon = std::env::var_os("HWMON_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| "/sys/class/hwmon".into());
@@ -219,15 +222,22 @@ pub async fn run(_command: &str, _args: &[String]) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| "/sys/class/thermal".into());
     let cache = runtime::dir()?.join("hype-niri-temp-sensor");
-    println!(
-        "{}",
-        output(
-            select(&hwmon, &thermal, &cache),
-            threshold("HYPE_NIRI_TEMP_WARNING", 70),
-            threshold("HYPE_NIRI_TEMP_CRITICAL", 80)
-        )
-    );
-    Ok(())
+    let warning = threshold("HYPE_NIRI_TEMP_WARNING", 70);
+    let critical = threshold("HYPE_NIRI_TEMP_CRITICAL", 80);
+    let mut previous = None;
+    loop {
+        let reading = output(select(&hwmon, &thermal, &cache), warning, critical);
+        if previous.as_ref() != Some(&reading) {
+            let mut out = std::io::stdout().lock();
+            writeln!(out, "{reading}")?;
+            out.flush()?;
+            previous = Some(reading);
+        }
+        if !watch {
+            return Ok(());
+        }
+        gtk::glib::timeout_future(std::time::Duration::from_secs(5)).await;
+    }
 }
 
 #[cfg(test)]

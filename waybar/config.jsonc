@@ -96,9 +96,9 @@
     "format": "temp"
   },
   "custom/temperature": {
-    "exec": "~/.config/scripts/hype-control temperature",
+    "exec": "~/.config/scripts/hype-status temperature",
     "return-type": "json",
-    "interval": 5,
+    "restart-interval": 5,
     "format": "{text}",
     "align": 0.5
   },
@@ -114,13 +114,12 @@
     "modules": ["custom/hotspot", "tray"]
   },
   "custom/hotspot": {
-    "exec": "~/.config/scripts/hype-control hotspot status",
+    "exec": "~/.config/scripts/hype-status hotspot",
     "return-type": "json",
-    "interval": 5,
+    "restart-interval": 5,
     "format": "{}",
     "on-click": "~/.config/scripts/hype-control hotspot toggle",
-    "on-click-right": "~/.config/scripts/hype-control hotspot menu",
-    "signal": 17
+    "on-click-right": "~/.config/scripts/hype-control hotspot menu"
   },
   "custom/warp": {
     "exec": "~/.config/scripts/hype-control warp-indicator",

@@ -1,11 +1,20 @@
 use gtk::{gio, glib, prelude::*};
+use libpulse_binding::{
+    callbacks::ListResult,
+    context::{Context, FlagSet, State},
+    mainloop::standard::Mainloop,
+    operation::{Operation, State as OperationState},
+    time::MicroSeconds,
+    volume::Volume,
+};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fs,
     io::{BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -55,6 +64,18 @@ mod tests {
         );
         assert!(output_name(r#"{"Err":"unavailable"}"#).is_err());
         assert!(output_name("garbage").is_err());
+    }
+
+    #[test]
+    fn audio_worker_disconnect_resolves_request_and_clears_sender() {
+        let (sender, requests) = mpsc::channel();
+        drop(requests);
+        let audio = Audio(Rc::new(RefCell::new(Some(sender))));
+        assert_eq!(
+            glib::MainContext::new().block_on(audio.volume(None)),
+            Err("Audio worker stopped".into())
+        );
+        assert!(audio.0.borrow().is_none());
     }
 }
 
@@ -167,83 +188,183 @@ pub fn weather() -> Result<crate::model::Weather> {
     crate::model::Weather::parse(&text).ok_or_else(|| "Invalid weather response".into())
 }
 
-pub fn volume(set: Option<f64>) -> Result<f64> {
-    use libpulse_binding::{
-        callbacks::ListResult,
-        context::{Context, FlagSet, State},
-        mainloop::standard::{IterateResult, Mainloop},
-        operation::State as OperationState,
-        volume::Volume,
-    };
-    let mut mainloop = Mainloop::new().ok_or("Audio mainloop unavailable")?;
-    let mut context = Context::new(&mainloop, "Niri Notch").ok_or("Audio context unavailable")?;
-    context
-        .connect(None, FlagSet::NOAUTOSPAWN, None)
-        .map_err(|e| {
-            e.to_string()
-                .unwrap_or_else(|| "Audio connection failed".into())
-        })?;
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let mut pump = |context: &Context| -> Result<()> {
-        if Instant::now() >= deadline {
-            return Err("Audio request timed out".into());
+const AUDIO_TIMEOUT: Duration = Duration::from_secs(3);
+const DEFAULT_SINK: &str = "@DEFAULT_SINK@";
+
+#[derive(Clone, Default)]
+pub struct Audio(Rc<RefCell<Option<mpsc::Sender<VolumeRequest>>>>);
+
+struct VolumeRequest {
+    set: Option<f64>,
+    reply: Option<gio::GioFutureResult<Result<f64>>>,
+}
+
+impl VolumeRequest {
+    fn resolve(&mut self, result: Result<f64>) {
+        if let Some(reply) = self.reply.take() {
+            reply.resolve(result);
         }
-        if matches!(context.get_state(), State::Failed | State::Terminated) {
+    }
+}
+
+impl Drop for VolumeRequest {
+    fn drop(&mut self) {
+        self.resolve(Err("Audio worker stopped".into()));
+    }
+}
+
+impl Audio {
+    pub async fn volume(&self, set: Option<f64>) -> Result<f64> {
+        gio::GioFuture::new(self, move |audio, _, reply| {
+            let mut request = VolumeRequest {
+                set,
+                reply: Some(reply),
+            };
+            let mut worker = audio.0.borrow_mut();
+            if worker.is_none() {
+                let (sender, requests) = mpsc::channel();
+                if let Err(error) = std::thread::Builder::new()
+                    .name("notch-audio".into())
+                    .spawn(move || PulseAudio::serve(requests))
+                {
+                    request.resolve(Err(format!("Could not start audio worker: {error}")));
+                    return;
+                }
+                *worker = Some(sender);
+            }
+            if worker.as_ref().unwrap().send(request).is_err() {
+                *worker = None;
+            }
+        })
+        .await
+    }
+}
+
+struct PulseAudio {
+    context: Context,
+    mainloop: Mainloop,
+}
+
+impl PulseAudio {
+    fn serve(requests: mpsc::Receiver<VolumeRequest>) {
+        let mut connection = None;
+        for mut request in requests {
+            let deadline = Instant::now() + AUDIO_TIMEOUT;
+            if connection.as_mut().is_some_and(|audio: &mut Self| {
+                // Process any disconnect that arrived while the worker was idle.
+                !audio.mainloop.iterate(false).is_success()
+                    || audio.context.get_state() != State::Ready
+            }) {
+                connection = None;
+            }
+            if connection.is_none() {
+                match Self::connect(deadline) {
+                    Ok(audio) => connection = Some(audio),
+                    Err(error) => {
+                        request.resolve(Err(error));
+                        continue;
+                    }
+                }
+            }
+            let result = connection.as_mut().unwrap().volume(request.set, deadline);
+            if result.is_err() {
+                connection = None;
+            }
+            request.resolve(result);
+        }
+    }
+
+    fn connect(deadline: Instant) -> Result<Self> {
+        let mainloop = Mainloop::new().ok_or("Audio mainloop unavailable")?;
+        let context = Context::new(&mainloop, "Niri Notch").ok_or("Audio context unavailable")?;
+        let mut audio = Self { context, mainloop };
+        audio
+            .context
+            .connect(None, FlagSet::NOAUTOSPAWN, None)
+            .map_err(Self::connection_error)?;
+        while audio.context.get_state() != State::Ready {
+            audio.pump(deadline)?;
+        }
+        Ok(audio)
+    }
+
+    fn connection_error(error: libpulse_binding::error::PAErr) -> String {
+        error
+            .to_string()
+            .unwrap_or_else(|| "Audio connection failed".into())
+    }
+
+    fn pump(&mut self, deadline: Instant) -> Result<()> {
+        if matches!(self.context.get_state(), State::Failed | State::Terminated) {
             return Err("Audio service unavailable".into());
         }
-        if matches!(
-            mainloop.iterate(false),
-            IterateResult::Err(_) | IterateResult::Quit(_)
-        ) {
-            return Err("Audio connection failed".into());
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("Audio request timed out".into());
         }
-        std::thread::sleep(Duration::from_millis(2));
+        self.mainloop
+            .prepare(Some(MicroSeconds(remaining.as_micros() as u64)))
+            .and_then(|()| self.mainloop.poll())
+            .and_then(|_| self.mainloop.dispatch())
+            .map_err(Self::connection_error)?;
         Ok(())
-    };
-    while context.get_state() != State::Ready {
-        pump(&context)?;
     }
-    let channels = Rc::new(RefCell::new(None));
-    let result = channels.clone();
-    let mut operation = context
-        .introspect()
-        .get_sink_info_by_name("@DEFAULT_SINK@", move |info| {
-            if let ListResult::Item(info) = info {
-                *result.borrow_mut() = Some(info.volume);
-            }
-        });
-    while operation.get_state() == OperationState::Running {
-        if let Err(error) = pump(&context) {
-            operation.cancel();
-            return Err(error);
-        }
-    }
-    let mut channels = channels.borrow().ok_or("Default audio sink unavailable")?;
-    let mut percent = f64::from(channels.max().0) / f64::from(Volume::NORMAL.0) * 100.0;
-    if let Some(value) = set {
-        percent = value.clamp(0.0, 100.0);
-        channels.scale(Volume(
-            (percent / 100.0 * f64::from(Volume::NORMAL.0)).round() as u32,
-        ));
-        let success = Rc::new(RefCell::new(false));
-        let result = success.clone();
-        let mut operation = context.introspect().set_sink_volume_by_name(
-            "@DEFAULT_SINK@",
-            &channels,
-            Some(Box::new(move |ok| *result.borrow_mut() = ok)),
-        );
+
+    fn wait<T: ?Sized>(&mut self, mut operation: Operation<T>, deadline: Instant) -> Result<()> {
         while operation.get_state() == OperationState::Running {
-            if let Err(error) = pump(&context) {
+            if let Err(error) = self.pump(deadline) {
                 operation.cancel();
                 return Err(error);
             }
         }
-        if !*success.borrow() {
+        if operation.get_state() != OperationState::Done {
+            return Err("Audio request cancelled".into());
+        }
+        Ok(())
+    }
+
+    fn volume(&mut self, set: Option<f64>, deadline: Instant) -> Result<f64> {
+        let channels = Rc::new(Cell::new(None));
+        let result = channels.clone();
+        let operation =
+            self.context
+                .introspect()
+                .get_sink_info_by_name(DEFAULT_SINK, move |info| {
+                    if let ListResult::Item(info) = info {
+                        result.set(Some(info.volume));
+                    }
+                });
+        self.wait(operation, deadline)?;
+        let mut channels = channels.get().ok_or("Default audio sink unavailable")?;
+        let Some(value) = set else {
+            let percent = f64::from(channels.max().0) / f64::from(Volume::NORMAL.0) * 100.0;
+            return Ok(percent.clamp(0.0, 100.0));
+        };
+        let percent = value.clamp(0.0, 100.0);
+        channels.scale(Volume(
+            (percent / 100.0 * f64::from(Volume::NORMAL.0)).round() as u32,
+        ));
+        let success = Rc::new(Cell::new(false));
+        let result = success.clone();
+        let operation = self.context.introspect().set_sink_volume_by_name(
+            DEFAULT_SINK,
+            &channels,
+            Some(Box::new(move |ok| result.set(ok))),
+        );
+        self.wait(operation, deadline)?;
+        if !success.get() {
             return Err("Could not change volume".into());
         }
+        Ok(percent)
     }
-    context.disconnect();
-    Ok(percent.clamp(0.0, 100.0))
+}
+
+impl Drop for PulseAudio {
+    fn drop(&mut self) {
+        if self.context.get_state().is_good() {
+            self.context.disconnect();
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

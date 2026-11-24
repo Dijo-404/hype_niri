@@ -143,7 +143,7 @@ The native `hype-control prepare-sleep --watch` process holds a logind sleep del
 
 ## Native Desktop Controls
 
-The installer builds `hype-control`, `hype-notch` and the optional privileged `stealth` backend before replacing configurations. Niri, Waybar, Hypridle and the power-profile service call `~/.config/scripts/hype-control` directly. Temperature, audio, brightness, power profiles, caffeine, display settings, hotspot, drives, lock/suspend, Copilot shortcuts and wallpapers use native APIs. Application backends such as Hyprlock, Nautilus and `awww-daemon` still run as separate programs.
+The installer builds `hype-control`, `hype-notch` and `hype-status` before replacing configurations. It builds the privileged `stealth` binary when installing the optional Stealth integration. Cargo artifacts are reused from `~/.cache/hype-niri/cargo-target`. Niri, Waybar, Hypridle and the power-profile service call `~/.config/scripts/hype-control` directly. Waybar also uses `hype-status` to stream temperature and hotspot status. Application backends such as Hyprlock, Hyprpicker, Nautilus and `awww-daemon` run as separate programs.
 
 Display changes use Niri IPC and its own configuration decoder, pinned to Niri 26.04. Wallpaper rendering uses the native awww 0.12.1 protocol; keep these dependencies aligned when upgrading their installed backends. GTK4 dialogs provide masked password entry and cached wallpaper previews. The selected wallpaper remains an atomic symlink at `~/.local/state/niri/current_wallpaper` (or `$XDG_STATE_HOME/niri/current_wallpaper`).
 
@@ -208,6 +208,7 @@ cargo build --workspace --bins --locked
 /usr/bin/python3 tests/test-native-gui.py
 ./target/debug/hype-notch --check
 ./target/debug/hype-control --check
+./target/debug/hype-status --check
 ./target/debug/stealth version
 # Run ignored GTK tests only with an isolated session bus and Wayland compositor:
 cargo test --workspace --locked -- --ignored --test-threads=1
@@ -224,6 +225,6 @@ Static checks require ShellCheck, shfmt, Prettier, and Ruff. Shell formatting
 uses the four-space indentation in `.editorconfig`; `ruff.toml` also checks
 import placement.
 
-`install.sh` is the only remaining shell file. Desktop launchers, menus and status indicators run through `hype-control`; the installation phases live in `hype-install`. Infrastructure applications and vendor tools such as Hyprlock, pacman, yay and optional warp-cli remain separate programs. Wofi, playerctl, cliphist, wl-clipboard, bemoji and wtype are not default runtime requirements. Headless GUI tests may use test-only Sway and wtype; these are not installed by the core desktop. The bootstrap supports `--help`; the Rust installer also exposes named `--phase` operations for the manual steps in [INSTALL.md](INSTALL.md).
+`install.sh` is the only tracked `.sh` file. Desktop launchers and menus use `hype-control`, and the temperature and hotspot streams use `hype-status`. Installation phases live in `hype-install`. Infrastructure applications and vendor tools such as Hyprlock, pacman, yay and optional warp-cli remain separate programs. Wofi, playerctl, cliphist, wl-clipboard, bemoji and wtype are optional or test-only tools. The bootstrap supports `--help`, and the Rust installer exposes named `--phase` operations for the manual steps in [INSTALL.md](INSTALL.md).
 
 Installation retains four native compatibility symlinks for an already-running Waybar or a custom bar configuration. The temporary power-profile Bash launcher is removed after its replacement user unit has been published and reloaded.

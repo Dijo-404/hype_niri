@@ -173,6 +173,7 @@ impl Installer {
                     "stealth",
                     "stealth_client",
                     "helpers",
+                    "bin/hype-status",
                     "bin/stealth",
                 ][..],
             ),

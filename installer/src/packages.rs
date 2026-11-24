@@ -1,5 +1,5 @@
 use crate::{Installer, Result, error};
-use std::{fs, io::Write};
+use std::{collections::HashSet, fs, io::Write};
 
 impl Installer {
     pub fn select_optional_groups(&mut self) -> Result<()> {
@@ -45,15 +45,42 @@ impl Installer {
         if packages.is_empty() {
             return Err(error("Package list is empty"));
         }
+        let listed = self.output("pacman", &["-Slq"])?;
+        let names: HashSet<_> = listed.stdout.lines().collect();
         let mut official = Vec::new();
-        let mut aur = Vec::new();
-        for package in &packages {
-            if self.output("pacman", &["-Si", package])?.success() {
-                official.push(package.as_str());
-            } else if !self.output("pacman", &["-T", package])?.success() {
-                aur.push(format!("aur/{package}"));
+        let mut foreign = Vec::new();
+        for package in packages.iter().map(String::as_str) {
+            let in_repo = if listed.success() {
+                names.contains(package)
             } else {
-                println!("Retaining installed package/provider: {package}");
+                // Preserve individual lookups when a configured repository cannot be listed.
+                self.output("pacman", &["-Si", package])?.success()
+            };
+            if in_repo {
+                official.push(package);
+            } else {
+                foreign.push(package);
+            }
+        }
+        let mut aur = Vec::new();
+        if !foreign.is_empty() {
+            let mut args = vec!["-T"];
+            args.extend_from_slice(&foreign);
+            let missing = self.output("pacman", &args)?;
+            // Pacman returns 127 and prints the missing dependency names for -T.
+            if !missing.success() && missing.code != 127 {
+                return Err(error(format!(
+                    "Could not check installed package providers: {}",
+                    missing.stderr.trim()
+                )));
+            }
+            let missing: HashSet<_> = missing.stdout.lines().collect();
+            for package in foreign {
+                if missing.contains(package) {
+                    aur.push(format!("aur/{package}"));
+                } else {
+                    println!("Retaining installed package/provider: {package}");
+                }
             }
         }
         let mut log = tempfile::Builder::new()
@@ -217,13 +244,27 @@ mod tests {
     impl Runner for Fake {
         fn output(&self, p: &str, a: &[&str]) -> Result<CommandOutput> {
             self.calls.borrow_mut().push(format!("{p} {}", a.join(" ")));
-            let failed = p == "pacman" && a.first() == Some(&"-Si") && a[1] != "official"
-                || p == "pacman" && a.first() == Some(&"-T") && a.len() == 2 && a[1] == "missing"
-                || p == "yay" && self.metadata_fails
-                || p == "pacman"
-                    && a.first() == Some(&"-T")
-                    && a.len() > 2
-                    && self.verification_fails;
+            if p == "pacman" && a == ["-Slq"] {
+                return Ok(CommandOutput {
+                    stdout: "official\n".into(),
+                    ..Default::default()
+                });
+            }
+            if p == "pacman" && a.first() == Some(&"-T") {
+                let is_validation = a.contains(&"official");
+                let unsatisfied =
+                    a.contains(&"missing") && (!is_validation || self.verification_fails);
+                return Ok(CommandOutput {
+                    code: if unsatisfied { 127 } else { 0 },
+                    stdout: if unsatisfied {
+                        "missing\n".into()
+                    } else {
+                        String::new()
+                    },
+                    ..Default::default()
+                });
+            }
+            let failed = p == "yay" && self.metadata_fails;
             Ok(CommandOutput {
                 code: i32::from(failed),
                 ..Default::default()
@@ -383,6 +424,10 @@ mod tests {
         let (_root, mut installer, calls) = fixture(false, false, false);
         installer.install_packages().unwrap();
         let calls = calls.borrow();
+        assert_eq!(
+            &calls[..2],
+            ["pacman -Slq", "pacman -T foreign provider missing"]
+        );
         assert!(
             calls
                 .iter()

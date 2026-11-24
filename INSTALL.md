@@ -86,16 +86,17 @@ done
 Build the native programs before copying configuration. Niri validation is pinned to Niri 26.04 and wallpaper IPC to awww 0.12.1; update the pinned Rust dependencies alongside backend upgrades. Then move the dotfiles and binaries to their respective locations in your home directory.
 
 ```bash
-cargo build --workspace --bins --release --locked
+cargo build --release --locked -p hype-notch --bin hype-notch -p hype-desktop --bin hype-control --bin hype-status
 ./target/release/hype-control --check
 ./target/release/hype-notch --check
+./target/release/hype-status --check
 
 mkdir -p ~/.config
 ./target/release/hype-install --source "$PWD" --phase user-dirs
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
 cp -r niri waybar scripts alacritty mako fastfetch hypr ~/.config/
-install -m 755 target/release/hype-control target/release/hype-notch ~/.config/scripts/
+install -m 755 target/release/hype-control target/release/hype-notch target/release/hype-status ~/.config/scripts/
 mkdir -p ~/.config/systemd/user
 cp systemd/user/hype-auto-power-profile.service ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -306,7 +307,7 @@ Select the `stealth` group to install Stealth. The installer then asks before in
 ```bash
 mkdir -p ~/.local/share/stealth
 sudo pacman -S --needed tor nftables polkit
-cargo build --workspace --bins --release --locked
+cargo build --release --locked -p hype-desktop --bin stealth -p hype-install --bin hype-install
 cp zsh/stealth.zsh \
     stealth/stealth.service stealth/stealth.nft stealth/stealth.sudoers \
     stealth/torrc.conf ~/.local/share/stealth/
