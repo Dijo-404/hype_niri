@@ -201,12 +201,10 @@ fn gtk4_parity_and_native_dbus() {
     let interface = info
         .lookup_interface("org.mpris.MediaPlayer2.Player")
         .unwrap();
-    let playing = Rc::new(Cell::new(true));
-    let next = Rc::new(Cell::new(false));
-    let current = playing.clone();
-    let track = next.clone();
-    let read_playing = playing.clone();
-    let read_track = next.clone();
+    let read_playing = Rc::new(Cell::new(true));
+    let read_track = Rc::new(Cell::new(false));
+    let current = Rc::clone(&read_playing);
+    let track = Rc::clone(&read_track);
     let registration = bus
         .register_object("/org/mpris/MediaPlayer2", &interface)
         .property(move |_, _, _, _, property| match property {

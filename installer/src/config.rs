@@ -657,7 +657,8 @@ impl Installer {
     }
 
     pub fn setup_gtk(&mut self) -> Result<()> {
-        let cursor = if self.selected("theme-extras") {
+        let theme_extras = self.selected("theme-extras");
+        let cursor = if theme_extras {
             "Bibata-Modern-Ice"
         } else {
             "Adwaita"
@@ -677,22 +678,22 @@ impl Installer {
             Some(0o644),
             true,
         )?;
-        if !self.selected("theme-extras") {
-            // Core uses the installed Papirus colors.
-        } else if !self.runner.available("papirus-folders") {
-            self.warn(format_args!(
-                "papirus-folders not found. Install papirus-folders-catppuccin-git to recolor folders."
-            ));
-        } else if self
-            .command(
-                "papirus-folders",
-                &["-C", "grey", "--theme", "Papirus-Dark"],
-            )
-            .is_err()
-        {
-            self.warn(format_args!(
-                "papirus-folders failed. Folder color was unchanged."
-            ));
+        if theme_extras {
+            if !self.runner.available("papirus-folders") {
+                self.warn(format_args!(
+                    "papirus-folders not found. Install papirus-folders-catppuccin-git to recolor folders."
+                ));
+            } else if self
+                .command(
+                    "papirus-folders",
+                    &["-C", "grey", "--theme", "Papirus-Dark"],
+                )
+                .is_err()
+            {
+                self.warn(format_args!(
+                    "papirus-folders failed. Folder color was unchanged."
+                ));
+            }
         }
         self.setup_tray_icons()?;
 

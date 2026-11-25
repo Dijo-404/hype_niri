@@ -128,24 +128,20 @@ window#waybar.hidden {
   padding: 0;
 }
 
-#custom-power {
-  /* The power glyph extends beyond its font's advance width. */
-  min-width: 33px;
-  padding-right: 3px;
-}
-
 #pulseaudio {
   font-size: 15.75px;
 }
 
 #custom-launcher,
 #custom-caffeine,
-#custom-power-profile,
-#custom-power {
+#custom-power-profile {
   font-size: 13.65px;
 }
 
 #custom-power {
+  /* The power glyph extends beyond its font's advance width. */
+  min-width: 33px;
+  padding-right: 3px;
   font-family: "JetBrainsMono Nerd Font", "Material Design Icons", sans-serif;
   font-size: 14.7px;
   font-weight: 700;
