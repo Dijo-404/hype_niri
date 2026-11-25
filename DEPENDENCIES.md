@@ -66,7 +66,7 @@ Selections are recorded in `~/.config/hype-niri/optional-groups`. Missing or emp
 
 Changing selections does not uninstall packages or stop previously enabled services. Existing running applications and personal package choices remain under the user's control. Review obsolete packages and services separately before removing them. Manual named phases explicitly request their operation; generic phases follow saved selections.
 
-The core uses Pacman packages. Yay is required when a selected missing requirement needs the AUR. Installed providers remain supported.
+Hype uses Pacman for Arch packages and Yay for AUR packages. Install and update workflows install `yay-bin` from the AUR if `yay` is missing. Installed providers remain supported.
 
 ## Remaining executable boundaries
 

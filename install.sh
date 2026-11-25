@@ -2,7 +2,7 @@
 hype_bootstrap() {
     set -Eeuo pipefail
     if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-        printf 'Usage: install.sh --setup-cli\n       install.sh [install | update] [--plain]\n       install.sh [--plain] --phase NAME\n\n--setup-cli installs the hype command in ~/.local/bin.\nRun as a regular Arch Linux user with sudo. yay is needed only for missing AUR packages.\n'
+        printf 'Usage: install.sh --setup-cli\n       install.sh [install | update] [--plain]\n       install.sh [--plain] --phase NAME\n\n--setup-cli installs the hype command in ~/.local/bin.\nRun as a regular Arch Linux user with sudo. The installer sets up yay when it is missing.\n'
         return 0
     fi
     local temporary="" source_dir="" source_origin=checkout here="${BASH_SOURCE[0]:-}" build_log="" cargo_host answer code=0

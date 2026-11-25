@@ -11,6 +11,10 @@ use std::{
 };
 
 pub type Phase = fn(&mut Installer) -> Result<()>;
+pub const PACKAGE_PHASES: &[(&str, Phase)] = &[
+    ("Upgrade Arch packages", Installer::update_system_packages),
+    ("Upgrade AUR packages", Installer::update_aur_packages),
+];
 pub const PHASES: &[(&str, Phase)] = &[
     ("Preflight checks", Installer::preflight),
     (
@@ -18,7 +22,8 @@ pub const PHASES: &[(&str, Phase)] = &[
         Installer::select_optional_groups,
     ),
     ("Mirror refresh", Installer::refresh_mirrors),
-    ("System upgrade", Installer::update_system_packages),
+    PACKAGE_PHASES[0],
+    PACKAGE_PHASES[1],
     ("Package installation", Installer::install_packages),
     ("Configuration backups", Installer::backup_configs),
     ("Configuration publication", Installer::copy_configs),
@@ -328,11 +333,9 @@ impl Installer {
         }
         self.write_system("/etc/pacman.d/mirrorlist", content.as_bytes(), 0o644)
     }
-    pub fn update_system_packages(&mut self) -> Result<()> {
-        if !self.confirm("Update Arch keyring and all system packages before installing?")? {
-            return Err(error(
-                "Required full system upgrade declined; installation stopped",
-            ));
+    fn update_system_packages(&mut self) -> Result<()> {
+        if !self.runner.available("pacman") {
+            return Err(error("This installer requires Arch Linux (pacman)"));
         }
         let log = tempfile::Builder::new()
             .prefix("hype-niri-upgrade-")
@@ -364,16 +367,14 @@ impl Installer {
 
     pub fn run_plain(&mut self, operation: &str) -> Result<()> {
         heading("Hype Niri · Arch Linux desktop setup", None);
-        println!("  Update Arch, install the desktop, and set up your chosen extras.");
+        println!("  Upgrade Arch and AUR packages, then apply the desktop and selected extras.");
+        println!("  Install yay from the AUR if it is missing.");
         println!("  Existing desktop configs require a backup before replacement.\n");
         if !self.confirm(&format!("Start {}?", operation.to_lowercase()))? {
             println!("{operation} cancelled");
             return Ok(());
         }
-        self.run_phases(|index, name| {
-            heading(name, Some((index + 1, PHASES.len())));
-            Ok(())
-        })?;
+        self.run_plain_phases(PHASES)?;
         heading(&format!("{operation} complete"), None);
         if let Some(backup) = &self.backup {
             println!("  Configuration backup: {}", backup.display());
@@ -392,8 +393,31 @@ impl Installer {
         Ok(())
     }
 
-    pub fn run_phases(&mut self, mut start: impl FnMut(usize, &str) -> Result<()>) -> Result<()> {
-        for (index, (name, run)) in PHASES.iter().enumerate() {
+    pub fn run_plain_package_update(&mut self) -> Result<()> {
+        heading("Update system packages", None);
+        println!("  Upgrade Arch and AUR packages. Install yay from the AUR if it is missing.");
+        if !self.confirm("Start the system package update?")? {
+            println!("Package update cancelled");
+            return Ok(());
+        }
+        self.run_plain_phases(PACKAGE_PHASES)?;
+        println!("Package update complete. Restart when ready if system components were upgraded.");
+        Ok(())
+    }
+
+    fn run_plain_phases(&mut self, phases: &[(&str, Phase)]) -> Result<()> {
+        self.run_phases(phases, |index, name| {
+            heading(name, Some((index + 1, phases.len())));
+            Ok(())
+        })
+    }
+
+    pub fn run_phases(
+        &mut self,
+        phases: &[(&str, Phase)],
+        mut start: impl FnMut(usize, &str) -> Result<()>,
+    ) -> Result<()> {
+        for (index, (name, run)) in phases.iter().enumerate() {
             start(index, name)?;
             run(self).map_err(|e| error(format!("Phase '{name}' failed: {e}")))?;
         }
@@ -453,7 +477,7 @@ mod tests {
     #[test]
     fn declined_upgrade_never_syncs_package_databases() {
         let (_root, mut i, calls) = fixture(false);
-        assert!(i.update_system_packages().is_err());
+        i.run_plain_package_update().unwrap();
         assert!(calls.borrow().is_empty());
     }
     #[test]

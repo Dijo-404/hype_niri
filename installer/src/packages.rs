@@ -2,6 +2,66 @@ use crate::{Installer, Result, error};
 use std::{collections::HashSet, fs, io::Write};
 
 impl Installer {
+    pub(crate) fn update_aur_packages(&mut self) -> Result<()> {
+        if !self.runner.available("yay") {
+            self.install_yay()?;
+        }
+        let log = tempfile::Builder::new()
+            .prefix("hype-niri-aur-upgrade-")
+            .suffix(".log")
+            .tempfile()?;
+        self.runner
+            .run_logged(
+                "yay",
+                &["-Syu", "--aur", "--noconfirm=false", "--confirm"],
+                log.path(),
+            )
+            .map_err(|cause| self.package_failure(log, &format!("AUR upgrade failed: {cause}")))
+    }
+
+    fn install_yay(&self) -> Result<()> {
+        self.note(format_args!(
+            "Installing yay from the Arch User Repository (yay-bin)"
+        ));
+        self.command("sudo", &["pacman", "-S", "--needed", "git", "base-devel"])?;
+        let staging = tempfile::Builder::new()
+            .prefix("hype-niri-yay-")
+            .tempdir()?;
+        let checkout = staging.path().join("yay-bin");
+        let checkout = crate::config::path_arg(&checkout)?;
+        self.command(
+            "git",
+            &[
+                "clone",
+                "--depth",
+                "1",
+                "--progress",
+                "--",
+                "https://aur.archlinux.org/yay-bin.git",
+                checkout,
+            ],
+        )?;
+        let log = tempfile::Builder::new()
+            .prefix("hype-niri-yay-build-")
+            .suffix(".log")
+            .tempfile()?;
+        if let Err(cause) = self.runner.run_logged(
+            "env",
+            &["--chdir", checkout, "makepkg", "-si", "--needed"],
+            log.path(),
+        ) {
+            return Err(
+                self.package_failure(log, &format!("Could not build and install yay: {cause}"))
+            );
+        }
+        if !self.runner.available("yay") {
+            return Err(error(
+                "The yay build did not put yay on PATH. Check the package install prompt and retry.",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn optional_package_groups(&self) -> Result<Vec<(String, Vec<String>)>> {
         optional_groups(&fs::read_to_string(
             self.source.join("optional-packages.txt"),

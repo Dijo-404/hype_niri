@@ -24,15 +24,15 @@ hype install --source "$PWD"
 
 Run the installer as your regular user with sudo access. It asks before refreshing mirrors, upgrading the system, replacing existing configurations, switching the display manager, setting lid-switch behavior, configuring networking, or changing your login shell. Declining the required system upgrade or a required backup stops the installation.
 
-In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Enter opens the review screen and `y` starts the operation. Use Page Up and Page Down to browse activity. The terminal switches to the native prompt when a tool such as `sudo`, `pacman`, or `yay` needs input.
+In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Press Enter to review, then Enter on **Start installation**. Use Page Up and Page Down to browse activity. The terminal switches to the native prompt when tools such as `sudo`, `pacman`, or `yay` need input.
 
-Run `hype update` from any directory to download GitHub `main` and review your saved extras. When there is no saved selection, the update starts with the core desktop. Add `--plain` to either command for line prompts. Run `./install.sh` from a checkout to open the action menu.
+Run `hype update` from any directory to choose a package update or a package and desktop update. Add `--plain` for line prompts. Run `./install.sh` from a checkout to open the action menu.
 
 > [!TIP]
 > Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.
 
 > [!NOTE]
-> The installer uses `pacman` for official repository packages and `yay` only for AUR packages. Install `yay` with your preferred method only when selected missing packages require the AUR; this installer does not clone AUR repos to bootstrap it.
+> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and the package install can prompt for sudo.
 
 ---
 
@@ -344,17 +344,17 @@ reboot
 
 ## Updating
 
-To pull the latest changes from the repository and apply them:
+To update from any directory, run:
 
 ```bash
-cd hype_niri
-git pull --ff-only
-./install.sh
+hype update
 ```
 
-The installer requires a full system upgrade before package installation and a backup before replacing existing user configurations. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
+Choose **Update system packages** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
 
-To update packages without re-running the script:
+Choose **Update packages and Hype Niri** to also download GitHub `main` into a temporary checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
+
+To run the package managers directly:
 
 ```bash
 sudo pacman -Syu

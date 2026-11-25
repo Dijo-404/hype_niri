@@ -43,7 +43,7 @@ Hype Niri is a set of dotfiles and an interactive installer for a Niri desktop o
 | **OS**       | Arch Linux with `pacman`, an interactive terminal, sudo access, and an internet connection for installation |
 | **Build**    | Git, `base-devel`, Rust and Cargo 1.92 or newer                                                             |
 | **Desktop**  | Niri, GTK4 4.24 or newer, `gtk4-layer-shell`, and `libpulse`                                                |
-| **Optional** | `yay` when a selected, missing package comes from the AUR. Hype Flow's Parakeet worker requires x86-64.     |
+| **Optional** | Hype Flow's Parakeet worker requires x86-64.                                                                |
 
 See the [core package list](pkglist.txt) for the complete package set.
 
@@ -58,7 +58,7 @@ hype install
 
 The bootstrap builds the Rust installer and adds `hype` to `~/.local/bin`. If that directory is outside your `PATH`, run `~/.local/bin/hype install`. The installer asks before upgrading Arch and before backing up and replacing existing configurations.
 
-Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, then `y` to apply. The default selection includes Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri.
+Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, then Enter on **Start installation**. Hype installs `yay` from the AUR if it is missing. The default extras include Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri.
 
 <details>
 <summary><b>Install from a local checkout</b></summary>
@@ -84,7 +84,9 @@ Run the updater from any directory.
 hype update
 ```
 
-Updates download GitHub `main` into a temporary checkout and preselect your saved extras. Review the selection before applying. Use `--plain` for line prompts.
+Choose **Update system packages** and press Enter to review, then Enter to start. Hype runs `sudo pacman -Syu` for Arch packages and `yay -Syu --aur` for AUR packages. Follow their prompts in the terminal.
+
+Choose **Update packages and Hype Niri** to also fetch the latest desktop files from GitHub `main` and review your saved extras. Use `--plain` for line prompts.
 
 ### Uninstalling
 

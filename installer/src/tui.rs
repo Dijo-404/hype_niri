@@ -5,7 +5,7 @@ use crossterm::{
 };
 use hype_install::{
     CommandOutput, Installer, ProcessRunner, Result, Runner,
-    core::{InstallLock, PHASES, runtime_directory},
+    core::{InstallLock, PACKAGE_PHASES, PHASES, Phase, runtime_directory},
     error,
 };
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
@@ -34,17 +34,35 @@ const REPOSITORY: &str = "https://github.com/Dijo-404/hype_niri.git";
 pub enum Action {
     Install,
     Update,
+    Packages,
 }
 
 impl Action {
     pub fn downloads_source(self, local_source: bool, fetched: bool) -> bool {
-        !fetched && (!local_source || self == Self::Update)
+        self != Self::Packages && !fetched && (!local_source || self == Self::Update)
+    }
+
+    fn phases(self) -> &'static [(&'static str, Phase)] {
+        if self == Self::Packages {
+            PACKAGE_PHASES
+        } else {
+            PHASES
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Install => "Install desktop",
+            Self::Update => "Update packages and Hype Niri",
+            Self::Packages => "Update system packages",
+        }
     }
 
     fn title(self) -> &'static str {
         match self {
             Self::Install => "Install",
             Self::Update => "Update",
+            Self::Packages => "Package update",
         }
     }
 }
@@ -104,28 +122,41 @@ pub fn run(
     let original = installer.source.clone();
     let installed = installer.user(".config/scripts/hype-control").is_file()
         || installer.user(".config/scripts/hype-control.sh").is_file();
-    let mut action = direct.unwrap_or(if installed {
-        Action::Update
+    let choices: &[Action] = if direct == Some(Action::Update) {
+        &[Action::Packages, Action::Update]
+    } else {
+        &[Action::Install, Action::Packages, Action::Update]
+    };
+    let mut action = if direct == Some(Action::Install) {
+        Action::Install
+    } else if installed || direct == Some(Action::Update) {
+        Action::Packages
     } else {
         Action::Install
-    });
+    };
     let ui = Rc::new(RefCell::new(Ui::new()?));
     installer.runner = Box::new(TuiRunner(ui.clone()));
 
     let mut latest = None;
-    let mut direct = direct.is_some();
+    let mut direct = direct == Some(Action::Install);
     loop {
         if !direct {
-            let Some(choice) = ui.borrow_mut().choose_action(action, installed)? else {
+            let Some(choice) = ui.borrow_mut().choose_action(action, choices)? else {
                 return Ok(());
             };
             action = choice;
         }
         direct = false;
+        ui.borrow_mut().action = action;
+        if action == Action::Packages {
+            if ui.borrow_mut().review(None)? {
+                break;
+            }
+            continue;
+        }
         let download = action.downloads_source(local_source, fetched);
         {
             let mut ui = ui.borrow_mut();
-            ui.action = action;
             ui.source = if download || fetched {
                 "GitHub main"
             } else {
@@ -173,10 +204,10 @@ pub fn run(
 
     let lock = runtime_directory().and_then(|directory| InstallLock::acquire(&directory));
     let result = match &lock {
-        Ok(_) => installer.run_phases(|index, name| {
+        Ok(_) => installer.run_phases(action.phases(), |index, name| {
             let mut ui = ui.borrow_mut();
             ui.phase = Some(index);
-            ui.working("Applying desktop setup", name)
+            ui.working(action.label(), name)
         }),
         Err(cause) => Err(error(cause.to_string())),
     };
@@ -200,7 +231,11 @@ pub fn run(
         return Err(cause);
     }
 
-    let mut summary = String::from("Reboot when ready, then select niri-session.");
+    let mut summary = if action == Action::Packages {
+        String::from("Restart when ready if system components were upgraded.")
+    } else {
+        String::from("Reboot when ready, then select niri-session.")
+    };
     if let Some(backup) = &installer.backup {
         summary.push_str(&format!("\nConfiguration backup: {}", backup.display()));
     }
@@ -209,7 +244,7 @@ pub fn run(
     }
     let reboot = {
         let mut ui = ui.borrow_mut();
-        ui.phase = Some(PHASES.len());
+        ui.phase = Some(action.phases().len());
         ui.finish(&format!("{} complete", action.title()), &summary, false)?
     };
     ui.borrow_mut().screen.leave()?;
@@ -413,18 +448,21 @@ impl Ui {
         self.draw(view::Page::Progress(view::Prompt::Working))
     }
 
-    fn choose_action(&mut self, mut action: Action, installed: bool) -> Result<Option<Action>> {
+    fn choose_action(&mut self, action: Action, choices: &[Action]) -> Result<Option<Action>> {
+        let mut selected = choices
+            .iter()
+            .position(|choice| *choice == action)
+            .unwrap_or(0);
         loop {
-            self.draw(view::Page::Actions { action, installed })?;
+            self.draw(view::Page::Actions { choices, selected })?;
             match self.screen.key(true)? {
-                Some(KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k')) => {
-                    action = if action == Action::Install {
-                        Action::Update
-                    } else {
-                        Action::Install
-                    };
+                Some(KeyCode::Tab | KeyCode::Down | KeyCode::Char('j')) => {
+                    selected = (selected + 1) % choices.len();
                 }
-                Some(KeyCode::Enter) => return Ok(Some(action)),
+                Some(KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k')) => {
+                    selected = (selected + choices.len() - 1) % choices.len();
+                }
+                Some(KeyCode::Enter) => return Ok(Some(choices[selected])),
                 Some(KeyCode::Esc | KeyCode::Char('q')) => return Ok(None),
                 _ => {}
             }
@@ -437,30 +475,25 @@ impl Ui {
         mut checked: Vec<bool>,
     ) -> Result<Option<Vec<String>>> {
         let mut cursor = 0;
-        let mut review = false;
         loop {
             self.draw(view::Page::Extras {
                 groups,
                 checked: &checked,
                 cursor,
-                review,
             })?;
             match self.screen.key(true)? {
-                Some(KeyCode::Char('y' | 'Y')) if review => {
-                    return Ok(Some(
-                        groups
-                            .iter()
-                            .zip(checked)
-                            .filter(|(_, check)| *check)
-                            .map(|((name, _), _)| name.clone())
-                            .collect(),
-                    ));
+                Some(KeyCode::Enter | KeyCode::Tab) => {
+                    let selected = groups
+                        .iter()
+                        .zip(&checked)
+                        .filter(|(_, check)| **check)
+                        .map(|((name, _), _)| name.clone())
+                        .collect::<Vec<_>>();
+                    if self.review(Some(&selected))? {
+                        return Ok(Some(selected));
+                    }
                 }
-                Some(KeyCode::Enter) if review => {}
-                Some(KeyCode::Enter) => review = true,
-                Some(KeyCode::Esc | KeyCode::Char('q')) if review => review = false,
                 Some(KeyCode::Esc | KeyCode::Char('q')) => return Ok(None),
-                Some(_) if review => {}
                 Some(KeyCode::Up | KeyCode::Char('k')) => cursor = cursor.saturating_sub(1),
                 Some(KeyCode::Down | KeyCode::Char('j')) => {
                     cursor = (cursor + 1).min(groups.len() - 1)
@@ -468,6 +501,19 @@ impl Ui {
                 Some(KeyCode::Char(' ')) => checked[cursor] = !checked[cursor],
                 Some(KeyCode::Char('a')) => checked.fill(true),
                 Some(KeyCode::Char('n')) => checked.fill(false),
+                _ => {}
+            }
+        }
+    }
+
+    fn review(&mut self, extras: Option<&[String]>) -> Result<bool> {
+        loop {
+            self.draw(view::Page::Review { extras })?;
+            match self.screen.key(true)? {
+                Some(KeyCode::Enter | KeyCode::Char('y' | 'Y')) => return Ok(true),
+                Some(KeyCode::Esc | KeyCode::BackTab | KeyCode::Char('q' | 'n' | 'N')) => {
+                    return Ok(false);
+                }
                 _ => {}
             }
         }
@@ -658,7 +704,12 @@ impl Runner for TuiRunner {
     }
 
     fn run_logged(&self, program: &str, args: &[&str], log: &Path) -> Result<()> {
-        let phase = self.0.borrow().phase.map(|index| PHASES[index].0);
+        let ui = self.0.borrow();
+        let phase = ui
+            .phase
+            .and_then(|index| ui.action.phases().get(index))
+            .map(|entry| entry.0);
+        drop(ui);
         self.terminal_command(program, || {
             if let Some(phase) = phase {
                 eprintln!("\nHype Niri  /  {phase}");

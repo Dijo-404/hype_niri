@@ -1,5 +1,5 @@
 use super::{Action, Ui};
-use hype_install::core::PHASES;
+use hype_install::core::Phase;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Rect},
@@ -10,14 +10,16 @@ use ratatui::{
 
 pub(super) enum Page<'a> {
     Actions {
-        action: Action,
-        installed: bool,
+        choices: &'a [Action],
+        selected: usize,
     },
     Extras {
         groups: &'a [(String, Vec<String>)],
         checked: &'a [bool],
         cursor: usize,
-        review: bool,
+    },
+    Review {
+        extras: Option<&'a [String]>,
     },
     Progress(Prompt<'a>),
 }
@@ -98,48 +100,83 @@ impl Ui {
             let area = frame.area();
             frame.render_widget(Block::new().style(theme.surface(GRAPHITE)), area);
             if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-                frame.render_widget(Paragraph::new("Resize to 44 × 16 or press Esc.")
-                    .wrap(Wrap { trim: true }), area);
+                frame.render_widget(
+                    Paragraph::new("Resize to 44 × 16 or press Esc.").wrap(Wrap { trim: true }),
+                    area,
+                );
                 return;
             }
             let [top, body, footer] = Layout::vertical([
-                Constraint::Length(3), Constraint::Min(0), Constraint::Length(2),
-            ]).areas(area.inner(Margin::new(1, 0)));
+                Constraint::Length(3),
+                Constraint::Min(0),
+                Constraint::Length(2),
+            ])
+            .areas(area.inner(Margin::new(1, 0)));
             let section = match &page {
+                Page::Actions { choices, .. } if !choices.contains(&Action::Install) => "Update",
                 Page::Actions { .. } => "Desktop setup",
-                Page::Extras { .. } | Page::Progress(_) => action.title(),
+                _ => action.title(),
             };
             header(frame, top, theme, section);
             let keys = match page {
-                Page::Actions { action, installed } => {
-                    actions(frame, body, theme, action, installed);
-                    "↑↓ / Tab  Choose     Enter  Open     Esc  Quit"
+                Page::Actions { choices, selected } => {
+                    actions(frame, body, theme, choices, selected);
+                    "↑↓  Choose     Enter  Continue     Esc  Quit"
                 }
-                Page::Extras { groups, checked, cursor, review } => {
-                    Extras { action: *action, source, groups, checked, cursor, review }
-                        .draw(frame, body, theme);
-                    if review {
-                        "y  Apply     Esc  Edit extras"
-                    } else if area.width >= 71 {
-                        "↑↓  Move     Space  Toggle     a/n  All/none     Enter  Review     Esc  Back"
-                    } else {
-                        "↑↓ Space Toggle  a/n All/none  Enter Review"
+                Page::Extras {
+                    groups,
+                    checked,
+                    cursor,
+                } => {
+                    let [instruction, body] =
+                        Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(body);
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::styled(" Enter ", theme.selection()),
+                            Span::raw("  Continue to review"),
+                        ])),
+                        instruction,
+                    );
+                    Extras {
+                        groups,
+                        checked,
+                        cursor,
                     }
+                    .draw(frame, body, theme);
+                    "↑↓  Move     Space  Toggle     a/n  All/none     Esc  Back"
+                }
+                Page::Review { extras } => {
+                    draw_review(frame, body, theme, *action, source, extras);
+                    "Enter  Start     Esc  Back"
                 }
                 Page::Progress(prompt) => {
-                    let progress = Progress { phase: *phase, logs, scroll: *scroll, title, message, prompt };
+                    let progress = Progress {
+                        phase: *phase,
+                        steps: action.phases(),
+                        logs,
+                        scroll: *scroll,
+                        title,
+                        message,
+                        prompt,
+                    };
                     progress.draw(frame, body, theme);
                     match prompt {
-                        Prompt::Confirm(..) => "←→  Choose     Enter  Confirm     y/n  Answer",
+                        Prompt::Confirm(..) => {
+                            "←→ / Tab  Choose     Enter  Confirm     y/n  Answer"
+                        }
                         Prompt::Input(..) => "Enter  Submit     Esc  Stop",
                         Prompt::Working => "PgUp/PgDn  Logs     End  Latest",
                         Prompt::Finished(true) => "Enter / q  Close     PgUp/PgDn  Logs",
-                        Prompt::Finished(false) => "Enter / q  Close    r  Reboot    PgUp/PgDn  Logs",
+                        Prompt::Finished(false) => {
+                            "Enter / q  Close    r  Reboot    PgUp/PgDn  Logs"
+                        }
                     }
                 }
             };
             frame.render_widget(
-                Paragraph::new(format!(" {keys}")).style(theme.fg(MUTED)).wrap(Wrap { trim: true }),
+                Paragraph::new(format!(" {keys}"))
+                    .style(theme.fg(MUTED))
+                    .wrap(Wrap { trim: true }),
                 footer,
             );
         })?;
@@ -174,17 +211,14 @@ fn columns(area: Rect, stacked: u16, sidebar: u16) -> [Rect; 2] {
     }
 }
 
-fn actions(frame: &mut Frame<'_>, area: Rect, theme: Theme, action: Action, installed: bool) {
+fn actions(frame: &mut Frame<'_>, area: Rect, theme: Theme, choices: &[Action], selected: usize) {
     let area = Rect {
         height: area.height.min(12),
         ..area
     };
-    let [menu, detail] = columns(area, 4, 29);
-    let mut state = ListState::default().with_selected(Some(usize::from(action == Action::Update)));
-    let items = [
-        ListItem::new(" Install desktop "),
-        ListItem::new(" Update desktop "),
-    ];
+    let [menu, detail] = columns(area, choices.len() as u16 + 2, 37);
+    let mut state = ListState::default().with_selected(Some(selected));
+    let items = choices.iter().map(|choice| ListItem::new(choice.label()));
     frame.render_stateful_widget(
         List::new(items)
             .block(theme.panel(" Actions ", true))
@@ -193,35 +227,86 @@ fn actions(frame: &mut Frame<'_>, area: Rect, theme: Theme, action: Action, inst
         menu,
         &mut state,
     );
-    let (title, explanation, extras) = match action {
+    let (title, explanation, extra) = match choices[selected] {
         Action::Install => (
             "Set up your desktop",
             "Install Niri, Waybar, and the notch.",
-            "All extras selected by default.",
+            "Review extras before installing.",
         ),
         Action::Update => (
-            "Refresh your desktop",
-            "Fetch the latest source from GitHub.",
-            "Saved extras selected by default.",
+            "System and desktop update",
+            "Upgrade Arch and AUR packages.",
+            "Refresh Hype Niri and your extras.",
+        ),
+        Action::Packages => (
+            "System package update",
+            "Upgrade installed Arch packages.",
+            "Upgrade installed AUR packages.",
         ),
     };
     let lines = vec![
         Line::from(title).style(theme.fg(INK).bold()),
         Line::from(explanation),
-        Line::from(extras),
-        Line::from(""),
-        Line::from("Back up configs before replacement.").style(theme.fg(MUTED)),
+        Line::from(extra),
     ];
-    let status = if installed {
-        " Hype Niri detected "
-    } else {
-        " Desktop setup "
-    };
     frame.render_widget(
         Paragraph::new(lines)
-            .block(theme.panel(status, false))
+            .block(theme.panel(" What changes ", false))
             .wrap(Wrap { trim: true }),
         detail,
+    );
+}
+
+fn draw_review(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: Theme,
+    action: Action,
+    source: &str,
+    extras: Option<&[String]>,
+) {
+    let (title, start) = match action {
+        Action::Install => ("Review install", "Start installation"),
+        Action::Update => ("Review update", "Update packages and Hype Niri"),
+        Action::Packages => ("Review package update", "Update system packages"),
+    };
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(" Enter ", theme.selection()),
+            Span::styled(format!("  {start}"), theme.fg(LILAC).bold()),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Arch packages  ", theme.fg(INK).bold()),
+            Span::raw("sudo pacman -Syu"),
+        ]),
+        Line::from(vec![
+            Span::styled("AUR packages   ", theme.fg(INK).bold()),
+            Span::raw("yay -Syu --aur"),
+        ]),
+        Line::from("Install yay from the AUR if missing."),
+    ];
+    if let Some(extras) = extras {
+        lines.push(Line::from("Back up configs before replacement."));
+        lines.push(
+            Line::from(format!("{source} / {} extras selected", extras.len()))
+                .style(theme.fg(MUTED)),
+        );
+        if !extras.is_empty() {
+            let names = extras
+                .iter()
+                .map(|name| group_label(name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(Line::from(names).style(theme.fg(MUTED)));
+        }
+    }
+    lines.push(Line::from("Follow the package prompts as they appear.").style(theme.fg(MUTED)));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(theme.panel(format!(" {title} "), true))
+            .wrap(Wrap { trim: true }),
+        area,
     );
 }
 
@@ -251,23 +336,17 @@ fn group_label(name: &str) -> String {
 }
 
 struct Extras<'a> {
-    action: Action,
-    source: &'a str,
     groups: &'a [(String, Vec<String>)],
     checked: &'a [bool],
     cursor: usize,
-    review: bool,
 }
 
 impl Extras<'_> {
     fn draw(self, frame: &mut Frame<'_>, area: Rect, theme: Theme) {
         let Self {
-            action,
-            source,
             groups,
             checked,
             cursor,
-            review,
         } = self;
         let list_height = (area.height / 2).max(4);
         let [list, details] = columns(area, list_height, 34);
@@ -279,7 +358,7 @@ impl Extras<'_> {
         let mut state = ListState::default().with_selected(Some(cursor));
         frame.render_stateful_widget(
             List::new(items)
-                .block(theme.panel(format!(" Extras {count}/{} ", groups.len()), !review))
+                .block(theme.panel(format!(" Extras {count}/{} ", groups.len()), true))
                 .highlight_style(theme.selection())
                 .highlight_symbol("› "),
             list,
@@ -287,55 +366,31 @@ impl Extras<'_> {
         );
 
         let (name, packages) = &groups[cursor];
-        let (title, lines) = if review {
-            let title = format!(" Review {} ", action.title().to_lowercase());
-            let mut lines = vec![
-                Line::from(format!("{source}  /  {count} extras selected"))
-                    .style(theme.fg(LILAC).bold()),
-                Line::from("Full Arch package upgrade required."),
-                Line::from("Back up configs before replacement."),
-            ];
-            let selection = groups
-                .iter()
-                .zip(checked)
-                .filter(|(_, check)| **check)
-                .map(|((name, _), _)| group_label(name))
-                .collect::<Vec<_>>();
-            if !selection.is_empty() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(selection.join(", ")).style(theme.fg(MUTED)));
-            }
-            (title, lines)
+        let state = if checked[cursor] {
+            "Selected"
         } else {
-            let state = if checked[cursor] {
-                "Selected"
-            } else {
-                "Available"
-            };
-            let package_label = if packages.len() == 1 {
-                "package"
-            } else {
-                "packages"
-            };
-            let mut lines = vec![
-                Line::from(format!("{state}  /  {} {package_label}", packages.len()))
-                    .style(theme.fg(LILAC).bold()),
-                Line::from(""),
-            ];
-            lines.extend(
-                packages
-                    .chunks(if details.width >= 55 { 3 } else { 2 })
-                    .map(|row| Line::from(row.join("  "))),
-            );
-            lines.push(Line::from(""));
-            lines.push(
-                Line::from("Core desktop packages are always included.").style(theme.fg(MUTED)),
-            );
-            (format!(" {} ", group_label(name)), lines)
+            "Available"
         };
+        let package_label = if packages.len() == 1 {
+            "package"
+        } else {
+            "packages"
+        };
+        let mut lines = vec![
+            Line::from(format!("{state}  /  {} {package_label}", packages.len()))
+                .style(theme.fg(LILAC).bold()),
+            Line::from(""),
+        ];
+        lines.extend(
+            packages
+                .chunks(if details.width >= 55 { 3 } else { 2 })
+                .map(|row| Line::from(row.join("  "))),
+        );
+        lines.push(Line::from(""));
+        lines.push(Line::from("Core desktop packages are always included.").style(theme.fg(MUTED)));
         frame.render_widget(
             Paragraph::new(lines)
-                .block(theme.panel(title, review))
+                .block(theme.panel(format!(" {} ", group_label(name)), false))
                 .wrap(Wrap { trim: true }),
             details,
         );
@@ -344,6 +399,7 @@ impl Extras<'_> {
 
 struct Progress<'a> {
     phase: Option<usize>,
+    steps: &'static [(&'static str, Phase)],
     logs: &'a std::collections::VecDeque<(String, bool)>,
     scroll: usize,
     title: &'a str,
@@ -363,8 +419,8 @@ impl Progress<'_> {
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
         frame.render_widget(
             Gauge::default()
-                .ratio(completed as f64 / PHASES.len() as f64)
-                .label(format!(" {completed:02} / {} ", PHASES.len()))
+                .ratio(completed as f64 / self.steps.len() as f64)
+                .label(format!(" {completed:02} / {} ", self.steps.len()))
                 .gauge_style(theme.fg(if failed { AMBER } else { MINT }).bold()),
             meter,
         );
@@ -372,7 +428,8 @@ impl Progress<'_> {
             && let Some(current) = self.phase
         {
             let start = current.saturating_sub(phases.height.saturating_sub(1) as usize);
-            let items = PHASES
+            let items = self
+                .steps
                 .iter()
                 .enumerate()
                 .skip(start)

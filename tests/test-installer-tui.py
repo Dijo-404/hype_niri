@@ -40,7 +40,7 @@ def screen_text(output):
             column = 0
         elif character == "\n":
             row = min(row + 1, ROWS - 1)
-        elif character.isprintable() and row < ROWS and column < COLUMNS:
+        elif character and character.isprintable() and row < ROWS and column < COLUMNS:
             screen[row][column] = character
             column += 1
     return "\n".join("".join(line).rstrip() for line in screen)
@@ -169,6 +169,8 @@ exit 78
         process, slave, original = self.start(
             "update", executable=launcher, source=None
         )
+        self.expect("Update packages and Hype Niri")
+        self.send(b"\x1b[B\r")
         self.expect("Extras 2/")
         self.expect("[x] Firefox")
         self.expect("[x] Docker")
@@ -177,7 +179,7 @@ exit 78
         self.send(b"\x1b")
         self.expect("Space  Toggle")
         self.send(b"q")
-        self.expect("Install desktop")
+        self.expect("Update system packages")
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 0)
         self.assertEqual(termios.tcgetattr(slave), original)
@@ -231,13 +233,10 @@ exit 78
         self.expect("Space  Toggle")
         self.send(b"n\r")
         self.expect("Review install")
-        self.send(b"\r")
         self.assertFalse(self.calls.exists())
-        self.send(b"y")
+        self.send(b"\r")
         self.expect("Refresh Arch mirrors")
-        self.send(b"n")
-        self.expect("Update Arch keyring")
-        self.send(b"y")
+        self.send(b"\r")
         self.expect("Native package confirmation")
         self.assertEqual(termios.tcgetattr(slave), original)
         self.send(b"terminal answer\r")
@@ -249,6 +248,62 @@ exit 78
             "sudo pacman -Sy --needed archlinux-keyring [terminal answer]",
             self.calls.read_text(),
         )
+
+    def test_system_update_runs_pacman_and_yay_without_desktop_checkout(self):
+        self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
+        self.tool("yay", 'printf "yay %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
+        process, _, _ = self.start("update", source=None)
+        self.expect("Update system packages")
+        self.send(b"\r")
+        self.expect("Review package update")
+        self.assertFalse(self.calls.exists())
+        self.send(b"\r")
+        self.expect("Package update complete")
+        self.send(b"q")
+        self.assertEqual(process.wait(timeout=5), 0)
+        self.assertEqual(
+            self.calls.read_text().splitlines(),
+            [
+                "sudo pacman -Sy --needed archlinux-keyring",
+                "sudo pacman -Syu",
+                "yay -Syu --aur --noconfirm=false --confirm",
+            ],
+        )
+
+    def test_first_install_bootstraps_missing_yay_as_regular_user(self):
+        self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
+        self.tool(
+            "git",
+            """printf 'git %s\\n' "$*" >> "$HYPE_TEST_CALLS"
+/usr/bin/mkdir -- "${@: -1}"
+""",
+        )
+        self.tool(
+            "env",
+            """[[ $1 == --chdir && -d $2 ]]
+shift 2
+printf '%s (uid %s)\\n' "$*" "$EUID" >> "$HYPE_TEST_CALLS"
+/usr/bin/cp "$PATH/yay-stub" "$PATH/yay"
+""",
+        )
+        self.tool("yay-stub", 'printf "yay %s\\n" "$*" >> "$HYPE_TEST_CALLS"\nexit 15')
+        process, _, _ = self.start("install")
+        self.expect("Continue to review")
+        self.send(b"n\r")
+        self.expect("Start installation")
+        self.send(b"\r")
+        self.expect("Refresh Arch mirrors")
+        self.send(b"\r")
+        self.expect("Install failed")
+        self.send(b"q")
+        self.assertEqual(process.wait(timeout=5), 1)
+        calls = self.calls.read_text().splitlines()
+        self.assertEqual(calls[-5], "sudo pacman -Syu")
+        self.assertEqual(calls[-4], "sudo pacman -S --needed git base-devel")
+        self.assertIn("https://aur.archlinux.org/yay-bin.git", calls[-3])
+        self.assertEqual(calls[-2], f"makepkg -si --needed (uid {os.geteuid()})")
+        self.assertEqual(calls[-1], "yay -Syu --aur --noconfirm=false --confirm")
+        self.assertFalse(list(self.root.glob("hype-niri-yay-*")))
 
 
 if __name__ == "__main__":

@@ -125,7 +125,7 @@ fn entry() -> Result<()> {
     let options = parse(&args.collect::<Vec<_>>())?;
     if options.mode == Mode::Help {
         println!(
-            "Usage: hype install [--source REPOSITORY] [--plain]\n       hype update [--plain]\n       hype-install [--source REPOSITORY] [--phase NAME] [--plain]\n       hype-install --setup-cli\n       hype-install --setup-oomd REPOSITORY\n       sudo hype-install --install-stealth PAYLOAD\n\ninstall    Open the installer checklist\nupdate     Fetch GitHub main and review saved extras\n--plain    Use line prompts\n\nPhases: packages user-dirs desktop-integrations lazyvim tray-icons docker-socket backup configs gtk shell system logind firewall warp stealth validate\nRun interactively as a regular Arch Linux user with sudo. yay is needed only for missing AUR packages."
+            "Usage: hype install [--source REPOSITORY] [--plain]\n       hype update [--plain]\n       hype-install [--source REPOSITORY] [--phase NAME] [--plain]\n       hype-install --setup-cli\n       hype-install --setup-oomd REPOSITORY\n       sudo hype-install --install-stealth PAYLOAD\n\ninstall    Open the installer checklist\nupdate     Upgrade Arch and AUR packages with an optional desktop refresh\n--plain    Use line prompts\n\nPhases: packages user-dirs desktop-integrations lazyvim tray-icons docker-socket backup configs gtk shell system logind firewall warp stealth validate\nRun interactively as a regular Arch Linux user with sudo. The installer sets up yay when it is missing."
         );
         return Ok(());
     }
@@ -184,14 +184,22 @@ fn entry() -> Result<()> {
             if !options.plain && tui::available() {
                 return tui::run(installer, direct, local_source, fetched);
             }
-            let action = direct.unwrap_or(tui::Action::Install);
+            let action = if direct == Some(tui::Action::Update)
+                && !installer.confirm("Also refresh Hype Niri desktop files?")?
+            {
+                tui::Action::Packages
+            } else {
+                direct.unwrap_or(tui::Action::Install)
+            };
             let _staging = if action.downloads_source(local_source, fetched) {
                 Some(tui::fetch_latest(&mut installer)?)
             } else {
                 None
             };
             let _lock = InstallLock::acquire(&runtime_directory()?)?;
-            if action == tui::Action::Update {
+            if action == tui::Action::Packages {
+                installer.run_plain_package_update()
+            } else if action == tui::Action::Update {
                 let groups = installer.optional_package_groups()?;
                 installer.optional_groups = Some(tui::update_defaults(&installer, &groups)?);
                 installer.run_plain("Update")
