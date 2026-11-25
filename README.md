@@ -49,14 +49,20 @@ See the [core package list](pkglist.txt) for the complete package set.
 
 ## Installation
 
-Run the bootstrap from an interactive terminal as your regular user with sudo access.
+Copy the whole block into an interactive Bash or Zsh terminal as your regular user with sudo access.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli
+(
+  set -o pipefail
+  curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli
+) &&
+export PATH="$HOME/.local/bin:$PATH" &&
 hype install
 ```
 
-The bootstrap builds the Rust installer and adds `hype` to `~/.local/bin`. If that directory is outside your `PATH`, run `~/.local/bin/hype install`. The installer asks before upgrading Arch and before backing up and replacing existing configurations.
+The bootstrap builds the Rust installer and places `hype` in `~/.local/bin`. The `export` makes `hype` available in the current terminal. If a new terminal reports `hype: command not found`, run `~/.local/bin/hype` with the same arguments or add `~/.local/bin` to your shell's `PATH` in its startup file.
+
+The installer asks before upgrading Arch and before backing up and replacing existing configurations.
 
 Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, then Enter on **Start installation**. Hype installs `yay` from the AUR if it is missing. The default extras include Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri.
 
@@ -66,9 +72,10 @@ Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a 
 <br/>
 
 ```bash
-git clone https://github.com/Dijo-404/hype_niri.git
-cd hype_niri
-./install.sh --setup-cli
+git clone https://github.com/Dijo-404/hype_niri.git &&
+cd hype_niri &&
+./install.sh --setup-cli &&
+export PATH="$HOME/.local/bin:$PATH" &&
 hype install --source "$PWD"
 ```
 
