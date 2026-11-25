@@ -91,6 +91,31 @@ const WAYBAR_COMPATIBILITY: &[&str] = &[
 ];
 
 impl Installer {
+    pub fn publish_cli(&self, binary: &Path) -> Result<PathBuf> {
+        let launcher = self.user(".local/bin/hype");
+        let installed = self
+            .home
+            .canonicalize()?
+            .join(".local/share/hype-niri/hype-install");
+        let registered = match metadata(&launcher)? {
+            None => false,
+            Some(entry) if entry.is_symlink() && fs::read_link(&launcher)? == installed => true,
+            Some(_) => {
+                return Err(error(format!(
+                    "Another command already uses {}",
+                    launcher.display()
+                )));
+            }
+        };
+        self.prepare_user_directory(".local/share/hype-niri")?;
+        self.prepare_user_directory(".local/bin")?;
+        copy_regular(binary, &installed, Some(0o755), true)?;
+        if !registered {
+            symlink(&installed, &launcher)?;
+        }
+        Ok(launcher)
+    }
+
     pub fn backup_configs(&mut self) -> Result<()> {
         let targets = [
             ".zshrc",
@@ -122,7 +147,7 @@ impl Installer {
             }
         }
         if existing.is_empty() {
-            println!("No existing configs to back up");
+            self.note(format_args!("No existing configs to back up"));
             return Ok(());
         }
         if !self.confirm("Back up existing configs before replacing them?")? {
@@ -136,7 +161,7 @@ impl Installer {
             copy_entry(&self.home.join(&target), &destination, false)
                 .map_err(|err| error(format!("Could not back up {}: {err}", target.display())))?;
         }
-        println!("Backup saved to {}", backup.display());
+        self.note(format_args!("Backup saved to {}", backup.display()));
         Ok(())
     }
 
@@ -158,7 +183,7 @@ impl Installer {
         if let Some(build) = &self.build_dir {
             return Ok(build.path().to_owned());
         }
-        println!("Building native Rust desktop programs");
+        self.note(format_args!("Building native Rust desktop programs"));
         let build = self.build_rust(
             &[
                 "--package",
@@ -369,7 +394,7 @@ impl Installer {
                 _ => {}
             }
             replace_directory(&staged, &config.join(dir))?;
-            println!("Copied {dir} to ~/.config/{dir}");
+            self.note(format_args!("Copied {dir} to ~/.config/{dir}"));
         }
 
         for name in LEGACY_CONTROLS.iter().copied().chain(["notch"]) {
@@ -387,17 +412,25 @@ impl Installer {
 
         self.setup_user_dirs()?;
         if fs::symlink_metadata(self.user("Drives")).is_ok_and(|metadata| metadata.is_dir()) {
-            adopt_lowercase_dir(&self.user("Drives"), &self.user("drives"))?;
+            adopt_lowercase_dir(self, &self.user("Drives"), &self.user("drives"))?;
         }
         let pictures = self.prepare_user_directory("pictures")?;
-        adopt_lowercase_dir(&pictures.join("Screenshots"), &pictures.join("screenshots"))?;
-        adopt_lowercase_dir(&pictures.join("Wallpapers"), &pictures.join("wallpapers"))?;
+        adopt_lowercase_dir(
+            self,
+            &pictures.join("Screenshots"),
+            &pictures.join("screenshots"),
+        )?;
+        adopt_lowercase_dir(
+            self,
+            &pictures.join("Wallpapers"),
+            &pictures.join("wallpapers"),
+        )?;
         let wallpapers = self.prepare_user_directory("pictures/wallpapers")?;
         let source = self.source.join("wallpapers");
         if source.is_dir() {
             copy_contents(&source, &wallpapers, true)?;
         } else {
-            eprintln!("No wallpapers found in source directory");
+            self.warn(format_args!("No wallpapers found in source directory"));
         }
 
         let pointer = self
@@ -407,7 +440,9 @@ impl Installer {
             if let Some(wallpaper) = first_wallpaper(&wallpapers)? {
                 write_symlink(&wallpaper, &pointer)?;
             } else {
-                eprintln!("No wallpaper available to seed current_wallpaper");
+                self.warn(format_args!(
+                    "No wallpaper available to seed current_wallpaper"
+                ));
             }
         }
         self.save_optional_groups()?;
@@ -452,17 +487,19 @@ impl Installer {
                 let configured =
                     Path::new(output.stdout.trim_end_matches('\n').trim_end_matches('/'));
                 if configured.parent() == Some(self.home.as_path()) {
-                    adopt_lowercase_dir(configured, &target)?;
+                    adopt_lowercase_dir(self, configured, &target)?;
                 }
             }
 
-            adopt_lowercase_dir(&self.user(legacy), &target)?;
+            adopt_lowercase_dir(self, &self.user(legacy), &target)?;
             if can_set {
                 self.command("xdg-user-dirs-update", &["--set", name, path_arg(&target)?])?;
             }
         }
         if !can_set {
-            eprintln!("xdg-user-dirs-update not found; created lowercase directories");
+            self.warn(format_args!(
+                "xdg-user-dirs-update not found; created lowercase directories"
+            ));
         }
         Ok(())
     }
@@ -475,7 +512,7 @@ impl Installer {
         if fs::read_to_string(config.join("lua/config/lazy.lua"))
             .is_ok_and(|contents| contents.contains("LazyVim/LazyVim"))
         {
-            println!("Existing LazyVim configuration retained");
+            self.note(format_args!("Existing LazyVim configuration retained"));
             return Ok(());
         }
 
@@ -504,10 +541,15 @@ impl Installer {
             let backup = self.backup_directory()?.join(".config/nvim");
             fs::create_dir_all(backup.parent().unwrap())?;
             copy_entry(&config, &backup, false)?;
-            println!("Backed up Neovim configuration to {}", backup.display());
+            self.note(format_args!(
+                "Backed up Neovim configuration to {}",
+                backup.display()
+            ));
         }
         replace_directory(&staged, &config)?;
-        println!("LazyVim installed. Open nvim to download plugins, then run :LazyHealth.");
+        self.note(format_args!(
+            "LazyVim installed. Open nvim to download plugins, then run :LazyHealth."
+        ));
         Ok(())
     }
 
@@ -519,7 +561,9 @@ impl Installer {
                 .is_file()
             && !self.user(&format!(".zsh/{plugin}")).is_file()
         {
-            eprintln!("fzf-tab not found. Check the shell-extras group in optional-packages.txt.");
+            self.warn(format_args!(
+                "fzf-tab not found. Check the shell-extras group in optional-packages.txt."
+            ));
         }
 
         for dotfile in [".zshrc", ".p10k.zsh"] {
@@ -535,10 +579,12 @@ impl Installer {
             .file_name()
             .is_some_and(|name| name == "zsh")
         {
-            println!("Zsh is already the default shell");
+            self.note(format_args!("Zsh is already the default shell"));
         } else if self.confirm("Change default shell to zsh?")? {
             self.command("chsh", &["-s", "/usr/bin/zsh"])?;
-            println!("Default shell changed to zsh. Log out and back in for this to take effect.");
+            self.note(format_args!(
+                "Default shell changed to zsh. Log out and back in for this to take effect."
+            ));
         }
         Ok(())
     }
@@ -567,9 +613,9 @@ impl Installer {
         if !self.selected("theme-extras") {
             // Core uses the installed Papirus colors.
         } else if !self.runner.available("papirus-folders") {
-            eprintln!(
+            self.warn(format_args!(
                 "papirus-folders not found. Install papirus-folders-catppuccin-git to recolor folders."
-            );
+            ));
         } else if self
             .command(
                 "papirus-folders",
@@ -577,15 +623,17 @@ impl Installer {
             )
             .is_err()
         {
-            eprintln!("papirus-folders failed. Folder color was unchanged.");
+            self.warn(format_args!(
+                "papirus-folders failed. Folder color was unchanged."
+            ));
         }
         self.setup_tray_icons()?;
 
         let dconf = self.runner.available("dconf");
         if !dconf && !self.runner.available("gsettings") {
-            eprintln!(
+            self.warn(format_args!(
                 "Neither dconf nor gsettings found. GTK settings.ini files will still apply."
-            );
+            ));
             return Ok(());
         }
         for (key, value) in [
@@ -619,9 +667,9 @@ impl Installer {
                 )
             };
             if !output.is_ok_and(|output| output.success()) {
-                eprintln!(
+                self.warn(format_args!(
                     "Could not apply all desktop theme settings. GTK settings.ini files will still apply."
-                );
+                ));
                 break;
             }
         }
@@ -674,7 +722,7 @@ impl Installer {
                 .command("gtk-update-icon-cache", &["-f", "-t", path_arg(&theme)?])
                 .is_err()
         {
-            eprintln!("Could not refresh the user icon cache");
+            self.warn(format_args!("Could not refresh the user icon cache"));
         }
         Ok(())
     }
@@ -720,17 +768,19 @@ impl Installer {
                 )
                 .is_err()
             {
-                eprintln!(
+                self.warn(format_args!(
                     "Could not enable Bluetooth pairing dialogs. Run gsettings set org.blueman.general notification-daemon false."
-                );
+                ));
             }
         }
         if let Err(err) = self.set_default_browser() {
-            eprintln!("Could not set the default browser: {err}");
+            self.warn(format_args!("Could not set the default browser: {err}"));
         }
         self.remove_stale_audio_service()?;
         if let Err(err) = self.configure_file_indexing() {
-            eprintln!("Could not configure file indexing exclusions: {err}");
+            self.warn(format_args!(
+                "Could not configure file indexing exclusions: {err}"
+            ));
         }
         if user_manager_running {
             self.command("systemctl", &["--user", "daemon-reload"])?;
@@ -772,7 +822,9 @@ impl Installer {
             remove_file(&wants.join("audio-jack-switch.service"))?;
         }
         remove_file(&unit)?;
-        println!("Removed obsolete audio jack service. WirePlumber handles routing.");
+        self.note(format_args!(
+            "Removed obsolete audio jack service. WirePlumber handles routing."
+        ));
         Ok(())
     }
 
@@ -1120,17 +1172,21 @@ fn remove_entry(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn adopt_lowercase_dir(legacy: &Path, target: &Path) -> io::Result<()> {
+fn adopt_lowercase_dir(installer: &Installer, legacy: &Path, target: &Path) -> io::Result<()> {
     if legacy != target && metadata(legacy)?.is_some_and(|metadata| metadata.is_dir()) {
         if metadata(target)?.is_none() {
             fs::rename(legacy, target)?;
-            println!("Renamed {} to {}", legacy.display(), target.display());
+            installer.note(format_args!(
+                "Renamed {} to {}",
+                legacy.display(),
+                target.display()
+            ));
         } else if fs::remove_dir(legacy).is_err() {
-            eprintln!(
+            installer.warn(format_args!(
                 "Kept {} beside {}. Merge its contents manually.",
                 legacy.display(),
                 target.display()
-            );
+            ));
         }
     }
     fs::create_dir_all(target)

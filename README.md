@@ -52,12 +52,13 @@ See the [core package list](pkglist.txt) for the complete package set.
 Run the bootstrap from an interactive terminal as your regular user with sudo access.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli
+hype install
 ```
 
-The bootstrap builds the Rust installer locally. It offers to install missing build tools. The installer requires a full Arch upgrade before installing desktop packages and asks before backing up and replacing existing user configurations.
+The bootstrap builds the Rust installer and adds `hype` to `~/.local/bin`. If that directory is outside your `PATH`, run `~/.local/bin/hype install`. The installer asks before upgrading Arch and before backing up and replacing existing configurations.
 
-Press Enter or answer `y` at **Install extras?** to install every extra. Answer `n` for the core desktop, or `custom` to choose [groups](optional-packages.txt). The default install builds Hype Flow, downloads and verifies the English Parakeet model, and configures Hype Flow to start in the background at Niri login. Press `Alt+Space` to dictate with the default shortcut.
+Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, then `y` to apply. The default selection includes Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri.
 
 <details>
 <summary><b>Install from a local checkout</b></summary>
@@ -67,7 +68,8 @@ Press Enter or answer `y` at **Install extras?** to install every extra. Answer 
 ```bash
 git clone https://github.com/Dijo-404/hype_niri.git
 cd hype_niri
-./install.sh
+./install.sh --setup-cli
+hype install --source "$PWD"
 ```
 
 The [installation guide](INSTALL.md#manual-install) also covers applying individual components.
@@ -76,13 +78,13 @@ The [installation guide](INSTALL.md#manual-install) also covers applying individ
 
 ### Updating
 
-From your local checkout, pull the latest changes and rerun the installer.
+Run the updater from any directory.
 
 ```bash
-cd hype_niri
-git pull --ff-only
-./install.sh
+hype update
 ```
+
+Updates download GitHub `main` into a temporary checkout and preselect your saved extras. Review the selection before applying. Use `--plain` for line prompts.
 
 ### Uninstalling
 
@@ -101,7 +103,7 @@ Log in to the **Niri** session from your display manager. Then try these shortcu
 
 ### Commands
 
-Desktop commands use the installed binaries. Run the installer help command from a checkout.
+Desktop commands use the installed binaries. Run `hype --help` for installer options.
 
 | Command                                                     | Description                                         |
 | :---------------------------------------------------------- | :-------------------------------------------------- |
@@ -237,6 +239,7 @@ Run the regression suites against the debug binaries. The runtime tests use priv
 
 ```bash
 /usr/bin/python3 tests/test-bootstrap.py
+/usr/bin/python3 tests/test-installer-tui.py
 /usr/bin/python3 tests/test-runtime.py
 /usr/bin/python3 tests/test-native-runtime.py
 /usr/bin/python3 tests/test-warp-indicator.py

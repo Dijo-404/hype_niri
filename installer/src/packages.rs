@@ -2,10 +2,32 @@ use crate::{Installer, Result, error};
 use std::{collections::HashSet, fs, io::Write};
 
 impl Installer {
-    pub fn select_optional_groups(&mut self) -> Result<()> {
-        let groups = optional_groups(&fs::read_to_string(
+    pub fn optional_package_groups(&self) -> Result<Vec<(String, Vec<String>)>> {
+        optional_groups(&fs::read_to_string(
             self.source.join("optional-packages.txt"),
-        )?)?;
+        )?)
+    }
+
+    pub fn saved_optional_groups(&self) -> Result<Option<Vec<String>>> {
+        match fs::read_to_string(self.user(".config/hype-niri/optional-groups")) {
+            Ok(contents) => Ok(Some(
+                contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            )),
+            Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(cause) => Err(cause.into()),
+        }
+    }
+
+    pub fn select_optional_groups(&mut self) -> Result<()> {
+        if self.optional_groups.is_some() {
+            return Ok(());
+        }
+        let groups = self.optional_package_groups()?;
         println!("  Enter / y  Full desktop with all {} extras", groups.len());
         println!("  n          Core desktop only");
         println!("  custom     Choose extras by group\n");
@@ -53,9 +75,7 @@ impl Installer {
             self.select_optional_groups()?;
         }
         let mut packages = package_lines(&fs::read_to_string(self.source.join("pkglist.txt"))?)?;
-        let groups = optional_groups(&fs::read_to_string(
-            self.source.join("optional-packages.txt"),
-        )?)?;
+        let groups = self.optional_package_groups()?;
         for selected in self.optional_groups.as_ref().unwrap() {
             let (_, requirements) = groups
                 .iter()
@@ -104,7 +124,9 @@ impl Installer {
                 if missing.contains(package) {
                     aur.push(format!("aur/{package}"));
                 } else {
-                    println!("Retaining installed package/provider: {package}");
+                    self.note(format_args!(
+                        "Retaining installed package/provider: {package}"
+                    ));
                 }
             }
         }
@@ -123,17 +145,16 @@ impl Installer {
             let result = self.output("yay", &args)?;
             writeln!(log, "{}{}", result.stdout, result.stderr)?;
             if !result.success() {
-                return Err(package_failure(
-                    log,
-                    "AUR metadata lookup failed; no packages installed",
-                ));
+                return Err(
+                    self.package_failure(log, "AUR metadata lookup failed; no packages installed")
+                );
             }
         }
         if !official.is_empty() {
             let mut args = vec!["pacman", "-S", "--needed", "--noconfirm"];
             args.extend(official);
             if let Err(failure) = self.runner.run_logged("sudo", &args, log.path()) {
-                return Err(package_failure(
+                return Err(self.package_failure(
                     log,
                     &format!(
                         "Repository installation failed: {failure}. Check mirrors and rerun a full system upgrade"
@@ -145,7 +166,7 @@ impl Installer {
             let mut args = vec!["-S", "--aur", "--needed", "--noconfirm=false", "--confirm"];
             args.extend(aur.iter().map(String::as_str));
             if let Err(failure) = self.runner.run_logged("yay", &args, log.path()) {
-                return Err(package_failure(
+                return Err(self.package_failure(
                     log,
                     &format!(
                         "AUR installation failed: {failure}. Check provider choices and conflicts"
@@ -158,9 +179,28 @@ impl Installer {
         let result = self.output("pacman", &args)?;
         writeln!(log, "{}{}", result.stdout, result.stderr)?;
         if !result.success() {
-            return Err(package_failure(log, "Required packages remain unsatisfied"));
+            return Err(self.package_failure(log, "Required packages remain unsatisfied"));
         }
         Ok(())
+    }
+
+    fn package_failure(
+        &self,
+        log: tempfile::NamedTempFile,
+        message: &str,
+    ) -> Box<dyn std::error::Error> {
+        match log.keep() {
+            Ok((_, path)) => {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    let lines = content.lines().collect::<Vec<_>>();
+                    for line in &lines[lines.len().saturating_sub(40)..] {
+                        self.warn(format_args!("{line}"));
+                    }
+                }
+                error(format!("{message}. Full log: {}", path.display()))
+            }
+            Err(failure) => error(format!("{message}. Could not preserve log: {failure}")),
+        }
     }
 }
 
@@ -233,21 +273,6 @@ fn select_groups(answer: &str, groups: &PackageGroups) -> Result<Vec<String>> {
         }
     }
     Ok(selected)
-}
-
-fn package_failure(log: tempfile::NamedTempFile, message: &str) -> Box<dyn std::error::Error> {
-    match log.keep() {
-        Ok((_, path)) => {
-            if let Ok(content) = fs::read_to_string(&path) {
-                let lines = content.lines().collect::<Vec<_>>();
-                for line in &lines[lines.len().saturating_sub(40)..] {
-                    eprintln!("{line}");
-                }
-            }
-            error(format!("{message}. Full log: {}", path.display()))
-        }
-        Err(failure) => error(format!("{message}. Could not preserve log: {failure}")),
-    }
 }
 
 #[cfg(test)]

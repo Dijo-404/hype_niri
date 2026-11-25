@@ -242,9 +242,9 @@ impl Installer {
                 return Err(error("Network preflight failed"));
             }
         } else {
-            eprintln!(
+            self.warn(format_args!(
                 "Network preflight unavailable; package operations will report network failures"
-            );
+            ));
         }
         Ok(())
     }
@@ -359,18 +359,22 @@ impl Installer {
         Ok(())
     }
     pub fn run_all(&mut self) -> Result<()> {
+        self.run_plain("Installation")
+    }
+
+    pub fn run_plain(&mut self, operation: &str) -> Result<()> {
         heading("Hype Niri · Arch Linux desktop setup", None);
         println!("  Update Arch, install the desktop, and set up your chosen extras.");
         println!("  Existing desktop configs require a backup before replacement.\n");
-        if !self.confirm("Start installation?")? {
-            println!("Installation cancelled");
+        if !self.confirm(&format!("Start {}?", operation.to_lowercase()))? {
+            println!("{operation} cancelled");
             return Ok(());
         }
-        for (index, (name, run)) in PHASES.iter().enumerate() {
+        self.run_phases(|index, name| {
             heading(name, Some((index + 1, PHASES.len())));
-            run(self).map_err(|e| error(format!("Phase '{name}' failed: {e}")))?;
-        }
-        heading("Installation complete", None);
+            Ok(())
+        })?;
+        heading(&format!("{operation} complete"), None);
         if let Some(backup) = &self.backup {
             println!("  Configuration backup: {}", backup.display());
         }
@@ -384,6 +388,14 @@ impl Installer {
             self.command("systemctl", &["reboot"])?;
         } else {
             println!("Reboot when ready to start using Niri.");
+        }
+        Ok(())
+    }
+
+    pub fn run_phases(&mut self, mut start: impl FnMut(usize, &str) -> Result<()>) -> Result<()> {
+        for (index, (name, run)) in PHASES.iter().enumerate() {
+            start(index, name)?;
+            run(self).map_err(|e| error(format!("Phase '{name}' failed: {e}")))?;
         }
         Ok(())
     }

@@ -3,11 +3,15 @@ use hype_install::{
     core::{InstallLock, runtime_directory},
     error,
 };
-use std::{os::fd::AsRawFd, path::PathBuf};
+use std::{io::Write, os::fd::AsRawFd, path::PathBuf};
+mod tui;
 
 #[derive(Debug, PartialEq)]
 enum Mode {
+    Menu,
     Install,
+    Update,
+    SetupCli,
     Oomd,
     Stealth(PathBuf),
     Phase(String),
@@ -16,15 +20,32 @@ enum Mode {
 #[derive(Debug, PartialEq)]
 struct Options {
     source: PathBuf,
+    source_seen: bool,
     mode: Mode,
+    plain: bool,
 }
 fn parse(args: &[String]) -> Result<Options> {
     let mut source = std::env::current_dir()?;
-    let mut mode = Mode::Install;
+    let mut mode = Mode::Menu;
     let mut source_seen = false;
+    let mut plain = false;
     let mut index = 0;
     while index < args.len() {
-        match args[index].as_str() {
+        let argument = args[index].as_str();
+        if matches!(
+            argument,
+            "install"
+                | "update"
+                | "--update"
+                | "--setup-cli"
+                | "--setup-oomd"
+                | "--install-stealth"
+                | "--phase"
+        ) && mode != Mode::Menu
+        {
+            return Err(error("Choose one installer operation"));
+        }
+        match argument {
             "--source" => {
                 if source_seen {
                     return Err(error("Duplicate --source argument"));
@@ -36,10 +57,11 @@ fn parse(args: &[String]) -> Result<Options> {
                         .ok_or_else(|| error("Missing --source path"))?,
                 );
             }
+            "install" => mode = Mode::Install,
+            "update" | "--update" => mode = Mode::Update,
+            "--setup-cli" => mode = Mode::SetupCli,
+            "--plain" => plain = true,
             "--setup-oomd" => {
-                if mode != Mode::Install {
-                    return Err(error("Choose one installer operation"));
-                }
                 mode = Mode::Oomd;
                 index += 1;
                 source = PathBuf::from(
@@ -48,9 +70,6 @@ fn parse(args: &[String]) -> Result<Options> {
                 );
             }
             "--install-stealth" => {
-                if mode != Mode::Install {
-                    return Err(error("Choose one installer operation"));
-                }
                 index += 1;
                 let payload = PathBuf::from(
                     args.get(index)
@@ -59,9 +78,6 @@ fn parse(args: &[String]) -> Result<Options> {
                 mode = Mode::Stealth(payload);
             }
             "--phase" => {
-                if mode != Mode::Install {
-                    return Err(error("Choose one installer operation"));
-                }
                 index += 1;
                 let name = args.get(index).ok_or_else(|| error("Missing phase name"))?;
                 if !matches!(
@@ -94,18 +110,31 @@ fn parse(args: &[String]) -> Result<Options> {
         }
         index += 1;
     }
-    Ok(Options { source, mode })
+    Ok(Options {
+        source,
+        source_seen,
+        mode,
+        plain,
+    })
 }
 fn entry() -> Result<()> {
-    let options = parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
+    let mut args = std::env::args();
+    let launched_as_hype = args
+        .next()
+        .is_some_and(|name| std::path::Path::new(&name).file_name() == Some("hype".as_ref()));
+    let options = parse(&args.collect::<Vec<_>>())?;
     if options.mode == Mode::Help {
         println!(
-            "Usage: hype-install [--source REPOSITORY] [--phase NAME]\n       hype-install --setup-oomd REPOSITORY\n       sudo hype-install --install-stealth PAYLOAD\n\nPhases: packages user-dirs desktop-integrations lazyvim tray-icons docker-socket backup configs gtk shell system logind firewall warp stealth validate\nRun interactively as a regular Arch Linux user with sudo. yay is needed only for missing AUR packages."
+            "Usage: hype install [--source REPOSITORY] [--plain]\n       hype update [--plain]\n       hype-install [--source REPOSITORY] [--phase NAME] [--plain]\n       hype-install --setup-cli\n       hype-install --setup-oomd REPOSITORY\n       sudo hype-install --install-stealth PAYLOAD\n\ninstall    Open the installer checklist\nupdate     Fetch GitHub main and review saved extras\n--plain    Use line prompts\n\nPhases: packages user-dirs desktop-integrations lazyvim tray-icons docker-socket backup configs gtk shell system logind firewall warp stealth validate\nRun interactively as a regular Arch Linux user with sudo. yay is needed only for missing AUR packages."
         );
         return Ok(());
     }
     let uid = unsafe { libc::geteuid() };
-    if matches!(options.mode, Mode::Install | Mode::Phase(_)) && uid == 0 {
+    if matches!(
+        options.mode,
+        Mode::Menu | Mode::Install | Mode::Update | Mode::SetupCli | Mode::Phase(_)
+    ) && uid == 0
+    {
         return Err(error(
             "Run as your regular user; this installer uses sudo when required",
         ));
@@ -116,7 +145,8 @@ fn entry() -> Result<()> {
     unsafe {
         libc::umask(0o077);
     }
-    if !matches!(options.mode, Mode::Stealth(_)) && unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
+    if !matches!(options.mode, Mode::Stealth(_) | Mode::SetupCli)
+        && unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
     {
         let tty = std::fs::OpenOptions::new()
             .read(true)
@@ -141,27 +171,46 @@ fn entry() -> Result<()> {
         runner: Box::new(ProcessRunner),
     };
     match options.mode {
-        Mode::Install => {
+        Mode::Menu | Mode::Install | Mode::Update => {
+            let direct = match options.mode {
+                Mode::Install => Some(tui::Action::Install),
+                Mode::Update => Some(tui::Action::Update),
+                _ => None,
+            };
+            let local_source = options.source_seen || (direct.is_none() && !launched_as_hype);
+            let fetched = options.source_seen
+                && std::env::var_os("HYPE_NIRI_BOOTSTRAP_SOURCE").as_deref()
+                    == Some("main".as_ref());
+            if !options.plain && tui::available() {
+                return tui::run(installer, direct, local_source, fetched);
+            }
+            let action = direct.unwrap_or(tui::Action::Install);
+            let _staging = if action.downloads_source(local_source, fetched) {
+                Some(tui::fetch_latest(&mut installer)?)
+            } else {
+                None
+            };
             let _lock = InstallLock::acquire(&runtime_directory()?)?;
-            installer.run_all()
+            if action == tui::Action::Update {
+                let groups = installer.optional_package_groups()?;
+                installer.optional_groups = Some(tui::update_defaults(&installer, &groups)?);
+                installer.run_plain("Update")
+            } else {
+                installer.run_all()
+            }
+        }
+        Mode::SetupCli => {
+            let _lock = InstallLock::acquire(&runtime_directory()?)?;
+            let launcher = installer.publish_cli(&std::env::current_exe()?)?;
+            println!("Installed {}", launcher.display());
+            Ok(())
         }
         Mode::Oomd => installer.setup_oomd(),
         Mode::Stealth(payload) => installer.install_stealth(&payload),
         Mode::Phase(name) => {
             let _lock = InstallLock::acquire(&runtime_directory()?)?;
             if name != "packages" {
-                let persisted = installer.user(".config/hype-niri/optional-groups");
-                let contents = match std::fs::read_to_string(&persisted) {
-                    Ok(contents) => contents,
-                    Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => String::new(),
-                    Err(cause) => return Err(cause.into()),
-                };
-                let mut groups: Vec<String> = contents
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-                    .collect();
+                let mut groups = installer.saved_optional_groups()?.unwrap_or_default();
                 match name.as_str() {
                     "lazyvim" => groups.push("editor-neovim".into()),
                     "warp" => groups.push("warp".into()),
@@ -199,7 +248,7 @@ fn entry() -> Result<()> {
 }
 fn main() {
     if let Err(cause) = entry() {
-        eprintln!("hype-install: {cause}");
+        let _ = writeln!(std::io::stderr(), "hype-install: {cause}");
         std::process::exit(1);
     }
 }
@@ -214,7 +263,7 @@ mod tests {
     fn local_checkout_source_remains_one_argument() {
         let parsed = parse(&arguments(&["--source", "/tmp/two words"])).unwrap();
         assert_eq!(parsed.source, PathBuf::from("/tmp/two words"));
-        assert_eq!(parsed.mode, Mode::Install);
+        assert_eq!(parsed.mode, Mode::Menu);
     }
     #[test]
     fn unknown_or_incomplete_arguments_fail_before_install() {
@@ -243,5 +292,20 @@ mod tests {
     fn manual_phase_interface_accepts_only_named_operations() {
         assert!(parse(&arguments(&["--phase", "user-dirs"])).is_ok());
         assert!(parse(&arguments(&["--phase", "arbitrary-command"])).is_err());
+    }
+
+    #[test]
+    fn plain_update_is_exclusive_with_manual_phases() {
+        let parsed = parse(&arguments(&["--update", "--plain"])).unwrap();
+        assert_eq!(parsed.mode, Mode::Update);
+        assert!(parsed.plain);
+        assert!(parse(&arguments(&["--update", "--phase", "packages"])).is_err());
+    }
+
+    #[test]
+    fn named_subcommands_select_their_workflows() {
+        assert_eq!(parse(&arguments(&["install"])).unwrap().mode, Mode::Install);
+        assert_eq!(parse(&arguments(&["update"])).unwrap().mode, Mode::Update);
+        assert!(parse(&arguments(&["install", "update"])).is_err());
     }
 }

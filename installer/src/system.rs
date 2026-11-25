@@ -106,7 +106,7 @@ impl Installer {
             ("sudo", "systemctl")
         };
         if start && self.succeeded(program, &[prefix, "enable", "--now", unit]) {
-            println!("Enabled and started {scope} service: {unit}");
+            self.note(format_args!("Enabled and started {scope} service: {unit}"));
             return Ok(());
         }
         self.checked_output(program, &[prefix, "enable", unit])?;
@@ -115,12 +115,12 @@ impl Installer {
                 "Enabled {scope} service but could not start: {unit}"
             )));
         }
-        println!("Enabled {scope} service: {unit}");
+        self.note(format_args!("Enabled {scope} service: {unit}"));
         Ok(())
     }
 
     pub fn setup_system(&mut self) -> Result<()> {
-        println!("System configuration");
+        self.note(format_args!("System configuration"));
         self.configure_pacman()?;
 
         if self.selected("login-manager-ly") && self.confirm("Set up ly as display manager?")? {
@@ -143,7 +143,7 @@ impl Installer {
             let path = Path::new("/etc/polkit-1/rules.d").join(&name);
             self.write_system(path_arg(&path)?, &contents, 0o644)?;
         }
-        println!("Polkit rules applied");
+        self.note(format_args!("Polkit rules applied"));
 
         self.setup_oomd()
             .map_err(|cause| error(format!("Could not configure systemd-oomd: {cause}")))?;
@@ -157,11 +157,13 @@ impl Installer {
         if self.selected("bluetooth")
             && let Err(cause) = self.enable_unit("bluetooth.service", false, true)
         {
-            eprintln!("Warning: {cause}");
+            self.warn(format_args!("Warning: {cause}"));
         }
         if self.selected("docker") {
             if let Err(cause) = self.configure_docker_socket() {
-                eprintln!("Warning: could not configure Docker socket activation: {cause}");
+                self.warn(format_args!(
+                    "Warning: could not configure Docker socket activation: {cause}"
+                ));
             }
             self.configure_docker_group()?;
         }
@@ -175,16 +177,20 @@ impl Installer {
                 })?;
             }
             if let Err(cause) = self.enable_unit("hypridle.service", true, false) {
-                eprintln!("Warning: {cause}; Niri can launch hypridle directly");
+                self.warn(format_args!(
+                    "Warning: {cause}; Niri can launch hypridle directly"
+                ));
             }
             self.enable_unit(AUTO_POWER, true, self.graphical_session_active())?;
         } else {
-            eprintln!(
+            self.warn(format_args!(
                 "Warning: user systemd manager unavailable; audio will use package defaults at login"
-            );
-            eprintln!("Niri startup will launch hypridle with its service or direct fallback");
+            ));
+            self.warn(format_args!(
+                "Niri startup will launch hypridle with its service or direct fallback"
+            ));
         }
-        println!("System services configured");
+        self.note(format_args!("System services configured"));
         Ok(())
     }
 
@@ -241,7 +247,7 @@ impl Installer {
                 path.metadata()?.permissions().mode() & 0o7777,
             )?;
         }
-        println!("Pacman output tuned");
+        self.note(format_args!("Pacman output tuned"));
         Ok(())
     }
 
@@ -281,11 +287,11 @@ impl Installer {
                 self.command("sudo", &["systemctl", "disable", dm]).map_err(|cause| {
                     error(format!("Could not disable {dm}; finish the display manager switch before rebooting: {cause}"))
                 })?;
-                println!("Disabled {dm}");
+                self.note(format_args!("Disabled {dm}"));
             }
         }
         self.command("sudo", &["systemctl", "disable", "getty@tty2.service"])?;
-        println!("Enabled {ly} for the next boot");
+        self.note(format_args!("Enabled {ly} for the next boot"));
         Ok(())
     }
 
@@ -310,22 +316,22 @@ impl Installer {
                 match containers {
                     Ok(output) if output.stdout.trim().is_empty() => {}
                     Ok(_) => {
-                        eprintln!(
+                        self.warn(format_args!(
                             "Warning: Docker has running containers; existing service retained"
-                        );
+                        ));
                         return Ok(());
                     }
                     Err(_) => {
-                        eprintln!(
+                        self.warn(format_args!(
                             "Warning: could not inspect Docker containers; existing service retained"
-                        );
+                        ));
                         return Ok(());
                     }
                 }
             }
             self.command("sudo", &["systemctl", "disable", "--now", "docker.service"])?;
         }
-        println!("Docker starts on demand through its socket");
+        self.note(format_args!("Docker starts on demand through its socket"));
         Ok(())
     }
 
@@ -342,20 +348,20 @@ impl Installer {
                     .split_whitespace()
                     .any(|group| group == "docker")
         }) {
-            println!("User {user} is already in docker group");
+            self.note(format_args!("User {user} is already in docker group"));
         } else if self.confirm(&format!(
             "Add {user} to docker group? This requires logging out and back in."
         ))? {
             match self.command("sudo", &["usermod", "-aG", "docker", user]) {
-                Ok(()) => println!(
+                Ok(()) => self.note(format_args!(
                     "Added {user} to docker group. Log out and back in before running Docker without sudo."
-                ),
-                Err(cause) => eprintln!("Warning: could not add {user} to docker group: {cause}"),
+                )),
+                Err(cause) => self.warn(format_args!("Warning: could not add {user} to docker group: {cause}")),
             }
         } else {
-            eprintln!(
+            self.warn(format_args!(
                 "Warning: Docker group setup skipped; use sudo docker or add your user later"
-            );
+            ));
         }
         Ok(())
     }
@@ -399,7 +405,9 @@ impl Installer {
         self.checked_output("systemctl", &["is-enabled", "--quiet", OOMD])?;
         self.checked_output("systemctl", &["is-active", "--quiet", OOMD])?;
         self.check_oom_policy()?;
-        println!("systemd-oomd enabled and running. Monitored groups:");
+        self.note(format_args!(
+            "systemd-oomd enabled and running. Monitored groups:"
+        ));
         self.command("oomctl", &["--no-pager"])
     }
 
@@ -434,13 +442,15 @@ impl Installer {
 
     pub fn setup_logind(&mut self) -> Result<()> {
         if !self.confirm("Configure systemd-logind to suspend on lid close (but keep running when an external monitor is connected)?")? {
-            println!("Lid switch setup skipped");
+            self.note(format_args!("Lid switch setup skipped"));
             return Ok(());
         }
         const PATH: &str = "/etc/systemd/logind.conf.d/10-hype-niri-lid.conf";
         const CONTENTS: &[u8] = b"[Login]\nHandleLidSwitch=suspend\nHandleLidSwitchExternalPower=suspend\nHandleLidSwitchDocked=ignore\nLidSwitchIgnoreInhibited=yes\nHoldoffTimeoutSec=0s\nInhibitDelayMaxSec=5\n";
         self.write_system(PATH, CONTENTS, 0o644)?;
-        println!("Wrote {PATH}. Lid switch changes will apply after reboot.");
+        self.note(format_args!(
+            "Wrote {PATH}. Lid switch changes will apply after reboot."
+        ));
         Ok(())
     }
 
@@ -449,11 +459,13 @@ impl Installer {
             return Ok(());
         }
         if !self.runner.available("ufw") {
-            println!("ufw is unavailable; firewall setup skipped");
+            self.note(format_args!("ufw is unavailable; firewall setup skipped"));
             return Ok(());
         }
         if !self.confirm("Configure ufw with desktop defaults (deny incoming, allow outgoing)?")? {
-            println!("Firewall setup skipped. You can run 'sudo ufw enable' later.");
+            self.note(format_args!(
+                "Firewall setup skipped. You can run 'sudo ufw enable' later."
+            ));
             return Ok(());
         }
         for args in [
@@ -498,13 +510,15 @@ impl Installer {
         self.checked_output("sudo", &["ufw", "logging", "low"])?;
         self.checked_output("sudo", &["ufw", "--force", "enable"])?;
         self.command("sudo", &["systemctl", "enable", "ufw.service"])?;
-        println!("ufw enabled with desktop defaults. Current rules:");
+        self.note(format_args!(
+            "ufw enabled with desktop defaults. Current rules:"
+        ));
         for line in self
             .checked_output("sudo", &["ufw", "status", "verbose"])?
             .stdout
             .lines()
         {
-            println!("    {line}");
+            self.note(format_args!("    {line}"));
         }
         Ok(())
     }
@@ -514,29 +528,35 @@ impl Installer {
             return Ok(());
         }
         if !self.runner.available("warp-cli") {
-            println!("warp-cli is unavailable; install cloudflare-warp-bin to use Cloudflare WARP");
+            self.note(format_args!(
+                "warp-cli is unavailable; install cloudflare-warp-bin to use Cloudflare WARP"
+            ));
             return Ok(());
         }
         if !self
             .confirm("Set up Cloudflare WARP (DNS-over-HTTPS by default, full VPN optional)?")?
         {
-            println!("Cloudflare WARP setup skipped");
+            self.note(format_args!("Cloudflare WARP setup skipped"));
             return Ok(());
         }
 
         if let Err(cause) =
             warp_result(self.output("sudo", &["systemctl", "enable", "--now", "warp-svc"]))
         {
-            warn_warp("Could not enable and start warp-svc", &cause);
+            warn_warp(self, "Could not enable and start warp-svc", &cause);
             return Ok(());
         }
-        println!("warp-svc enabled and running");
+        self.note(format_args!("warp-svc enabled and running"));
         let status = ["--accept-tos", "status"];
         for attempt in 1..=10 {
             match warp_result(self.output("warp-cli", &status)) {
                 Ok(_) => break,
                 Err(cause) if attempt == 10 => {
-                    warn_warp("WARP daemon did not become ready for CLI requests", &cause);
+                    warn_warp(
+                        self,
+                        "WARP daemon did not become ready for CLI requests",
+                        &cause,
+                    );
                     return Ok(());
                 }
                 Err(_) => thread::sleep(Duration::from_secs(1)),
@@ -547,40 +567,45 @@ impl Installer {
                 warp_result(self.output("warp-cli", &["--accept-tos", "registration", "new"]))
             {
                 warn_warp(
+                    self,
                     "WARP registration failed; mode and connection were preserved",
                     &cause,
                 );
-                eprintln!("Manually retry with: warp-cli --accept-tos registration new");
+                self.warn(format_args!(
+                    "Manually retry with: warp-cli --accept-tos registration new"
+                ));
                 return Ok(());
             }
-            println!("Device registered with Cloudflare");
+            self.note(format_args!("Device registered with Cloudflare"));
         }
-        println!(
+        self.note(format_args!(
             "Choose WARP mode:\n  1) DNS-over-HTTPS only [default]\n  2) Full WARP VPN (encrypted tunnel)\n  3) Preserve the current mode and connection"
-        );
+        ));
         let selection = self.runner.input("Mode [1/2/3]: ")?;
         let (mode, description) = match selection.trim() {
             "1" | "" => ("doh", "DoH"),
             "2" => ("warp", "WARP (VPN)"),
             "3" => {
-                println!("WARP mode and connection preserved");
+                self.note(format_args!("WARP mode and connection preserved"));
                 return Ok(());
             }
             _ => {
-                warn_warp("Invalid WARP mode; existing connection preserved", "");
+                warn_warp(self, "Invalid WARP mode; existing connection preserved", "");
                 return Ok(());
             }
         };
         if let Err(cause) = warp_result(self.output("warp-cli", &["--accept-tos", "mode", mode])) {
             warn_warp(
+                self,
                 &format!("Failed to set {description} mode; existing connection preserved"),
                 &cause,
             );
             return Ok(());
         }
-        println!("WARP mode: {description}");
+        self.note(format_args!("WARP mode: {description}"));
         if let Err(cause) = warp_result(self.output("warp-cli", &["--accept-tos", "connect"])) {
             warn_warp(
+                self,
                 "WARP connection failed; check 'warp-cli status' manually",
                 &cause,
             );
@@ -589,7 +614,7 @@ impl Installer {
             let status = self
                 .checked_output("warp-cli", &status)
                 .map_or_else(|_| "unknown".into(), |output| output.stdout);
-            println!("WARP: {}", status.trim());
+            self.note(format_args!("WARP: {}", status.trim()));
         }
         Ok(())
     }
@@ -613,13 +638,17 @@ fn warp_result(output: Result<CommandOutput>) -> std::result::Result<(), String>
     }
 }
 
-fn warn_warp(message: &str, diagnostics: &str) {
-    eprintln!("Warning: {message}");
+fn warn_warp(installer: &Installer, message: &str, diagnostics: &str) {
+    installer.warn(format_args!("Warning: {message}"));
     for line in diagnostics.trim().lines().take(20) {
-        eprintln!("    {line}");
+        installer.warn(format_args!("    {line}"));
     }
-    eprintln!("Cloudflare WARP setup incomplete; continuing installation");
-    eprintln!("Inspect WARP logs with: journalctl -u warp-svc");
+    installer.warn(format_args!(
+        "Cloudflare WARP setup incomplete; continuing installation"
+    ));
+    installer.warn(format_args!(
+        "Inspect WARP logs with: journalctl -u warp-svc"
+    ));
 }
 
 fn path_arg(path: &Path) -> Result<&str> {
@@ -629,7 +658,7 @@ fn path_arg(path: &Path) -> Result<&str> {
 
 impl Installer {
     pub fn validate(&mut self) -> Result<()> {
-        println!("Validating installation");
+        self.note(format_args!("Validating installation"));
         let required_commands = [
             "cc",
             "pkg-config",
@@ -669,9 +698,9 @@ impl Installer {
         let mut all_ok = true;
         for program in required_commands {
             if self.runner.available(program) {
-                println!("Command available: {program}");
+                self.note(format_args!("Command available: {program}"));
             } else {
-                eprintln!("Missing command: {program}");
+                self.warn(format_args!("Missing command: {program}"));
                 all_ok = false;
             }
         }
@@ -699,14 +728,16 @@ impl Installer {
         ];
         for (group, program) in optional_commands {
             if self.selected(group) && !self.runner.available(program) {
-                eprintln!("Missing selected {group} command: {program}");
+                self.warn(format_args!("Missing selected {group} command: {program}"));
                 all_ok = false;
             }
         }
         if self.selected("hype-flow") {
             let flow = self.user(".local/bin/hype-flow");
             if !executable(&flow) || !self.user(".config/niri/hype-flow.kdl").is_file() {
-                eprintln!("Hype Flow installation or Niri shortcuts are missing");
+                self.warn(format_args!(
+                    "Hype Flow installation or Niri shortcuts are missing"
+                ));
                 all_ok = false;
             }
         }
@@ -714,15 +745,15 @@ impl Installer {
             for file in [".config/nvim/init.lua", ".config/nvim/lua/config/lazy.lua"] {
                 if !self.user(file).is_file() {
                     all_ok = false;
-                    eprintln!("Missing {file}");
+                    self.warn(format_args!("Missing {file}"));
                 }
             }
         }
         const POLKIT_AGENT: &str = "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1";
         if executable(&self.system(POLKIT_AGENT)) {
-            println!("Polkit agent executable present");
+            self.note(format_args!("Polkit agent executable present"));
         } else {
-            eprintln!("Missing polkit agent: {POLKIT_AGENT}");
+            self.warn(format_args!("Missing polkit agent: {POLKIT_AGENT}"));
             all_ok = false;
         }
 
@@ -732,29 +763,32 @@ impl Installer {
                 .command("niri", &["validate", "-c", path_arg(&config)?])
                 .is_ok()
             {
-                println!("Niri config is valid");
+                self.note(format_args!("Niri config is valid"));
             } else {
-                eprintln!("Niri config validation failed; check {}", config.display());
+                self.warn(format_args!(
+                    "Niri config validation failed; check {}",
+                    config.display()
+                ));
                 all_ok = false;
             }
         }
         for relative in critical_files {
             let file = self.user(relative);
             if file.is_file() {
-                println!("Found {relative}");
+                self.note(format_args!("Found {relative}"));
             } else {
-                eprintln!("Missing: {}", file.display());
+                self.warn(format_args!("Missing: {}", file.display()));
                 all_ok = false;
             }
         }
         for name in crate::config::DESKTOP_PROGRAMS {
             let path = self.user(&format!(".config/scripts/{name}"));
             if executable(&path) && self.command(path_arg(&path)?, &["--check"]).is_ok() {
-                println!("{name} runtime available");
+                self.note(format_args!("{name} runtime available"));
             } else {
-                eprintln!(
+                self.warn(format_args!(
                     "{name} runtime check failed; verify the installed binary and GTK dependencies"
-                );
+                ));
                 all_ok = false;
             }
         }
@@ -774,9 +808,9 @@ impl Installer {
         if self.succeeded("systemctl", &["is-enabled", "--quiet", OOMD])
             && self.succeeded("systemctl", &["is-active", "--quiet", OOMD])
         {
-            println!("systemd-oomd enabled and running");
+            self.note(format_args!("systemd-oomd enabled and running"));
         } else {
-            eprintln!("systemd-oomd must be enabled and running");
+            self.warn(format_args!("systemd-oomd must be enabled and running"));
             all_ok = false;
         }
         match (
@@ -784,22 +818,28 @@ impl Installer {
             fs::read(self.system(OOM_DEST)),
         ) {
             (Ok(source), Ok(installed)) if source == installed => {
-                println!("User memory pressure protection policy installed");
+                self.note(format_args!(
+                    "User memory pressure protection policy installed"
+                ));
             }
             _ => {
-                eprintln!("User memory pressure protection policy is missing or outdated");
+                self.warn(format_args!(
+                    "User memory pressure protection policy is missing or outdated"
+                ));
                 all_ok = false;
             }
         }
         match self.check_oom_policy() {
-            Ok(true) => println!("User memory pressure and swap monitoring enabled"),
-            Ok(false) => {
-                eprintln!("Warning: user manager inactive; live OOM monitoring will apply at login")
-            }
+            Ok(true) => self.note(format_args!(
+                "User memory pressure and swap monitoring enabled"
+            )),
+            Ok(false) => self.warn(format_args!(
+                "Warning: user manager inactive; live OOM monitoring will apply at login"
+            )),
             Err(cause) => {
-                eprintln!(
+                self.warn(format_args!(
                     "User OOM monitoring differs from the required 40% for 10 seconds: {cause}"
-                );
+                ));
                 all_ok = false;
             }
         }
@@ -811,12 +851,12 @@ impl Installer {
             self.validate_unit("hypridle.service", true, false, false);
             all_ok &= self.validate_unit(AUTO_POWER, true, true, self.graphical_session_active());
         } else {
-            eprintln!(
+            self.warn(format_args!(
                 "Warning: user systemd manager unavailable; skipping live user-service validation"
-            );
+            ));
         }
         if all_ok {
-            println!("All files in place!");
+            self.note(format_args!("All files in place!"));
             Ok(())
         } else {
             Err(error(
@@ -827,7 +867,9 @@ impl Installer {
 
     fn validate_fonts(&self) {
         if !self.runner.available("fc-match") {
-            eprintln!("Warning: fontconfig is unavailable; skipping Waybar font validation");
+            self.warn(format_args!(
+                "Warning: fontconfig is unavailable; skipping Waybar font validation"
+            ));
             return;
         }
         for (family, package) in [
@@ -844,9 +886,11 @@ impl Installer {
                         .next()
                         .is_some_and(|line| line.contains(family))
             }) {
-                println!("Font: {family}");
+                self.note(format_args!("Font: {family}"));
             } else {
-                eprintln!("Warning: {family} font is unavailable; install {package}");
+                self.warn(format_args!(
+                    "Warning: {family} font is unavailable; install {package}"
+                ));
             }
         }
     }
@@ -855,7 +899,9 @@ impl Installer {
         let scope = if user { "user" } else { "system" };
         let severity = if required { "Required" } else { "Optional" };
         if !self.unit_present(unit, user) {
-            eprintln!("{severity} {scope} service unit unavailable: {unit}");
+            self.warn(format_args!(
+                "{severity} {scope} service unit unavailable: {unit}"
+            ));
             return !required;
         }
         let status = |operation| {
@@ -867,16 +913,20 @@ impl Installer {
         };
         let enabled = status("is-enabled");
         if enabled {
-            println!("{scope} service enabled: {unit}");
+            self.note(format_args!("{scope} service enabled: {unit}"));
         } else {
-            eprintln!("{severity} {scope} service is disabled: {unit}");
+            self.warn(format_args!(
+                "{severity} {scope} service is disabled: {unit}"
+            ));
         }
         let running = !active || status("is-active");
         if active {
             if running {
-                println!("{scope} service running: {unit}");
+                self.note(format_args!("{scope} service running: {unit}"));
             } else {
-                eprintln!("{severity} {scope} service is inactive: {unit}");
+                self.warn(format_args!(
+                    "{severity} {scope} service is inactive: {unit}"
+                ));
             }
         }
         !required || (enabled && running)
@@ -887,7 +937,7 @@ impl Installer {
             return Ok(());
         }
         if !self.confirm("Install Stealth routing? It stays off until stealth-start and supports NetworkManager Wi-Fi or Ethernet.")? {
-            println!("Stealth installation skipped");
+            self.note(format_args!("Stealth installation skipped"));
             return Ok(());
         }
         let aliases = self.source.join("zsh/stealth.zsh");
@@ -956,9 +1006,9 @@ impl Installer {
                 fs::remove_file(previous)?;
             }
         }
-        println!(
+        self.note(format_args!(
             "Stealth service installed and inactive. Open a new terminal to use stealth-start, stealth-status, or stealth-stop."
-        );
+        ));
         Ok(())
     }
 
@@ -1104,13 +1154,16 @@ impl Installer {
             }));
         }
         let _ = fs::remove_dir(self.system("/run/privacy-shield"));
-        println!("Installed Stealth backend. Backup: {}", backup.display());
-        println!(
+        self.note(format_args!(
+            "Installed Stealth backend. Backup: {}",
+            backup.display()
+        ));
+        self.note(format_args!(
             "Service is inactive. Use stealth-start, stealth-status, and stealth-stop in a new terminal."
-        );
-        println!(
+        ));
+        self.note(format_args!(
             "Stealth requires a NetworkManager Wi-Fi or Ethernet default route and a Tor service account named tor."
-        );
+        ));
         Ok(())
     }
 
@@ -1230,9 +1283,9 @@ impl Installer {
         let sudoers = self.system(SUDOERS);
         let report = self.checked_output("visudo", &["-c"])?;
         if !report.stdout.contains(&format!("{}:", sudoers.display())) {
-            eprintln!(
+            self.warn(format_args!(
                 "Warning: /etc/sudoers does not include {SUDOERS}; sudo keeps its pty for Stealth."
-            );
+            ));
         }
 
         let torrc = self.system(TORRC);

@@ -36,6 +36,13 @@ pub trait Runner {
     fn confirm(&self, prompt: &str) -> Result<bool>;
     fn input(&self, prompt: &str) -> Result<String>;
     fn available(&self, program: &str) -> bool;
+    fn message(&self, message: std::fmt::Arguments<'_>, warning: bool) {
+        if warning {
+            eprintln!("{message}");
+        } else {
+            println!("{message}");
+        }
+    }
     fn run_logged(&self, program: &str, args: &[&str], _log: &Path) -> Result<()> {
         self.run(program, args)
     }
@@ -168,6 +175,12 @@ pub struct Installer {
     pub build_dir: Option<tempfile::TempDir>,
 }
 impl Installer {
+    pub(crate) fn note(&self, message: std::fmt::Arguments<'_>) {
+        self.runner.message(message, false);
+    }
+    pub(crate) fn warn(&self, message: std::fmt::Arguments<'_>) {
+        self.runner.message(message, true);
+    }
     pub fn selected(&self, group: &str) -> bool {
         self.optional_groups
             .as_ref()

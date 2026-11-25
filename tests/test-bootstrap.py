@@ -62,6 +62,7 @@ cat > "$release_dir/hype-install" <<'BIN'
 printf 'installer' >> "$BOOTSTRAP_LOG"
 printf ' <%s>' "$@" >> "$BOOTSTRAP_LOG"
 printf '\\n' >> "$BOOTSTRAP_LOG"
+printf 'source <%s>\\n' "$HYPE_NIRI_BOOTSTRAP_SOURCE" >> "$BOOTSTRAP_LOG"
 read -r answer
 printf 'answer <%s>\\n' "$answer" >> "$BOOTSTRAP_LOG"
 BIN
@@ -153,6 +154,7 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         self.assertIn("--package hype-install", calls)
         self.assertIn("--target x86_64-test-linux-gnu", calls)
         self.assertIn("<--source-check> <two words>", calls)
+        self.assertIn("source <checkout>", calls)
         self.assertIn("answer <terminal answer>", calls)
         self.assertNotIn("git clone", calls)
 
@@ -161,6 +163,7 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         self.assertEqual(result.returncode, 0, result.stdout)
         calls = self.log.read_text()
         self.assertIn("git clone", calls)
+        self.assertIn("source <main>", calls)
         self.assertIn("answer <terminal answer>", calls)
         self.assertTrue(self.source.exists())
 

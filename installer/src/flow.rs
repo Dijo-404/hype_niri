@@ -14,7 +14,9 @@ impl Installer {
     }
 
     fn install_hype_flow(&self) -> Result<()> {
-        println!("Building Hype Flow and setting up offline dictation");
+        self.note(format_args!(
+            "Building Hype Flow and setting up offline dictation"
+        ));
         let staging = tempfile::Builder::new().prefix("hype-flow-").tempdir()?;
         let checkout = staging.path().join("source");
         let target = staging.path().join("target");
@@ -78,9 +80,9 @@ impl Installer {
                 ],
             )
         {
-            eprintln!(
+            self.warn(format_args!(
                 "Hype Flow will start at the next Niri login. Launch request failed: {cause}"
-            );
+            ));
         }
         Ok(())
     }

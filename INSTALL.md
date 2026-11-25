@@ -7,20 +7,26 @@ The automated installer can refresh mirrors, performs a required Arch keyring an
 The installer builds the native Rust desktop controls and GTK4 notch before replacing configurations. It builds the privileged Stealth backend when the optional Stealth setup is selected and confirmed. Core packages include GTK4 4.24+, Rust 1.92+, `gtk4-layer-shell` and `libpulse`. OBS Studio and Neovim/LazyVim require the `media` and `editor-neovim` optional groups. When `editor-neovim` is selected, the installer downloads the official LazyVim starter, backs up any existing non-LazyVim Neovim configuration, and retains existing LazyVim settings. Plugins download when you first open `nvim`; run `:LazyHealth` afterward.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli
+hype install
 ```
 
-The Bash bootstrap downloads source from `main`, builds `hype-install` without GTK dependencies, and reads installer confirmations from `/dev/tty`. If Git, Rust or compilation tools are missing, it asks before installing them with a full Arch upgrade. Local builds may take several minutes on the first run.
+The Bash bootstrap downloads source from `main` and builds `hype-install` without GTK dependencies. It registers `~/.local/bin/hype`. If Git, Rust or compilation tools are missing, it asks before installing them with a full Arch upgrade. Local builds may take several minutes on the first run.
 
 For a local checkout, run:
 
 ```bash
 git clone https://github.com/Dijo-404/hype_niri.git
 cd hype_niri
-./install.sh
+./install.sh --setup-cli
+hype install --source "$PWD"
 ```
 
 Run the installer as your regular user with sudo access. It asks before refreshing mirrors, upgrading the system, replacing existing configurations, switching the display manager, setting lid-switch behavior, configuring networking, or changing your login shell. Declining the required system upgrade or a required backup stops the installation.
+
+In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Enter opens the review screen and `y` starts the operation. Use Page Up and Page Down to browse activity. The terminal switches to the native prompt when a tool such as `sudo`, `pacman`, or `yay` needs input.
+
+Run `hype update` from any directory to download GitHub `main` and review your saved extras. When there is no saved selection, the update starts with the core desktop. Add `--plain` to either command for line prompts. Run `./install.sh` from a checkout to open the action menu.
 
 > [!TIP]
 > Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.

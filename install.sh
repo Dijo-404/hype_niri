@@ -2,10 +2,10 @@
 hype_bootstrap() {
     set -Eeuo pipefail
     if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-        printf 'Usage: install.sh [installer arguments]\nBuilds locally for Arch Linux. Run as a regular user with sudo. yay is needed only for missing AUR packages.\n'
+        printf 'Usage: install.sh --setup-cli\n       install.sh [install | update] [--plain]\n       install.sh [--plain] --phase NAME\n\n--setup-cli installs the hype command in ~/.local/bin.\nRun as a regular Arch Linux user with sudo. yay is needed only for missing AUR packages.\n'
         return 0
     fi
-    local temporary="" source_dir="" here="${BASH_SOURCE[0]:-}" build_log="" cargo_host answer code=0
+    local temporary="" source_dir="" source_origin=checkout here="${BASH_SOURCE[0]:-}" build_log="" cargo_host answer code=0
     trap 'code=$?; [[ -z ${temporary:-} ]] || rm -rf -- "$temporary"; exit "$code"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
@@ -40,10 +40,11 @@ hype_bootstrap() {
     if [[ -z $source_dir ]]; then
         temporary="$(mktemp -d "${TMPDIR:-/tmp}/hype-niri-source.XXXXXXXX")"
         source_dir="$temporary/source"
-        printf 'Downloading Hype Niri source...\n' >&2
-        git clone --depth 1 -- https://github.com/Dijo-404/hype_niri.git "$source_dir" <&3 || exit 1
+        printf 'Hype Niri  /  Fetching main\n' >&2
+        git clone --depth 1 --branch main --single-branch -- https://github.com/Dijo-404/hype_niri.git "$source_dir" <&3 || exit 1
+        source_origin=main
     fi
-    printf 'Building Rust installer locally...\n' >&2
+    printf 'Hype Niri  /  Building installer\n' >&2
     if ! cargo_host=$(cargo -vV | sed -n 's/^host: //p') || [[ ! $cargo_host =~ ^[A-Za-z0-9_-]+$ ]]; then
         printf 'Could not determine Cargo host target.\n' >&2
         exit 1
@@ -56,7 +57,7 @@ hype_bootstrap() {
     fi
     rm -f -- "$build_log"
     local status=0
-    "$source_dir/target/$cargo_host/release/hype-install" --source "$source_dir" "$@" <&3 || status=$?
+    HYPE_NIRI_BOOTSTRAP_SOURCE="$source_origin" "$source_dir/target/$cargo_host/release/hype-install" --source "$source_dir" "$@" <&3 || status=$?
     exit "$status"
 }
 
