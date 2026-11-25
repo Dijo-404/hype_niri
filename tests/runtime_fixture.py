@@ -3,7 +3,9 @@
 import concurrent.futures
 import json
 import os
+import queue
 import shutil
+import socket
 import socketserver
 import subprocess
 import tempfile
@@ -37,12 +39,14 @@ class NiriFixture(socketserver.StreamRequestHandler):
         request = self.rfile.readline(65536)
         with self.server.log.open("ab") as log:
             log.write(request)
+        self.server.requests.put(json.loads(request))
         self.wfile.write(b'{"Ok":"Handled"}\n')
 
 
 class PrivateBus:
     def __init__(self, root, add_cleanup):
         self.root = root
+        self.inhibitors = queue.Queue()
         self.daemon = subprocess.Popen(
             [
                 "dbus-daemon",
@@ -121,6 +125,14 @@ class PrivateBus:
                     <arg type="s" direction="in"/>
                     <arg type="o" direction="out"/>
                 </method>
+                <method name="Inhibit">
+                    <arg type="s" direction="in"/>
+                    <arg type="s" direction="in"/>
+                    <arg type="s" direction="in"/>
+                    <arg type="s" direction="in"/>
+                    <arg type="h" direction="out"/>
+                </method>
+                <signal name="PrepareForSleep"><arg type="b"/></signal>
                 <method name="Suspend"><arg type="b" direction="in"/></method>
                 <method name="Reboot"><arg type="b" direction="in"/></method>
                 <method name="PowerOff"><arg type="b" direction="in"/></method>
@@ -133,6 +145,7 @@ class PrivateBus:
                 '<property name="LockedHint" type="b" access="read"/>',
             )
             self.loop = GLib.MainLoop.new(context, False)
+            self.conn = conn
             self.ready.set()
             self.loop.run()
             conn.close_sync()
@@ -162,11 +175,23 @@ class PrivateBus:
             elif method == "GetSession":
                 assert args.unpack() == ("test-session",), args
                 invocation.return_value(GLib.Variant("(o)", (SESSION_PATH,)))
+            elif method == "Inhibit":
+                what, _, _, mode = args.unpack()
+                assert (what, mode) in (("idle", "block"), ("sleep", "delay")), args
+                reader, writer = socket.socketpair()
+                with writer:
+                    fds = Gio.UnixFDList.new()
+                    handle = fds.append(writer.fileno())
+                    invocation.return_value_with_unix_fd_list(
+                        GLib.Variant("(h)", (handle,)), fds
+                    )
+                self.inhibitors.put((what, reader))
             else:
                 assert method in ("Suspend", "Reboot", "PowerOff"), method
-                assert not (self.root / "runtime/caffeine_state").exists()
                 if method == "Suspend":
                     assert (self.root / "locked").exists()
+                else:
+                    assert not (self.root / "runtime/caffeine_state").exists()
                 with (self.root / "login-log").open("a") as log:
                     log.write(json.dumps([method, args.unpack()]) + "\n")
                 invocation.return_value(None)
@@ -181,10 +206,22 @@ class PrivateBus:
         unit = next(unit for unit, key in UNIT_NAMES.items() if key == path)
         return GLib.Variant("s", (self.root / unit).read_text())
 
+    def prepare_for_sleep(self, sleeping):
+        self.conn.emit_signal(
+            None,
+            LOGIN_PATH,
+            LOGIN + ".Manager",
+            "PrepareForSleep",
+            GLib.Variant("(b)", (sleeping,)),
+        )
+
     def close(self):
         if hasattr(self, "loop"):
             self.loop.quit()
         self.thread.join(timeout=3)
+        while not self.inhibitors.empty():
+            _, reader = self.inhibitors.get_nowait()
+            reader.close()
 
     def stop_daemon(self):
         self.daemon.terminate()
@@ -220,6 +257,7 @@ class RuntimeFixture(unittest.TestCase):
         niri_socket = self.root / "niri"
         niri = socketserver.UnixStreamServer(str(niri_socket), NiriFixture)
         niri.log = self.root / "niri-log"
+        self.niri_requests = niri.requests = queue.Queue()
         self.addCleanup(niri.server_close)
         niri_thread = threading.Thread(target=niri.serve_forever, daemon=True)
         niri_thread.start()

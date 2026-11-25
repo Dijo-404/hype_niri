@@ -536,10 +536,11 @@ async fn watch_sleep() -> Result<()> {
         let next = pending.borrow_mut().pop_front();
         if let Some(start) = next {
             if start {
-                if let Err(error) = caffeine::run("caffeine", &["stop".into()]).await {
-                    eprintln!("Could not stop caffeine before sleep: {error}");
-                }
-                match ensure_locked(&conn).await {
+                let prepared = ensure_locked(&conn).await.and_then(|()| {
+                    // Clear the scanout before suspend so resume starts with a fresh frame.
+                    ipc::action(json!({"PowerOffMonitors":{}}))
+                });
+                match prepared {
                     Ok(()) => {
                         inhibitor.take();
                     }
@@ -576,7 +577,6 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
         "prepare-sleep" if args == ["--watch"] => watch_sleep().await,
         "prepare-sleep" if args.is_empty() => ensure_locked(&bus::system().await?).await,
         "suspend-now" if args.is_empty() => {
-            caffeine::run("caffeine", &["stop".into()]).await?;
             let conn = bus::system().await?;
             ensure_locked(&conn).await?;
             bus::call(

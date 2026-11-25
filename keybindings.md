@@ -134,4 +134,4 @@ With xkeyboard-config 2.49, the F23 key's base symbol is `XF86TouchpadOff` and S
 | `Super + Alt + ↑`       | `start-waybar --restart` | Show or restart Waybar                                       |
 | `Super + Alt + ↓`       | `stop-waybar`            | Hide Waybar                                                  |
 | `Super + Esc`           | `inhibit-shortcuts`      | Toggle Niri keyboard shortcut override                       |
-| `Power Button`          | `suspend-now`            | Stop caffeine mode, lock the session, and suspend            |
+| `Power Button`          | `suspend-now`            | Lock the session and suspend with Caffeine unchanged         |

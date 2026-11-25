@@ -139,7 +139,7 @@ class RuntimeTests(RuntimeFixture):
         self.assertEqual(self.log.read_text().splitlines(), ["--grace 0"])
         self.assertEqual(self.bus_actions(), [])
 
-    def test_power_menu_suspends_after_lock_ready_and_caffeine_cleanup(self):
+    def test_power_menu_suspends_after_lock_ready_and_preserves_caffeine(self):
         self.mock(
             "hyprlock",
             'printf "%s\n" "$*" >> "$FIXTURE_LOG"\n'
@@ -155,7 +155,7 @@ class RuntimeTests(RuntimeFixture):
             ["--grace 0 --immediate-render --no-fade-in"],
         )
         self.assertEqual(self.bus_actions(), [["Suspend", [True]]])
-        self.assertFalse(caffeine_state.exists())
+        self.assertEqual(caffeine_state.read_text(), "fixture")
 
     def test_power_menu_refuses_suspend_if_locker_exits_before_ready(self):
         self.mock("hyprlock", "exit 1")

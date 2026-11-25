@@ -195,7 +195,7 @@ InhibitDelayMaxSec=5
 EOF
 ```
 
-Niri starts `hype-control prepare-sleep --watch`, which subscribes to logind D-Bus events and holds the native sleep delay inhibitor until the password locker and session lock are confirmed ready. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
+Niri starts `hype-control prepare-sleep --watch`, which subscribes to logind D-Bus events. The watcher confirms the session lock and blanks the displays before releasing the sleep delay inhibitor. Hyprlock uses the wallpaper without capturing desktop frames for its transitions. Caffeine pauses idle timeouts and keeps its setting across suspend. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
 
 To switch to Ly at the next boot, review your current display manager first. Arch ships `ly@tty2.service`. Enable it successfully before disabling an existing display manager, then reserve its TTY:
 
