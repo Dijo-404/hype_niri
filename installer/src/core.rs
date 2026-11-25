@@ -147,6 +147,8 @@ impl Installer {
         for file in [
             "Cargo.toml",
             "Cargo.lock",
+            "blueman/Cargo.toml",
+            "blueman/src/lib.rs",
             "pkglist.txt",
             "optional-packages.txt",
             "zsh/.zshrc",
@@ -158,6 +160,8 @@ impl Installer {
             "scripts/notch.css",
             "fontconfig/60-hype-niri-fonts.conf",
             "systemd/user/hype-auto-power-profile.service",
+            "systemd/user/hype-sleep-watch.service",
+            "systemd/user/hype-clipboard-watch.service",
             "systemd/user@.service.d/60-hype-niri-oomd.conf",
             "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
             "polkit/49-udisks2.rules",
@@ -380,10 +384,14 @@ impl Installer {
         Ok(())
     }
     pub fn run_all(&mut self) -> Result<()> {
-        self.run_plain("Installation")
+        self.run_plain("Installation", false)
     }
 
-    pub fn run_plain(&mut self, operation: &str) -> Result<()> {
+    pub fn run_plain_update(&mut self) -> Result<()> {
+        self.run_plain("Update", true)
+    }
+
+    fn run_plain(&mut self, operation: &str, refresh_cli: bool) -> Result<()> {
         heading("Hype Niri · Arch Linux desktop setup", None);
         println!("  Upgrade Arch and AUR packages, then apply the desktop and selected extras.");
         println!("  Install yay from the AUR if it is missing.");
@@ -393,6 +401,9 @@ impl Installer {
             return Ok(());
         }
         self.run_plain_phases(PHASES)?;
+        if refresh_cli {
+            self.refresh_cli()?;
+        }
         heading(&format!("{operation} complete"), None);
         if let Some(backup) = &self.backup {
             println!("  Configuration backup: {}", backup.display());

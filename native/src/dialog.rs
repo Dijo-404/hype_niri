@@ -132,23 +132,70 @@ async fn show(window: &gtk::ApplicationWindow, focus: &impl IsA<gtk::Widget>) {
 pub async fn choose(title: &str, choices: &[String]) -> Result<Option<usize>> {
     pick(
         title,
-        choices.iter().cloned().map(|label| (label, None)),
-        None,
-        None,
+        choices
+            .iter()
+            .enumerate()
+            .map(|(index, label)| Choice::new(index, label.clone(), None)),
+        PickerOptions::default(),
+    )
+    .await
+}
+
+pub async fn choose_with_keys(
+    title: &str,
+    choices: &[String],
+    keys: &[char],
+) -> Result<Option<usize>> {
+    if choices.len() != keys.len() {
+        return Err(err("Every picker row needs a shortcut key"));
+    }
+    let rows = choices
+        .iter()
+        .zip(keys)
+        .enumerate()
+        .map(|(index, (label, key))| {
+            let mut row = Choice::new(index, label.clone(), None);
+            row.label = format!("{label}  [{}]", key.to_ascii_uppercase());
+            row
+        });
+    pick(
+        title,
+        rows,
+        PickerOptions {
+            keys: keys.to_vec(),
+            ..Default::default()
+        },
     )
     .await
 }
 
 pub async fn choose_apps(title: &str, apps: &[gio::AppInfo]) -> Result<Option<usize>> {
     let fallback = gio::ThemedIcon::new("application-x-executable");
-    let choices = apps.iter().map(|app| {
+    let choices = apps.iter().enumerate().map(|(index, app)| {
         let icon = app.icon().unwrap_or_else(|| fallback.clone().upcast());
-        (app.display_name().to_string(), Some(Artwork::Icon(icon)))
+        Choice::app(index, app, icon)
     });
-    pick(title, choices, Some(20), None).await
+    pick(
+        title,
+        choices,
+        PickerOptions {
+            image_size: Some(20),
+            rank_apps: true,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 type Thumbnail = dyn Fn(&Path) -> Option<PathBuf> + Send;
+
+#[derive(Default)]
+struct PickerOptions {
+    image_size: Option<i32>,
+    thumbnail: Option<Box<Thumbnail>>,
+    rank_apps: bool,
+    keys: Vec<char>,
+}
 
 enum Artwork {
     Icon(gio::Icon),
@@ -165,9 +212,13 @@ pub async fn images_lazy(
         choices
             .iter()
             .cloned()
-            .map(|(label, path)| (label, Some(Artwork::Preview(path)))),
-        Some(96),
-        Some(Box::new(thumbnail)),
+            .enumerate()
+            .map(|(index, (label, path))| Choice::new(index, label, Some(Artwork::Preview(path)))),
+        PickerOptions {
+            image_size: Some(96),
+            thumbnail: Some(Box::new(thumbnail)),
+            ..Default::default()
+        },
     )
     .await
 }
@@ -175,8 +226,69 @@ pub async fn images_lazy(
 struct Choice {
     index: usize,
     label: String,
-    searchable: String,
+    searchable: Vec<String>,
     artwork: Option<Artwork>,
+}
+
+impl Choice {
+    fn new(index: usize, label: String, artwork: Option<Artwork>) -> Self {
+        Self {
+            index,
+            searchable: vec![label.to_lowercase()],
+            label,
+            artwork,
+        }
+    }
+
+    fn app(index: usize, app: &gio::AppInfo, icon: gio::Icon) -> Self {
+        let mut choice = Self::new(
+            index,
+            app.display_name().to_string(),
+            Some(Artwork::Icon(icon)),
+        );
+        choice.searchable.push(app.name().to_lowercase());
+        choice.searchable.extend(
+            app.downcast_ref::<gio_unix::DesktopAppInfo>()
+                .and_then(|entry| entry.generic_name())
+                .map(|generic| generic.to_lowercase()),
+        );
+        choice
+            .searchable
+            .extend(app.id().map(|id| id.to_lowercase()));
+        choice
+    }
+}
+
+// Exact, prefix, and contiguous matches outrank gapped matches. Prefer a closer
+// match within one field, with the original list order as the final tiebreaker.
+fn app_match(fields: &[String], query: &str) -> Option<(u8, usize, usize, usize)> {
+    fields
+        .iter()
+        .enumerate()
+        .filter_map(|(field, value)| {
+            if value == query {
+                return Some((0, 0, field, 0));
+            }
+            if let Some(start) = value.find(query) {
+                return Some((if start == 0 { 1 } else { 2 }, 0, field, start));
+            }
+            let mut remaining = query.chars();
+            let mut next = remaining.next()?;
+            let mut start = None;
+            for (index, character) in value.char_indices() {
+                if character != next {
+                    continue;
+                }
+                let first = *start.get_or_insert(index);
+                let Some(key) = remaining.next() else {
+                    let gap = index + character.len_utf8() - first - query.len();
+                    return Some((3, gap, field, first));
+                };
+                next = key;
+            }
+            None
+        })
+        .min()
 }
 
 fn choice(item: &glib::Object) -> &glib::BoxedAnyObject {
@@ -185,13 +297,18 @@ fn choice(item: &glib::Object) -> &glib::BoxedAnyObject {
 
 async fn pick(
     title: &str,
-    choices: impl ExactSizeIterator<Item = (String, Option<Artwork>)>,
-    image_size: Option<i32>,
-    thumbnail: Option<Box<Thumbnail>>,
+    choices: impl ExactSizeIterator<Item = Choice>,
+    options: PickerOptions,
 ) -> Result<Option<usize>> {
     if choices.len() == 0 {
         return Ok(None);
     }
+    let PickerOptions {
+        image_size,
+        thumbnail,
+        rank_apps,
+        keys: shortcuts,
+    } = options;
     let previews = thumbnail.is_some();
     let Some(window) = window(
         title,
@@ -215,30 +332,9 @@ async fn pick(
     content.append(&search_row);
 
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
-    let choices: Vec<_> = choices
-        .enumerate()
-        .map(|(index, (label, artwork))| {
-            glib::BoxedAnyObject::new(Choice {
-                index,
-                searchable: label.to_lowercase(),
-                label,
-                artwork,
-            })
-        })
-        .collect();
+    let choices: Vec<_> = choices.map(glib::BoxedAnyObject::new).collect();
     model.extend_from_slice(&choices);
-    let query = Rc::new(RefCell::new(String::new()));
-    let filter = gtk::CustomFilter::new({
-        let query = query.clone();
-        move |item| {
-            choice(item)
-                .borrow::<Choice>()
-                .searchable
-                .contains(query.borrow().as_str())
-        }
-    });
-    let filtered = gtk::FilterListModel::new(Some(model), Some(filter.clone()));
-    let selection = gtk::SingleSelection::new(Some(filtered));
+    let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -338,28 +434,108 @@ async fn pick(
     let activate_row = activate.clone();
     list.connect_activate(move |_, position| activate_row(&items, position));
     let items = selection.clone();
-    search.connect_activate(move |_| activate(&items, items.selected()));
+    let activate_entry = activate.clone();
+    search.connect_activate(move |_| activate_entry(&items, items.selected()));
     let items = selection.clone();
     search.connect_changed(move |entry| {
-        *query.borrow_mut() = entry.text().to_lowercase();
-        filter.changed(gtk::FilterChange::Different);
+        let query = entry.text().to_lowercase();
+        let query = if rank_apps {
+            query.trim()
+        } else {
+            query.as_str()
+        };
+        if query.is_empty() {
+            model.splice(0, model.n_items(), &choices);
+        } else {
+            let mut matches: Vec<_> = choices
+                .iter()
+                .filter_map(|item| {
+                    let row = item.borrow::<Choice>();
+                    let rank = if rank_apps {
+                        app_match(&row.searchable, query)
+                    } else {
+                        row.searchable[0].contains(query).then_some((0, 0, 0, 0))
+                    };
+                    rank.map(|rank| (rank, row.index, item))
+                })
+                .collect();
+            matches.sort_unstable_by_key(|&(rank, index, _)| (rank, index));
+            let rows: Vec<_> = matches
+                .into_iter()
+                .map(|(_, _, item)| item.clone())
+                .collect();
+            model.splice(0, model.n_items(), &rows);
+        }
         items.set_selected(0);
     });
     let keys = gtk::EventControllerKey::new();
-    keys.connect_key_pressed(move |_, key, _, _| {
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let shortcut_result = selected.clone();
+    let close = window.downgrade();
+    keys.connect_key_pressed(move |_, key, _, state| {
+        use gtk::gdk::{Key, ModifierType as Mod};
+        let modifiers = state & gtk::accelerator_get_default_mod_mask();
+        if modifiers.difference(Mod::SHIFT_MASK).is_empty()
+            && let Some(index) = key.to_unicode().and_then(|key| {
+                shortcuts
+                    .iter()
+                    .position(|shortcut| shortcut.eq_ignore_ascii_case(&key))
+            })
+        {
+            *shortcut_result.borrow_mut() = Some(index);
+            if let Some(window) = close.upgrade() {
+                window.close();
+            }
+            return glib::Propagation::Stop;
+        }
+        let control = modifiers == Mod::CONTROL_MASK;
         let current = selection.selected();
+        let count = selection.n_items();
+        let page = || {
+            let row = list.first_child().map_or(1, |row| row.height()).max(1);
+            (scroll.height() / row).max(1) as u32
+        };
         let next = match key {
-            gtk::gdk::Key::Down => current.saturating_add(1),
-            gtk::gdk::Key::Up => current.saturating_sub(1),
+            Key::Down | Key::KP_Down => current.saturating_add(1),
+            Key::Up | Key::KP_Up => current.saturating_sub(1),
+            Key::n if control => current.saturating_add(1),
+            Key::p if control => current.saturating_sub(1),
+            Key::Home | Key::KP_Home if control => 0,
+            Key::End | Key::KP_End if control => count.saturating_sub(1),
+            Key::Page_Up | Key::KP_Page_Up => current.saturating_sub(page()),
+            Key::Page_Down | Key::KP_Page_Down => {
+                current.saturating_add(page()).min(count.saturating_sub(1))
+            }
+            Key::Tab if rank_apps && modifiers.is_empty() => {
+                if count == 1 {
+                    activate(&selection, current);
+                    return glib::Propagation::Stop;
+                }
+                let next = current.saturating_add(1);
+                if next < count { next } else { 0 }
+            }
+            Key::ISO_Left_Tab if rank_apps && modifiers == Mod::SHIFT_MASK => {
+                current.checked_sub(1).unwrap_or(count.saturating_sub(1))
+            }
+            Key::y if control => {
+                activate(&selection, current);
+                return glib::Propagation::Stop;
+            }
+            Key::g if control => {
+                if let Some(window) = close.upgrade() {
+                    window.close();
+                }
+                return glib::Propagation::Stop;
+            }
             _ => return glib::Propagation::Proceed,
         };
-        if next < selection.n_items() {
+        if next < count {
             selection.set_selected(next);
             list.scroll_to(next, gtk::ListScrollFlags::NONE, None);
         }
         glib::Propagation::Stop
     });
-    search.add_controller(keys);
+    window.add_controller(keys);
     show(&window, &search).await;
     let result = *selected.borrow();
     Ok(result)
@@ -486,6 +662,24 @@ mod tests {
             action(window);
         });
     }
+
+    fn press_picker_key(
+        window: &gtk::ApplicationWindow,
+        key: gtk::gdk::Key,
+        modifiers: gtk::gdk::ModifierType,
+    ) {
+        let controllers = window.observe_controllers();
+        let keys = (0..controllers.n_items())
+            .filter_map(|index| {
+                controllers
+                    .item(index)?
+                    .downcast::<gtk::EventControllerKey>()
+                    .ok()
+            })
+            .find(|controller| controller.propagation_phase() == gtk::PropagationPhase::Capture)
+            .expect("picker key controller");
+        assert!(keys.emit_by_name::<bool>("key-pressed", &[&key, &0_u32, &modifiers]));
+    }
     #[test]
     #[ignore = "requires an isolated session bus and Wayland compositor"]
     fn gtk4_search_password_qr_and_remote_toggle() {
@@ -520,6 +714,27 @@ mod tests {
                 .unwrap(),
             Some(1)
         );
+        interact(|window| {
+            use gtk::gdk::{Key, ModifierType};
+            for key in [Key::n, Key::p, Key::n, Key::y] {
+                press_picker_key(&window, key, ModifierType::CONTROL_MASK);
+            }
+        });
+        assert_eq!(
+            choose("Navigation fixture", &["First".into(), "Second".into()])
+                .await
+                .unwrap(),
+            Some(1)
+        );
+        interact(|window| {
+            press_picker_key(&window, gtk::gdk::Key::r, gtk::gdk::ModifierType::empty());
+        });
+        assert_eq!(
+            choose_with_keys("Power", &["Lock".into(), "Reboot".into()], &['l', 'r'])
+                .await
+                .unwrap(),
+            Some(1)
+        );
         let apps = [
             ("Terminal fixture", Some("utilities-terminal")),
             ("Fallback fixture", None),
@@ -531,6 +746,8 @@ mod tests {
             entry.set_string("Desktop Entry", "Exec", "/usr/bin/true");
             if let Some(icon) = icon {
                 entry.set_string("Desktop Entry", "Icon", icon);
+            } else {
+                entry.set_string("Desktop Entry", "GenericName", "System Monitor");
             }
             gio_unix::DesktopAppInfo::from_keyfile(&entry)
                 .unwrap()
@@ -554,8 +771,8 @@ mod tests {
                 .unwrap();
             let prefix = search.prev_sibling().and_downcast::<gtk::Label>().unwrap();
             assert_eq!(prefix.label(), ">");
-            search.set_text("fallback");
-            search.emit_activate();
+            search.set_text("sysmon");
+            press_picker_key(&window, gtk::gdk::Key::Tab, gtk::gdk::ModifierType::empty());
         });
         assert_eq!(choose_apps("Applications", &apps).await.unwrap(), Some(1));
         interact(|window| {
@@ -630,6 +847,25 @@ mod tests {
             .unwrap();
         assert_eq!(result, Some(0));
     }
+    #[test]
+    fn app_search_ranks_names_and_matches_desktop_metadata() {
+        let fields = |label: &str| vec![label.to_owned()];
+        let exact = app_match(&fields("fire"), "fire").unwrap();
+        let prefix = app_match(&fields("firefox"), "fire").unwrap();
+        let substring = app_match(&fields("waterfire"), "fire").unwrap();
+        let fuzzy = app_match(&fields("firefox"), "ffx").unwrap();
+        assert!(exact < prefix && prefix < substring && substring < fuzzy);
+        assert!(app_match(&fields("firefox"), "rff").is_none());
+        let app = vec![
+            "files".into(),
+            "file manager".into(),
+            "org.gnome.nautilus.desktop".into(),
+        ];
+        assert!(app_match(&app, "nautilus").is_some());
+        assert!(app_match(&app, "file man").is_some());
+        assert!(app_match(&app, "wallpaper").is_none());
+    }
+
     #[test]
     fn qr_escapes_wifi_delimiters() {
         assert_eq!(wifi_escape("a;b:c\\d"), "a\\;b\\:c\\\\d");

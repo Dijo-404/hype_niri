@@ -459,7 +459,8 @@ async fn copilot_shortcut() -> Result<()> {
 
 async fn watch_sleep() -> Result<()> {
     use std::{cell::RefCell, collections::VecDeque, rc::Rc};
-    let Some(_lock) = runtime::lock("hype-sleep-inhibitor.lock", Duration::ZERO)? else {
+    // The old swayidle hook holds a different lock until this watcher is ready.
+    let Some(_lock) = runtime::lock("hype-sleep-watch.lock", Duration::ZERO)? else {
         return Ok(());
     };
     let conn = bus::system().await?;
@@ -507,6 +508,7 @@ async fn watch_sleep() -> Result<()> {
         )
         .await?,
     );
+    crate::watchers::ready(crate::watchers::Watcher::Sleep)?;
     loop {
         if conn.is_closed() {
             return Err(err("System bus disconnected while watching sleep"));

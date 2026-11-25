@@ -1,14 +1,18 @@
 use crate::{Result, bus, caffeine, dialog, err, ipc, launcher, runtime, session};
-use gtk::{glib, prelude::*};
+use gtk::{gio, glib, prelude::*};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     env,
     ffi::OsString,
     fs,
     io::{Read, Seek},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::process::{CommandExt, ExitStatusExt},
+        unix::{
+            fs::MetadataExt,
+            process::{CommandExt, ExitStatusExt},
+        },
     },
     path::Path,
     process::{Command, ExitStatus, Stdio},
@@ -24,6 +28,11 @@ const LOGIN: &str = "org.freedesktop.login1";
 const LOGIN_MANAGER: &str = "org.freedesktop.login1.Manager";
 const LOGIN_PATH: &str = "/org/freedesktop/login1";
 const WAYBAR_WAIT: Duration = Duration::from_secs(3);
+const MENU_LOCK: &str = "hype-menu-toggle.lock";
+const MENU_WAIT: Duration = Duration::from_secs(1);
+const TRAY_WATCHER: &str = "org.kde.StatusNotifierWatcher";
+const TRAY_ITEM: &str = "org.kde.StatusNotifierItem";
+const TRAY_WAIT: Duration = Duration::from_secs(1);
 
 fn matches_process(pid: i32, name: &str) -> bool {
     let Ok(status) = fs::read_to_string(format!("/proc/{pid}/status")) else {
@@ -88,24 +97,81 @@ fn exit_code(status: ExitStatus) -> i32 {
         .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
 }
 
+fn menu_started(pid: u32) -> Option<u64> {
+    let proc = Path::new("/proc").join(pid.to_string());
+    if proc.metadata().ok()?.uid() != runtime::uid() {
+        return None;
+    }
+    let stat = fs::read_to_string(proc.join("stat")).ok()?;
+    stat.rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
+fn tracked_menu(path: &Path) -> Option<(u32, u64)> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+fn close_tracked_menu(path: &Path) -> Result<bool> {
+    let Some((pid, started)) = tracked_menu(path) else {
+        return Ok(false);
+    };
+    if menu_started(pid) != Some(started) {
+        return Ok(false);
+    }
+    let Some(process) = runtime::Process::open(pid)? else {
+        return Ok(false);
+    };
+    if menu_started(pid) != Some(started) || process.exited()? {
+        return Ok(false);
+    }
+    process.terminate()?;
+    let deadline = Instant::now() + MENU_WAIT;
+    while !process.exited()? {
+        if Instant::now() >= deadline {
+            return Err(err("Menu did not exit after its close request"));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(true)
+}
+
 fn menu_toggle(args: &[OsString]) -> Result<i32> {
     let Some((program, arguments)) = args.split_first() else {
         return Err(err("Usage: menu-toggle PROGRAM [arguments]"));
     };
-    let lock = runtime::lock_blocking("hype-menu-toggle.lock")?;
-    if terminate_named("wofi") {
+    let state = runtime::dir()?.join("hype-menu-toggle.state");
+    let lock = runtime::lock(MENU_LOCK, MENU_WAIT)?.ok_or_else(|| err("Menu toggle is busy"))?;
+    // Preserve the legacy behavior for Wofi launched through a shell wrapper or separately.
+    if close_tracked_menu(&state)? || terminate_named("wofi") {
         return Ok(0);
     }
     let mut child = Command::new(program).args(arguments).spawn()?;
-    // Keep a second press queued until Wofi starts or the command exits.
-    while named_processes("wofi").next().is_none() {
-        if let Some(status) = child.try_wait()? {
-            return Ok(exit_code(status));
+    let record = menu_started(child.id())
+        .map(|started| (child.id(), started))
+        .ok_or_else(|| err("Could not identify the launched menu"));
+    let record = match record.and_then(|record| {
+        runtime::atomic_write(&state, &serde_json::to_vec(&record)?)?;
+        Ok(record)
+    }) {
+        Ok(record) => record,
+        Err(cause) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(cause);
         }
-        thread::sleep(Duration::from_millis(20));
-    }
+    };
     drop(lock);
-    Ok(exit_code(child.wait()?))
+    let status = child.wait();
+    if let Ok(Some(_lock)) = runtime::lock(MENU_LOCK, MENU_WAIT)
+        && tracked_menu(&state) == Some(record)
+    {
+        let _ = fs::remove_file(state);
+    }
+    Ok(exit_code(status?))
 }
 
 async fn password_prompt(args: &[OsString]) -> Result<i32> {
@@ -143,20 +209,28 @@ async fn logind_power(method: &str) -> Result<()> {
 
 async fn power_menu() -> Result<()> {
     let choices = ["Lock", "Sleep", "Logout", "Shutdown", "Reboot"].map(str::to_owned);
-    let Some(choice) = dialog::choose("Power", &choices).await? else {
+    let Some(choice) =
+        dialog::choose_with_keys("Power", &choices, &['l', 's', 'e', 'p', 'r']).await?
+    else {
         return Ok(());
     };
-    match choice {
-        0 => return session::run("lock-screen", &[]).await,
-        1 => return session::run("suspend-now", &[]).await,
-        2..=4 => {
-            let _ = caffeine::run("caffeine", &["stop".into()]).await;
+    power_action(["lock", "suspend", "logout", "shutdown", "reboot"][choice]).await
+}
+
+async fn power_action(action: &str) -> Result<()> {
+    match action {
+        "lock" => return session::run("lock-screen", &[]).await,
+        "suspend" => return session::run("suspend-now", &[]).await,
+        "logout" | "shutdown" | "reboot" | "restart" => {
+            if let Err(error) = caffeine::run("caffeine", &["stop".into()]).await {
+                eprintln!("Could not stop Caffeine: {error}");
+            }
         }
-        _ => return Ok(()),
+        _ => return Err(err("Unknown power action")),
     }
-    match choice {
-        2 => ipc::action(json!({"Quit": {"skip_confirmation": true}})),
-        3 => logind_power("PowerOff").await,
+    match action {
+        "logout" => ipc::action(json!({"Quit": {"skip_confirmation": true}})),
+        "shutdown" => logind_power("PowerOff").await,
         _ => logind_power("Reboot").await,
     }
 }
@@ -168,6 +242,21 @@ fn app_with_theme(name: &str) -> Command {
         .unwrap_or_else(|| "Adwaita:dark".into());
     command.env("GTK_THEME", theme);
     command
+}
+
+fn blueman_manager(args: &[OsString]) -> Result<()> {
+    let module = env::current_exe()?.with_file_name("libhype_blueman_keys.so");
+    let mut command = Command::new("/usr/bin/blueman-manager");
+    command.args(args);
+    if module.is_file() {
+        let mut modules = env::var_os("GTK3_MODULES").unwrap_or_default();
+        if !modules.is_empty() {
+            modules.push(":");
+        }
+        modules.push(module);
+        command.env("GTK3_MODULES", modules);
+    }
+    Err(command.exec().into())
 }
 
 fn start_tray_applets() -> Result<()> {
@@ -307,9 +396,79 @@ async fn stealth_indicator() -> Result<()> {
     Ok(())
 }
 
+fn tray_item_path(item: &str) -> Option<(&str, &str)> {
+    let (name, path) = match item.find('/') {
+        Some(index) => item.split_at(index),
+        None => (item, "/StatusNotifierItem"),
+    };
+    (gio::dbus_is_name(name) && glib::Variant::is_object_path(path)).then_some((name, path))
+}
+
+fn visible_warp_item(properties: &HashMap<String, glib::Variant>) -> bool {
+    let field = |key| properties.get(key).and_then(glib::Variant::str);
+    // The vendor generates the item ID. Its public tray title is stable.
+    field("Title") == Some("warp-taskbar")
+        && field("Id").is_some_and(|id| !id.is_empty())
+        && field("Category").is_some_and(|category| !category.is_empty())
+        && field("Status").is_some_and(|status| {
+            status.eq_ignore_ascii_case("Active") || status.eq_ignore_ascii_case("NeedsAttention")
+        })
+}
+
+async fn warp_tray_registered() -> Result<bool> {
+    let connection = bus::session().await?;
+    let deadline = Instant::now() + TRAY_WAIT;
+    let (watcher,) = bus::call(
+        &connection,
+        TRAY_WATCHER,
+        "/StatusNotifierWatcher",
+        "org.freedesktop.DBus.Properties",
+        "GetAll",
+        Some(&(TRAY_WATCHER,).to_variant()),
+        TRAY_WAIT.as_millis() as i32,
+    )
+    .await?
+    .get::<(HashMap<String, glib::Variant>,)>()
+    .ok_or_else(|| err("Invalid status notifier registration"))?;
+    if watcher
+        .get("IsStatusNotifierHostRegistered")
+        .and_then(glib::Variant::get::<bool>)
+        != Some(true)
+    {
+        return Ok(false);
+    }
+    let items = watcher
+        .get("RegisteredStatusNotifierItems")
+        .and_then(glib::Variant::get::<Vec<String>>)
+        .ok_or_else(|| err("Invalid status notifier item list"))?;
+    for (service, path) in items.iter().filter_map(|item| tray_item_path(item)) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let properties = bus::call(
+            &connection,
+            service,
+            path,
+            "org.freedesktop.DBus.Properties",
+            "GetAll",
+            Some(&(TRAY_ITEM,).to_variant()),
+            remaining.as_millis().clamp(1, 250) as i32,
+        )
+        .await;
+        if let Ok(properties) = properties
+            && let Some((properties,)) = properties.get::<(HashMap<String, glib::Variant>,)>()
+            && visible_warp_item(&properties)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 async fn warp_indicator() {
-    if named_processes("warp-taskbar").next().is_some()
-        || !active_unit("warp-svc.service").await.unwrap_or(false)
+    if !active_unit("warp-svc.service").await.unwrap_or(false)
+        || warp_tray_registered().await.unwrap_or(false)
     {
         println!("{}", json!({"text": ""}));
         return;
@@ -338,12 +497,28 @@ pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
             ipc::action(json!({"FullscreenWindow": {"id": null}}))?;
         }
         "app-launcher" if args.is_empty() => launcher::run().await?,
+        "blueman-manager" => blueman_manager(args)?,
         "launch-default" if args.len() == 1 => {
             launcher::launch_default(&args[0].to_string_lossy()).await?;
         }
         "menu-toggle" => return menu_toggle(args),
         "password-prompt" => return password_prompt(args).await,
         "power-menu" if args.is_empty() => power_menu().await?,
+        "power-menu-action" => {
+            let action = match args {
+                [action] => action.to_str(),
+                _ => None,
+            }
+            .filter(|action| {
+                matches!(
+                    *action,
+                    "lock" | "suspend" | "logout" | "shutdown" | "reboot" | "restart"
+                )
+            })
+            .ok_or_else(|| err("Invalid power action"))?;
+            terminate_named("wlogout");
+            power_action(action).await?;
+        }
         "start-idle" if args.is_empty() => {
             // Keep the restart synchronous so fallback only runs when the service fails.
             let _ = Command::new("dbus-update-activation-environment")

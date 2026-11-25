@@ -42,6 +42,7 @@ async fn run(args: &[OsString]) -> Result<i32> {
             | "menu-toggle"
             | "password-prompt"
             | "power-menu"
+            | "power-menu-action"
             | "start-idle"
             | "start-tray-applets"
             | "start-waybar"
@@ -50,6 +51,7 @@ async fn run(args: &[OsString]) -> Result<i32> {
             | "app-launcher"
             | "stop-waybar"
             | "launch-default"
+            | "blueman-manager"
     ) {
         return helpers::run(command, arguments).await;
     }
@@ -82,6 +84,7 @@ async fn run_desktop(command: &str, arguments: &[String]) -> Result<()> {
         "hotspot" => network::run(command, arguments).await,
         "stealth" => hype_desktop::stealth_client::run(arguments).await,
         "open-drives" => drives::run(command, arguments).await,
+        "start-watchers" if arguments.is_empty() => hype_desktop::watchers::start(),
         "runtime-dir" => {
             println!("{}", runtime::dir()?.display());
             Ok(())
@@ -92,7 +95,7 @@ async fn run_desktop(command: &str, arguments: &[String]) -> Result<()> {
         }
         "--help" | "help" | "" => {
             println!(
-                "Usage: hype-control <command> [arguments]\nCommands: monitors clipboard emoji app-launcher stop-waybar launch-default media temperature brightness volume mic power-profile auto-power-profile caffeine display-scale monitor-refresh opacity-toggle hotspot open-drives copilot-shortcut copilot-display prepare-sleep suspend-now lock-dim lock wallpaper runtime-dir stealth fullscreen-toggle menu-toggle password-prompt power-menu start-idle start-tray-applets start-waybar stealth-indicator warp-indicator"
+                "Usage: hype-control <command> [arguments]\nCommands: monitors clipboard emoji app-launcher stop-waybar launch-default media temperature brightness volume mic power-profile auto-power-profile caffeine display-scale monitor-refresh opacity-toggle hotspot open-drives copilot-shortcut copilot-display prepare-sleep suspend-now lock-dim lock wallpaper runtime-dir stealth fullscreen-toggle menu-toggle password-prompt power-menu start-idle start-watchers start-tray-applets start-waybar stealth-indicator warp-indicator"
             );
             Ok(())
         }

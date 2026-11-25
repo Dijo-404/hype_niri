@@ -5,8 +5,8 @@ use std::{
     cell::Cell,
     fs,
     os::{
-        fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::fs::MetadataExt,
+        fd::{AsRawFd, OwnedFd},
+        unix::{ffi::OsStrExt, fs::MetadataExt},
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -79,8 +79,69 @@ pub(crate) async fn inhibit(
 fn read_holder(dir: &Path) -> Option<Holder> {
     serde_json::from_slice(&fs::read(dir.join("caffeine_pid")).ok()?).ok()
 }
+fn legacy_holder(pid: u32, dir: &Path) -> Option<std::path::PathBuf> {
+    let proc = Path::new("/proc").join(pid.to_string());
+    if fs::metadata(&proc).ok()?.uid() != runtime::uid()
+        || !executable_matches(
+            &fs::read_link(proc.join("exe")).ok()?,
+            &fs::canonicalize("/usr/bin/systemd-inhibit").ok()?,
+        )
+    {
+        return None;
+    }
+    let command = fs::read(proc.join("cmdline")).ok()?;
+    let args: Vec<_> = command
+        .strip_suffix(&[0])?
+        .split(|&byte| byte == 0)
+        .collect();
+    let script = runtime::home()
+        .ok()?
+        .join(".config/scripts/caffeine-control.sh");
+    let [
+        _,
+        b"--what=idle",
+        b"--who=Caffeine Mode",
+        b"--why=User requested stay awake",
+        b"--mode=block",
+        b"--",
+        b"bash",
+        path,
+        b"hold",
+        readiness,
+    ] = args.as_slice()
+    else {
+        return None;
+    };
+    if *path != script.as_os_str().as_encoded_bytes() {
+        return None;
+    }
+    let readiness = Path::new(std::ffi::OsStr::from_bytes(readiness));
+    (readiness.parent() == Some(dir)
+        && readiness
+            .file_name()?
+            .as_encoded_bytes()
+            .starts_with(b"caffeine-ready."))
+    .then(|| readiness.to_owned())
+}
 fn ready_path(dir: &Path, token: &str) -> PathBuf {
     dir.join(format!("caffeine-ready.{token}"))
+}
+
+fn legacy_holders(dir: &Path) -> Result<Vec<(u32, PathBuf)>> {
+    let mut holders = Vec::new();
+    // An earlier build could erase the PID file while the legacy inhibitor remained open.
+    for entry in fs::read_dir("/proc")?.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        if fs::read_to_string(entry.path().join("comm"))
+            .is_ok_and(|name| name.trim_end() == "systemd-inhibit")
+            && let Some(readiness) = legacy_holder(pid, dir)
+        {
+            holders.push((pid, readiness));
+        }
+    }
+    Ok(holders)
 }
 fn process_start(pid: u32) -> Option<u64> {
     parse_starttime(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
@@ -124,30 +185,13 @@ fn acquired(dir: &Path, holder: &Holder, exe: &Path) -> bool {
 
 // Open the process handle before checking identity, then signal that exact process.
 fn signal_holder(holder: &Holder, exe: &Path) -> Result<bool> {
-    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, holder.pid, 0) };
-    if raw < 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(false);
-        }
-        return Err(error.into());
-    }
-    let fd = unsafe { OwnedFd::from_raw_fd(raw as i32) };
+    let Some(process) = runtime::Process::open(holder.pid)? else {
+        return Ok(false);
+    };
     if !holder_matches(holder, exe) {
         return Ok(false);
     }
-    let sent = unsafe {
-        libc::syscall(
-            libc::SYS_pidfd_send_signal,
-            fd.as_raw_fd(),
-            libc::SIGTERM,
-            std::ptr::null::<libc::siginfo_t>(),
-            0,
-        )
-    };
-    if sent < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
-        return Err(std::io::Error::last_os_error().into());
-    }
+    process.terminate()?;
     Ok(true)
 }
 fn remove(path: impl AsRef<Path>) {
@@ -169,6 +213,20 @@ async fn stop(dir: &Path) -> Result<()> {
         }
         if valid_token(&holder.token) {
             remove(ready_path(dir, &holder.token));
+        }
+    }
+    for (pid, readiness) in legacy_holders(dir)? {
+        if let Some(process) = runtime::Process::open(pid)?
+            && legacy_holder(pid, dir).as_ref() == Some(&readiness)
+        {
+            process.terminate()?;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !process.exited()? {
+                if Instant::now() >= deadline {
+                    return Err(err("Legacy Caffeine holder did not release its inhibitor"));
+                }
+                glib::timeout_future(Duration::from_millis(20)).await;
+            }
         }
     }
     remove(dir.join("caffeine_pid"));
@@ -335,7 +393,9 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
             .as_deref()
             == Some(holder.token.as_str())
             && std::env::current_exe().is_ok_and(|exe| acquired(&dir, holder, &exe))
-    });
+    }) || legacy_holders(&dir)?
+        .iter()
+        .any(|(_, ready)| fs::metadata(ready).is_ok_and(|m| m.is_file() && m.len() > 0));
     let mut active = active;
     if action == "toggle" {
         if active {

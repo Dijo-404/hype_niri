@@ -13,6 +13,11 @@ use std::{
 use tempfile::{Builder, NamedTempFile};
 
 pub(crate) const DESKTOP_PROGRAMS: &[&str] = &["hype-notch", "hype-control", "hype-status"];
+pub(crate) const BLUEMAN_KEYS: &str = "libhype_blueman_keys.so";
+pub(crate) const WATCHER_UNITS: &[&str] = &[
+    "systemd/user/hype-sleep-watch.service",
+    "systemd/user/hype-clipboard-watch.service",
+];
 const REPOSITORY: &str = "https://github.com/Dijo-404/hype_niri.git";
 
 const DESKTOP_DIRS: &[&str] = &[
@@ -48,6 +53,7 @@ const LEGACY_CONTROLS: &[&str] = &[
     "menu-toggle",
     "password-prompt",
     "power-menu",
+    "power-menu-action",
     "start-tray-applets",
     "start-waybar",
     "stealth-indicator",
@@ -85,10 +91,18 @@ const AUTO_POWER_TRANSITION: &[u8] =
     b"#!/usr/bin/env bash\nexec \"${BASH_SOURCE[0]%/*}/hype-control\" auto-power-profile \"$@\"\n";
 // A running bar or custom config can retain old command paths after disk configuration changes.
 const WAYBAR_COMPATIBILITY: &[&str] = &[
+    "brightness-control",
+    "caffeine-control",
+    "hotspot",
     "menu-toggle",
+    "mic-control",
     "power-menu",
-    "warp-indicator",
+    "power-menu-action",
+    "power-profile",
     "stealth-indicator",
+    "temperature-control",
+    "volume-control",
+    "warp-indicator",
 ];
 
 impl Installer {
@@ -183,6 +197,23 @@ impl Installer {
         Ok(launcher)
     }
 
+    pub fn refresh_cli(&self) -> Result<()> {
+        let launcher = self
+            .build_rust(
+                &["--package", "hype-install", "--bin", "hype-install"],
+                &["hype-install"],
+                "--help",
+            )
+            .and_then(|build| self.publish_cli(&build.path().join("hype-install")))
+            .map_err(|cause| {
+                error(format!(
+                    "Desktop files were applied. Could not refresh the installed Hype CLI: {cause}"
+                ))
+            })?;
+        self.note(format_args!("Refreshed {}", launcher.display()));
+        Ok(())
+    }
+
     pub fn backup_configs(&mut self) -> Result<()> {
         let targets = [
             ".zshrc",
@@ -263,8 +294,11 @@ impl Installer {
                 "hype-control",
                 "--bin",
                 "hype-status",
+                "--package",
+                "hype-blueman-keys",
+                "--lib",
             ],
-            DESKTOP_PROGRAMS,
+            &["hype-notch", "hype-control", "hype-status", BLUEMAN_KEYS],
             "--check",
         )?;
         let release = build.path().to_owned();
@@ -326,8 +360,13 @@ impl Installer {
         // Publish from a private snapshot in case another install reuses the cache.
         for name in binaries {
             let binary = release.join(name);
-            self.validate_binary(&binary, check)?;
-            copy_regular(&binary, &staged.path().join(name), Some(0o755), false)?;
+            let mode = if *name == BLUEMAN_KEYS {
+                0o644
+            } else {
+                self.validate_binary(&binary, check)?;
+                0o755
+            };
+            copy_regular(&binary, &staged.path().join(name), Some(mode), false)?;
         }
         Ok(staged)
     }
@@ -368,11 +407,16 @@ impl Installer {
 
     pub fn copy_configs(&mut self) -> Result<()> {
         let release = self.build_programs()?;
-        let config = self.prepare_user_directory(".config")?;
+        let config = self.user(".config");
+        let staging_parent = if metadata(&config)?.is_some_and(|entry| entry.is_dir()) {
+            &config
+        } else {
+            &self.home
+        };
+        let stage = Builder::new()
+            .prefix(".hype-configs.")
+            .tempdir_in(staging_parent)?;
         for dir in DESKTOP_DIRS {
-            let stage = Builder::new()
-                .prefix(&format!(".{dir}."))
-                .tempdir_in(&config)?;
             let staged = stage.path().join(dir);
             fs::create_dir(&staged)?;
             copy_contents(&self.source.join(dir), &staged, false)
@@ -388,6 +432,12 @@ impl Installer {
                             true,
                         )?;
                     }
+                    copy_regular(
+                        &release.join(BLUEMAN_KEYS),
+                        &staged.join(BLUEMAN_KEYS),
+                        Some(0o644),
+                        true,
+                    )?;
                     // Keep the previous Niri binding usable until its configuration is replaced.
                     for (name, program) in LEGACY_CONTROLS
                         .iter()
@@ -457,25 +507,33 @@ impl Installer {
                         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
                         Err(err) => return Err(err.into()),
                     }
+                    let outputs = staged.join("outputs.kdl");
+                    if metadata(&outputs)?.is_none() {
+                        write_file(&outputs, b"", 0o644)?;
+                    }
                 }
                 _ => {}
             }
-            replace_directory(&staged, &config.join(dir))?;
+        }
+        let niri = stage.path().join("niri/config.kdl");
+        self.command("niri", &["validate", "-c", path_arg(&niri)?])
+            .map_err(|cause| error(format!("Staged Niri configuration is invalid: {cause}")))?;
+        let config = self.prepare_user_directory(".config")?;
+        publish_config_dirs(stage, &config, DESKTOP_DIRS)?;
+        self.configure_blueman_wrapper()?;
+        for dir in DESKTOP_DIRS {
             self.note(format_args!("Copied {dir} to ~/.config/{dir}"));
         }
 
         for name in LEGACY_CONTROLS.iter().copied().chain(["notch"]) {
-            if WAYBAR_COMPATIBILITY.contains(&name) {
+            // Keep the old before-sleep hook until the new watcher has acquired its inhibitor.
+            if WAYBAR_COMPATIBILITY.contains(&name) || name == "prepare-sleep" {
                 continue;
             }
             remove_legacy_link(&config.join(format!("scripts/{name}.sh")))?;
         }
         let control = config.join("scripts/hype-control");
         let _ = self.output(path_arg(&control)?, &["display-scale", "--no-reload"]);
-        let outputs = config.join("niri/outputs.kdl");
-        if metadata(&outputs)?.is_none() {
-            write_file(&outputs, b"", 0o644)?;
-        }
 
         self.setup_user_dirs()?;
         if fs::symlink_metadata(self.user("Drives")).is_ok_and(|metadata| metadata.is_dir()) {
@@ -802,7 +860,10 @@ impl Installer {
         for file in [
             "systemd/user/hype-auto-power-profile.service",
             "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
-        ] {
+        ]
+        .into_iter()
+        .chain(WATCHER_UNITS.iter().copied())
+        {
             copy_regular(
                 &self.source.join(file),
                 &self.user(".config").join(file),
@@ -827,19 +888,18 @@ impl Installer {
                 remove_legacy_link(&transition)?;
             }
         }
-        if self.selected("bluetooth") {
-            self.remove_blueman_wrapper()?;
-            if self
+        self.configure_blueman_wrapper()?;
+        if self.selected("bluetooth")
+            && self
                 .command(
                     "gsettings",
                     &["set", "org.blueman.general", "notification-daemon", "false"],
                 )
                 .is_err()
-            {
-                self.warn(format_args!(
-                    "Could not enable Bluetooth pairing dialogs. Run gsettings set org.blueman.general notification-daemon false."
-                ));
-            }
+        {
+            self.warn(format_args!(
+                "Could not enable Bluetooth pairing dialogs. Run gsettings set org.blueman.general notification-daemon false."
+            ));
         }
         if let Err(err) = self.set_default_browser() {
             self.warn(format_args!("Could not set the default browser: {err}"));
@@ -852,6 +912,17 @@ impl Installer {
         }
         if user_manager_running {
             self.command("systemctl", &["--user", "daemon-reload"])?;
+            if std::env::var_os("NIRI_SOCKET").is_some_and(|path| Path::new(&path).exists())
+                && scripts.join("hype-control").is_file()
+                && let Err(cause) = self.command(
+                    path_arg(&scripts.join("hype-control"))?,
+                    &["start-watchers"],
+                )
+            {
+                self.warn(format_args!(
+                    "Could not hand off desktop watchers: {cause}. Their services start at the next Niri login."
+                ));
+            }
         }
         self.setup_hype_flow()?;
         Ok(())
@@ -896,26 +967,76 @@ impl Installer {
         Ok(())
     }
 
-    fn remove_blueman_wrapper(&self) -> Result<()> {
+    fn configure_blueman_wrapper(&self) -> Result<()> {
+        const OLD_WRAPPER: &str = "/.config/scripts/blueman-manager.py";
         let entry = self.user(".local/share/applications/blueman-manager.desktop");
-        if entry.is_file()
-            && fs::read_to_string(&entry)?.lines().any(|line| {
-                line.strip_prefix("Exec=")
-                    .is_some_and(|exec| exec.contains("/.config/scripts/blueman-manager.py"))
-            })
-        {
-            self.prepare_user_directory(".local/share/applications")?;
-            remove_file(&entry)?;
-        }
-
         let dir = ".config/systemd/user/blueman-manager.service.d";
         let dropin = self.user(dir);
-        if dropin.join("hype-niri.conf").symlink_metadata().is_ok() {
-            self.prepare_user_directory(dir)?;
-            remove_file(&dropin.join("hype-niri.conf"))?;
+        let override_path = dropin.join("hype-niri.conf");
+        let owns = |path: &Path| {
+            fs::symlink_metadata(path).is_ok_and(|entry| entry.is_file())
+                && fs::read_to_string(path).is_ok_and(|contents| {
+                    contents.lines().any(|line| {
+                        (line.starts_with("Exec=") || line.starts_with("ExecStart="))
+                            && (line.contains(OLD_WRAPPER)
+                                || (line.contains("/.config/scripts/hype-control")
+                                    && line.ends_with(" blueman-manager")))
+                    })
+                })
+        };
+        let upstream = self.system("/usr/share/applications/blueman-manager.desktop");
+        let launcher = self.user(".config/scripts/hype-control");
+        if !upstream.is_file() || !launcher.with_file_name(BLUEMAN_KEYS).is_file() {
+            if owns(&entry) {
+                self.prepare_user_directory(".local/share/applications")?;
+                remove_file(&entry)?;
+            }
+            if owns(&override_path) {
+                self.prepare_user_directory(dir)?;
+                remove_file(&override_path)?;
+            }
+            return Ok(());
         }
-        if !dropin.is_symlink() {
-            let _ = fs::remove_dir(&dropin);
+        let managed_entry = owns(&entry);
+        if managed_entry || metadata(&entry)?.is_none() {
+            self.prepare_user_directory(".local/share/applications")?;
+            let launcher = path_arg(&launcher)?;
+            if launcher.contains(['\n', '\r']) {
+                return Err(error("Blueman wrapper path contains a line break"));
+            }
+            // Exec quoting is parsed after the desktop entry's string escapes.
+            let quoted = launcher.chars().fold(String::new(), |mut result, c| {
+                match c {
+                    '\\' => result.push_str("\\\\\\\\"),
+                    '"' | '`' | '$' => {
+                        result.push_str("\\\\");
+                        result.push(c);
+                    }
+                    '%' => result.push_str("%%"),
+                    _ => result.push(c),
+                }
+                result
+            });
+            let original = fs::read_to_string(if managed_entry { &entry } else { &upstream })?;
+            let mut result = String::new();
+            for line in original.lines() {
+                if line.starts_with("Exec=") {
+                    result.push_str(&format!("Exec=\"{quoted}\" blueman-manager\n"));
+                } else {
+                    result.push_str(line);
+                    result.push('\n');
+                }
+            }
+            if result != original || !managed_entry {
+                write_file(&entry, result.as_bytes(), 0o644)?;
+            }
+        }
+        if owns(&override_path) || metadata(&override_path)?.is_none() {
+            self.prepare_user_directory(dir)?;
+            let contents = b"[Service]\nExecStart=\nExecStart=%h/.config/scripts/hype-control blueman-manager\n";
+            if !fs::read(&override_path).is_ok_and(|current| current == contents) {
+                write_file(&override_path, contents, 0o644)?;
+            }
         }
         Ok(())
     }
@@ -1109,6 +1230,33 @@ pub(crate) fn replace_directory(staged: &Path, destination: &Path) -> io::Result
             destination.display(),
             io::Error::last_os_error()
         )));
+    }
+    Ok(())
+}
+
+fn publish_config_dirs(stage: tempfile::TempDir, config: &Path, dirs: &[&str]) -> Result<()> {
+    let mut published = Vec::new();
+    for dir in dirs {
+        let staged = stage.path().join(dir);
+        let installed = config.join(dir);
+        if let Err(cause) = replace_directory(&staged, &installed) {
+            let failures: Vec<_> = published
+                .into_iter()
+                .rev()
+                .filter_map(|(staged, installed): (PathBuf, PathBuf)| {
+                    replace_directory(&installed, &staged).err()
+                })
+                .collect();
+            if !failures.is_empty() {
+                let recovery = stage.keep();
+                return Err(error(format!(
+                    "{cause}. Could not restore {failures:?}. Previous configs retained in {}",
+                    recovery.display()
+                )));
+            }
+            return Err(cause.into());
+        }
+        published.push((staged, installed));
     }
     Ok(())
 }

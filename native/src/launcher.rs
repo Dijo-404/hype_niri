@@ -1,5 +1,6 @@
 use crate::{Result, dialog, err, notify};
-use gtk::{gio, prelude::*};
+use gtk::{gio, glib, prelude::*};
+use std::process::Command;
 
 fn applications(category: Option<&str>) -> Vec<gio::AppInfo> {
     let mut apps: Vec<_> = gio::AppInfo::all()
@@ -40,9 +41,43 @@ pub(crate) async fn launch_copilot_editor() -> Result<()> {
     launch_default("editor").await
 }
 
+fn launch_preferred(kind: &str) -> Result<bool> {
+    let Some(program) = glib::find_program_in_path(kind) else {
+        if kind == "brave"
+            && let Some(app) = ["brave-browser.desktop", "com.brave.Browser.desktop"]
+                .into_iter()
+                .find_map(gio_unix::DesktopAppInfo::new)
+        {
+            app.launch(&[], None::<&gio::AppLaunchContext>)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    };
+    if kind == "brave" {
+        Command::new(program).spawn()?;
+    } else {
+        let Some(terminal) = glib::find_program_in_path("alacritty") else {
+            return Ok(false);
+        };
+        Command::new(terminal).arg("-e").arg(program).spawn()?;
+    }
+    Ok(true)
+}
+
 pub async fn launch_default(kind: &str) -> Result<()> {
+    let (preferred, kind) = match kind {
+        "neovim" => (Some("nvim"), "editor"),
+        "brave" => (Some("brave"), "browser"),
+        "htop" => (Some("htop"), "monitor"),
+        _ => (None, kind),
+    };
+    if let Some(preferred) = preferred
+        && launch_preferred(preferred)?
+    {
+        return Ok(());
+    }
     if kind == "color-picker" {
-        return match std::process::Command::new("hyprpicker").arg("-a").spawn() {
+        return match Command::new("hyprpicker").arg("-a").spawn() {
             Ok(_) => Ok(()),
             Err(error) => {
                 let message =
@@ -66,7 +101,7 @@ pub async fn launch_default(kind: &str) -> Result<()> {
         "monitor" | "audio" => None,
         _ => {
             return Err(err(
-                "Usage: launch-default browser|editor|monitor|audio|color-picker",
+                "Usage: launch-default browser|editor|monitor|audio|color-picker|neovim|brave|htop",
             ));
         }
     };

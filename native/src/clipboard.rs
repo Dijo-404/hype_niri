@@ -1,14 +1,18 @@
 use crate::{Result, dialog, err, runtime};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, OpenOptions},
+    collections::HashSet,
+    ffi::OsStr,
+    fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Write},
     net::Shutdown,
     os::{
-        fd::{AsFd, AsRawFd},
+        fd::{AsFd, AsRawFd, OwnedFd},
         unix::{
+            ffi::OsStrExt,
             fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::UnixStream,
+            process::CommandExt,
         },
     },
     path::{Path, PathBuf},
@@ -20,15 +24,17 @@ use wl_clipboard_rs::{
     watch::{ClipboardEvent, ClipboardType, Watcher},
 };
 
-const MAX_ENTRIES: usize = 64;
+const MAX_ENTRIES: usize = 750;
 const MAX_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FILE_BYTES: usize = MAX_TOTAL_BYTES + MAX_ENTRIES * 300 + 16;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 const OWNER_TIMEOUT: Duration = Duration::from_secs(4);
+const IMPORT_TIMEOUT: Duration = Duration::from_secs(30);
+const IMPORT_LIST_BYTES: usize = 1024 * 1024;
 const OWNER_TOKEN_PREFIX: &str = "application/x-hype-clipboard-";
 const MAGIC: &[u8] = b"HYPECLIP1";
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Entry {
     mime: String,
     data: Vec<u8>,
@@ -107,6 +113,31 @@ impl History {
         });
         Ok(true)
     }
+    fn append_legacy(&mut self, entries: Vec<Entry>) -> usize {
+        let original = self.entries.len();
+        let mut bytes = self
+            .entries
+            .iter()
+            .map(|entry| entry.data.len())
+            .sum::<usize>();
+        let mut seen: HashSet<_> = self
+            .entries
+            .iter()
+            .map(|entry| Sha256::digest(&entry.data))
+            .collect();
+        for entry in entries {
+            if self.entries.len() == MAX_ENTRIES {
+                break;
+            }
+            if entry.data.len() <= MAX_TOTAL_BYTES - bytes
+                && seen.insert(Sha256::digest(&entry.data))
+            {
+                bytes += entry.data.len();
+                self.entries.push(entry);
+            }
+        }
+        self.entries.len() - original
+    }
     fn write_to(&self, mut writer: impl Write) -> Result<()> {
         writer.write_all(MAGIC)?;
         writer.write_all(&(self.entries.len() as u32).to_le_bytes())?;
@@ -132,10 +163,10 @@ impl History {
         for _ in 0..count {
             let entry = Entry::read_from(&mut reader, budget)?;
             budget -= entry.data.len();
-            if entries.contains(&entry) {
-                return Err(err("Duplicate clipboard history entry"));
-            }
             entries.push(entry);
+        }
+        if entries.iter().collect::<HashSet<_>>().len() != entries.len() {
+            return Err(err("Duplicate clipboard history entry"));
         }
         if reader.read(&mut [0])? != 0 {
             return Err(err("Trailing clipboard history data"));
@@ -236,11 +267,18 @@ fn update(entry: Option<Entry>) -> Result<()> {
     let mut history = load(&path)?;
     let changed = match entry {
         Some(entry) => history.insert(entry)?,
-        None => !std::mem::take(&mut history.entries).is_empty(),
+        None => {
+            // A later watcher start must not repopulate a cleared history.
+            mark_imported(&path)?;
+            !std::mem::take(&mut history.entries).is_empty()
+        }
     };
     if !changed {
         return Ok(());
     }
+    save(&path, &history)
+}
+fn save(path: &Path, history: &History) -> Result<()> {
     let directory = path
         .parent()
         .ok_or_else(|| err("Missing clipboard directory"))?;
@@ -254,8 +292,14 @@ fn update(entry: Option<Entry>) -> Result<()> {
         writer.flush()?;
     }
     staged.as_file().sync_all()?;
-    staged.persist(&path)?;
+    staged.persist(path)?;
     Ok(())
+}
+fn import_marker(history: &Path) -> PathBuf {
+    history.with_file_name("cliphist-imported")
+}
+fn mark_imported(history: &Path) -> Result<()> {
+    runtime::atomic_write(&import_marker(history), b"1\n")
 }
 fn snapshot() -> Result<History> {
     let _lock = runtime::lock_blocking("clipboard-history.lock")?;
@@ -305,7 +349,11 @@ fn bounded_read(
             Ok(0) => return Ok(bytes),
             Ok(count) => {
                 if count > limit.saturating_sub(bytes.len()) {
-                    return Err(err("Clipboard offer exceeds size limit"));
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Clipboard offer exceeds size limit",
+                    )
+                    .into());
                 }
                 bytes.extend_from_slice(&chunk[..count]);
             }
@@ -318,8 +366,212 @@ fn bounded_read(
         }
     }
 }
+fn legacy_output(
+    command: &mut Command,
+    limit: usize,
+    deadline: Instant,
+    capture_stderr: bool,
+) -> Result<Option<Vec<u8>>> {
+    let deadline = deadline.min(Instant::now() + READ_TIMEOUT);
+    let mut child = match command
+        .stdin(Stdio::null())
+        .stdout(if capture_stderr {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
+        .stderr(if capture_stderr {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .process_group(0)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let result = (|| {
+        let output = if capture_stderr {
+            child.stderr.take().map(OwnedFd::from)
+        } else {
+            child.stdout.take().map(OwnedFd::from)
+        }
+        .ok_or_else(|| err("Cannot read cliphist output"))?;
+        let output = bounded_read(
+            File::from(output),
+            limit,
+            deadline.saturating_duration_since(Instant::now()),
+        )?;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                if status.success() {
+                    return Ok(output);
+                }
+                return Err(err(format!("cliphist {status}")));
+            }
+            if Instant::now() >= deadline {
+                return Err(err("cliphist import command timed out"));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    })();
+    if result.is_err() && child.try_wait().ok().flatten().is_none() {
+        // Also release stdout held by any child of the invoked utility.
+        unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+        let _ = child.wait();
+    }
+    result.map(Some)
+}
+fn legacy_path(bytes: &[u8]) -> Option<PathBuf> {
+    bytes.split(|byte| *byte == b'\n').find_map(|line| {
+        let path = line.strip_prefix(b"db-path\t")?;
+        let path = path.strip_suffix(b"\r").unwrap_or(path);
+        (!path.is_empty()).then(|| PathBuf::from(OsStr::from_bytes(path)))
+    })
+}
+fn legacy_ids(list: &[u8]) -> impl Iterator<Item = &str> {
+    list.split(|byte| *byte == b'\n').filter_map(|line| {
+        let field = std::str::from_utf8(line.split(|byte| *byte == b'\t').next()?).ok()?;
+        field.parse::<u64>().ok().map(|_| field)
+    })
+}
+fn legacy_entry(data: Vec<u8>) -> Option<Entry> {
+    let mime = match image::guess_format(&data) {
+        Ok(format) => format.to_mime_type(),
+        Err(_) if std::str::from_utf8(&data).is_ok() => "text/plain;charset=utf-8",
+        Err(_) => return None,
+    };
+    let entry = Entry {
+        mime: mime.into(),
+        data,
+    };
+    entry.validate().ok().map(|()| entry)
+}
+fn import_legacy(explicit: bool, source: Option<&Path>) -> Result<Option<usize>> {
+    let Some(_importing) = runtime::lock("cliphist-import.lock", Duration::ZERO)? else {
+        if explicit {
+            return Err(err("A cliphist import is already in progress"));
+        }
+        return Ok(None);
+    };
+    let history_path = state_path()?;
+    if !explicit && import_marker(&history_path).exists() {
+        return Ok(None);
+    }
+    let default_source = source.is_none();
+    let deadline = Instant::now() + IMPORT_TIMEOUT;
+    let source = match source {
+        Some(source) => source.to_owned(),
+        None => {
+            // cliphist prints its version and effective flags to stderr.
+            let Some(output) = legacy_output(
+                Command::new("cliphist").arg("version"),
+                8192,
+                deadline,
+                true,
+            )?
+            else {
+                return if explicit {
+                    Err(err("Install cliphist to import its old database"))
+                } else {
+                    Ok(None)
+                };
+            };
+            legacy_path(&output).ok_or_else(|| err("cliphist did not report its database path"))?
+        }
+    };
+    match fs::metadata(&source) {
+        Ok(metadata) if metadata.is_file() && metadata.uid() == runtime::uid() => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !explicit => return Ok(None),
+        _ => {
+            return Err(err(
+                "Expected a legacy clipboard database owned by this user",
+            ));
+        }
+    }
+    // The old utility opens list and decode in read-only mode. Pin both paths so a
+    // cliphist setting cannot redirect either command to a different database.
+    let run = |args: &[&str], limit| {
+        legacy_output(
+            Command::new("cliphist")
+                .args([
+                    "-config-path",
+                    "/dev/null",
+                    "-preview-width",
+                    "0",
+                    "-db-path",
+                ])
+                .arg(&source)
+                .args(args)
+                .env_remove("CLIPHIST_CONFIG_PATH")
+                .env_remove("CLIPHIST_DB_PATH")
+                .env_remove("CLIPHIST_PREVIEW_WIDTH"),
+            limit,
+            deadline,
+            false,
+        )?
+        .ok_or_else(|| err("Install cliphist to import its old database"))
+    };
+    let list = run(&["list"], IMPORT_LIST_BYTES)?;
+    let (remaining, mut bytes, mut seen) = {
+        let history = snapshot()?;
+        let bytes = history
+            .entries
+            .iter()
+            .map(|entry| entry.data.len())
+            .sum::<usize>();
+        let seen = history
+            .entries
+            .iter()
+            .map(|entry| Sha256::digest(&entry.data))
+            .collect::<HashSet<_>>();
+        (MAX_ENTRIES - history.entries.len(), bytes, seen)
+    };
+    let mut entries = Vec::new();
+    for id in legacy_ids(&list).take(MAX_ENTRIES) {
+        if entries.len() == remaining || bytes == MAX_TOTAL_BYTES {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(err("cliphist import timed out"));
+        }
+        let data = match run(&["decode", id], MAX_ENTRY_BYTES) {
+            Ok(data) => data,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::InvalidData) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(entry) = legacy_entry(data)
+            && entry.data.len() <= MAX_TOTAL_BYTES - bytes
+            && seen.insert(Sha256::digest(&entry.data))
+        {
+            bytes += entry.data.len();
+            entries.push(entry);
+        }
+    }
+    let _lock = runtime::lock_blocking("clipboard-history.lock")?;
+    if !explicit && import_marker(&history_path).exists() {
+        return Ok(None);
+    }
+    let mut history = load(&history_path)?;
+    let count = history.append_legacy(entries);
+    if count > 0 {
+        save(&history_path, &history)?;
+    }
+    if default_source {
+        mark_imported(&history_path)?;
+    }
+    Ok(Some(count))
+}
 async fn watch() -> Result<()> {
-    let Some(_singleton) = runtime::lock("clipboard-watcher.lock", Duration::ZERO)? else {
+    let Some(_singleton) = runtime::lock("hype-clipboard-watch.lock", Duration::ZERO)? else {
         return Ok(());
     };
     // Create the protocol connection in its own thread: GTK's context owns signal handling.
@@ -371,6 +623,16 @@ async fn watch() -> Result<()> {
             gtk::glib::ControlFlow::Continue
         }));
     }
+    crate::watchers::ready(crate::watchers::Watcher::Clipboard)?;
+    gtk::glib::spawn_future_local(async {
+        if let Ok(Err(error)) = gtk::gio::spawn_blocking(|| {
+            import_legacy(false, None).map_err(|error| error.to_string())
+        })
+        .await
+        {
+            eprintln!("Clipboard history import failed: {error}");
+        }
+    });
     while !worker.is_finished() {
         gtk::glib::timeout_future(Duration::from_millis(100)).await;
     }
@@ -474,6 +736,11 @@ pub async fn run(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str).unwrap_or("pick") {
         "watch" if args.len() == 1 => watch().await,
         "clear" if args.len() == 1 => update(None),
+        "import-cliphist" if args.len() <= 2 => {
+            let count = import_legacy(true, args.get(1).map(Path::new))?.unwrap_or(0);
+            println!("Imported {count} clipboard entries");
+            Ok(())
+        }
         "list" if args.len() == 1 => {
             for entry in snapshot()?.entries {
                 println!("{}\t{}", entry.id(), entry.label());
@@ -502,7 +769,7 @@ pub async fn run(args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => Err(err(
-            "Usage: hype-control clipboard [watch|pick|clear|list|copy <id>]",
+            "Usage: hype-control clipboard [watch|pick|clear|list|copy <id>|import-cliphist [database]]",
         )),
     }
 }
@@ -617,11 +884,49 @@ mod tests {
         assert!(!history.insert(entry("text/plain", b"old")).unwrap());
         assert_eq!(history.entries.len(), 2);
         assert_eq!(history.entries[0].data, b"old");
-        for value in 0..100u8 {
-            history.insert(entry("text/plain", &[value])).unwrap();
+        for value in 0..MAX_ENTRIES + 10 {
+            history
+                .insert(entry("text/plain", value.to_string().as_bytes()))
+                .unwrap();
         }
-        assert_eq!(history.entries.len(), 64);
-        assert_eq!(history.entries[0].data, [99]);
+        assert_eq!(history.entries.len(), MAX_ENTRIES);
+        assert_eq!(
+            history.entries[0].data,
+            (MAX_ENTRIES + 9).to_string().as_bytes()
+        );
+    }
+    #[test]
+    fn legacy_cliphist_preserves_native_order_and_decodes_payload_types() {
+        let version = b"version\t0.7.0\ndb-path\t/tmp/clipboard with spaces.db\n";
+        assert_eq!(
+            legacy_path(version).unwrap(),
+            Path::new("/tmp/clipboard with spaces.db")
+        );
+        let list = b"10\tpreview\n9\t[[ binary data ]]\ninvalid row\n8\tmore\n";
+        assert_eq!(legacy_ids(list).collect::<Vec<_>>(), ["10", "9", "8"]);
+        assert!(legacy_entry(vec![0xff, 0xff]).is_none());
+        let png = b"\x89PNG\r\n\x1a\nraw bytes";
+        assert_eq!(legacy_entry(png.to_vec()).unwrap(), entry("image/png", png));
+        let mut history = History::default();
+        history
+            .insert(entry("text/plain", b"already saved"))
+            .unwrap();
+        let legacy = || {
+            [b"already saved".as_slice(), b"recent", b"older"]
+                .into_iter()
+                .map(|bytes| legacy_entry(bytes.to_vec()).unwrap())
+                .collect()
+        };
+        assert_eq!(history.append_legacy(legacy()), 2);
+        assert_eq!(history.append_legacy(legacy()), 0);
+        assert_eq!(
+            history
+                .entries
+                .iter()
+                .map(|entry| entry.data.as_slice())
+                .collect::<Vec<_>>(),
+            [b"already saved".as_slice(), b"recent", b"older"]
+        );
     }
     #[test]
     fn sensitive_hints_and_unsupported_mimes_are_never_saved() {

@@ -212,7 +212,7 @@ fn entry() -> Result<()> {
             } else if action == tui::Action::Update {
                 let groups = installer.optional_package_groups()?;
                 installer.optional_groups = Some(tui::update_defaults(&installer, &groups)?);
-                installer.run_plain("Update")
+                installer.run_plain_update()
             } else {
                 installer.run_all()
             }

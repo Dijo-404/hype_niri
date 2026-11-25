@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Exercise native desktop launchers in a shared private PID namespace."""
 
+import fcntl
 import json
+import shutil
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from runtime_fixture import RuntimeFixture
 
@@ -62,6 +65,89 @@ class RuntimeTests(RuntimeFixture):
         (self.root / "fullscreen-toggle.sh").symlink_to(self.binary)
         self.isolated('exec "$FIXTURE_ROOT/fullscreen-toggle.sh"')
         self.assertEqual(self.niri_actions(), [{"FullscreenWindow": {"id": None}}])
+
+    def test_legacy_waybar_power_menu_action_still_routes_to_niri(self):
+        (self.root / "power-menu-action.sh").symlink_to(self.binary)
+        self.isolated('exec "$FIXTURE_ROOT/power-menu-action.sh" logout')
+        self.assertEqual(self.niri_actions(), [{"Quit": {"skip_confirmation": True}}])
+
+    def test_installer_sleep_hook_survives_until_watcher_is_ready(self):
+        scripts = self.home / ".config/scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "hype-control").symlink_to(self.binary)
+        hook = scripts / "prepare-sleep.sh"
+        hook.symlink_to("hype-control")
+        self.mock(
+            "systemctl",
+            'printf "%s\n" "$*" >> "$FIXTURE_LOG"\n'
+            'case "$2" in\n'
+            "  import-environment) exit 0 ;;\n"
+            '  start) [[ $3 != hype-sleep-watch.service || ! -e "$FIXTURE_ROOT/unready" ]] ;;\n'
+            '  show) printf "1\n" ;;\n'
+            "esac",
+        )
+        unready = self.root / "unready"
+        unready.touch()
+        self.control("start-watchers", status=1)
+        self.assertTrue(hook.is_symlink())
+        unready.unlink()
+        self.control("start-watchers")
+        self.assertTrue(hook.is_symlink())
+        self.assertIn("--user start hype-sleep-watch.service", self.log.read_text())
+
+    def test_legacy_caffeine_status_and_toggle_release_the_real_inhibitor(self):
+        for utility in ("systemd-inhibit", "bash"):
+            target = shutil.which(utility)
+            self.assertIsNotNone(target)
+            (self.bin / utility).symlink_to(target)
+        scripts = self.home / ".config/scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "caffeine-control.sh").write_text(
+            '[[ $1 == hold ]]\nprintf "%s\n" "$$" > "$2"\nexec sleep infinity\n'
+        )
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            running = worker.submit(
+                self.isolated,
+                'ready="$XDG_RUNTIME_DIR/caffeine-ready.legacy"\n'
+                'systemd-inhibit --what=idle --who="Caffeine Mode" '
+                '--why="User requested stay awake" --mode=block -- bash '
+                '"$HOME/.config/scripts/caffeine-control.sh" hold "$ready" &\n'
+                "holder=$!\n"
+                'printf "%s\n" "$holder" > "$XDG_RUNTIME_DIR/caffeine_pid"\n'
+                'wait_for "$ready"\n'
+                'touch "$XDG_RUNTIME_DIR/caffeine_state"\n'
+                "control caffeine status\n"
+                '[[ -e "$XDG_RUNTIME_DIR/caffeine_pid" ]]\n'
+                'rm "$XDG_RUNTIME_DIR/caffeine_pid" "$XDG_RUNTIME_DIR/caffeine_state"\n'
+                "control caffeine status\n"
+                "control caffeine toggle\n"
+                '[[ ! -e "$XDG_RUNTIME_DIR/caffeine_pid" ]]\n'
+                'wait "$holder" || :',
+            )
+            kind, reader = self.bus.inhibitors.get(timeout=3)
+            with reader:
+                self.assertEqual(kind, "idle")
+                reader.settimeout(3)
+                self.assertEqual(reader.recv(1), b"")
+            result = running.result(timeout=4)
+        self.assertEqual(
+            [json.loads(line)["class"] for line in result.stdout.splitlines()],
+            ["activated", "activated", "deactivated"],
+        )
+
+    def test_volume_waits_for_inflight_update(self):
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            with (self.runtime / "hype-volume-control.lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                running = worker.submit(
+                    self.control,
+                    "volume",
+                    "up",
+                    extra_env={"PULSE_SERVER": f"unix:{self.root}/absent-pulse"},
+                )
+                with self.assertRaises(TimeoutError):
+                    running.result(timeout=0.25)
+            self.assertTrue(running.result(timeout=5).stderr)
 
     def test_waybar_keeps_single_instance_with_hotplug_capable_config(self):
         config = self.waybar_fixture()
@@ -258,6 +344,22 @@ class RuntimeTests(RuntimeFixture):
             "done"
         )
         self.assertEqual(self.log.read_text().splitlines(), ["--dmenu two words"] * 2)
+
+    def test_menu_toggle_closes_and_reopens_a_custom_picker(self):
+        self.mock(
+            "custom-picker",
+            'printf "open\n" >> "$FIXTURE_LOG"\nwhile :; do sleep 0.05; done',
+        )
+        self.isolated(
+            "for count in 1 2; do\n"
+            "    control menu-toggle custom-picker & first=$!\n"
+            '    until [[ -e "$FIXTURE_LOG" ]] && (( $(wc -l < "$FIXTURE_LOG") >= count )); do sleep 0.01; done\n'
+            "    control menu-toggle custom-picker\n"
+            '    status=0; wait "$first" || status=$?\n'
+            "    [[ $status == 143 ]]\n"
+            "done"
+        )
+        self.assertEqual(self.log.read_text().splitlines(), ["open", "open"])
 
     def test_menu_toggle_preserves_arguments_input_output_and_exit_status(self):
         result = self.control("menu-toggle", "printf", "%s", "two words")

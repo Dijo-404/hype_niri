@@ -504,12 +504,16 @@ async fn toggle_opacity() -> Result<()> {
     Ok(())
 }
 pub async fn run(command: &str, args: &[String]) -> Result<()> {
-    match command {
-        "display-scale" | "niri-outputs" => auto_scale(args).await,
-        "monitor-refresh" => refresh().await,
-        "opacity-toggle" => toggle_opacity().await,
-        _ => Err(err(format!("Unknown display command: {command}"))),
+    let (result, id, title) = match command {
+        "display-scale" | "niri-outputs" => return auto_scale(args).await,
+        "monitor-refresh" => (refresh().await, 2006, "Monitor refresh failed"),
+        "opacity-toggle" => (toggle_opacity().await, 2007, "Opacity toggle failed"),
+        _ => return Err(err(format!("Unknown display command: {command}"))),
+    };
+    if let Err(error) = &result {
+        let _ = crate::notify::send(id, title, &error.to_string(), None, "").await;
     }
+    result
 }
 
 #[cfg(test)]

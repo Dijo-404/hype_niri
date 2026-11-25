@@ -19,7 +19,9 @@ The core requests 49 packages. With all extras selected, the installer requests 
 
 The core runtime no longer requires those utility executables. The optional desktop-tools group retains wl-clipboard for hyprpicker’s own autocopy operation. Native code still uses established libraries, including GTK/GIO/GLib, libpulse and libnftables. A native binding does not remove the underlying library dependency.
 
-Clipboard history stores at most 64 entries, 8 MiB per entry and 32 MiB in total. It preserves supported text/image MIME types and bytes, skips password-manager hints and rejects malformed or unsafe state. Stored history is private under `$XDG_STATE_HOME/hype-niri-clipboard`, or `~/.local/state/hype-niri-clipboard`. A clipboard owner remains alive until another application replaces the selected content. Old cliphist databases are left untouched.
+Clipboard history stores up to 750 entries, 8 MiB per entry and 32 MiB total. It preserves supported text/image MIME types and bytes, skips password-manager hints and rejects malformed or unsafe state. Stored history is private under `$XDG_STATE_HOME/hype-niri-clipboard`, or `~/.local/state/hype-niri-clipboard`. A clipboard owner remains alive until another application replaces the selected content. If `cliphist` and its old database are still present, the watcher imports the history once and keeps the source database intact. Use `hype-control clipboard import-cliphist [database]` to import explicitly. Clearing native history prevents another automatic import.
+
+The emoji picker uses bemoji's history location and ranks frequently used and recent emoji first. It reads custom lists from the bemoji data directory or `BEMOJI_CUSTOM_LIST`, and honors bemoji's history location, recent limit, and private mode settings.
 
 ## Required infrastructure
 
@@ -36,7 +38,7 @@ Clipboard history stores at most 64 entries, 8 MiB per entry and 32 MiB in total
 | UDisks2, GVfs, Nautilus                         | Native mount/unlock operations and file browsing                          |
 | Rust, Cargo, base-devel, Git                    | Locally build the installer and desktop binaries                          |
 
-The installer enables essential network, audio, power and OOM services. Desktop startup launches the bar, notch, clipboard watcher, sleep watcher, notification daemon, authorization agent, network applet and wallpaper backend. D-Bus activation and socket activation remain owned by their upstream services. Hypridle remains responsible for idle detection; it calls Rust for lock and monitor actions.
+The installer enables essential network, audio, power and OOM services. Desktop startup launches the bar, notch, notification daemon, authorization agent, network applet and wallpaper backend. Systemd user services supervise the clipboard and sleep watchers and restart them if they exit. D-Bus activation and socket activation remain owned by their upstream services. Hypridle handles idle detection and calls Rust for lock and monitor actions.
 
 ## Optional packages
 
@@ -54,7 +56,7 @@ browser-firefox editor-neovim bluetooth
 | `hype-flow`                                                   | Offline dictation, Parakeet model setup, `wl-clipboard`, `wtype` and Bubblewrap                  |
 | `desktop-tools`                                               | Optional audio mixer, color picker and system monitor; wl-clipboard supports hyprpicker autocopy |
 | `docker`                                                      | Docker tools, socket activation and optional group membership                                    |
-| `bluetooth`                                                   | BlueZ/Blueman, Bluetooth service and pairing dialogs                                             |
+| `bluetooth`                                                   | BlueZ/Blueman, Bluetooth service, pairing dialogs and a Rust GTK3 module for Escape-to-close     |
 | `warp`, `proton-vpn`, `stealth`                               | Explicit VPN or Tor integrations                                                                 |
 | `firewall`                                                    | UFW package and separately confirmed firewall configuration                                      |
 | `login-manager-ly`                                            | Ly package and separately confirmed login-manager switch                                         |

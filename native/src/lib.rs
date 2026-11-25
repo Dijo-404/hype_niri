@@ -7,6 +7,7 @@ pub mod network;
 pub mod notify;
 pub mod runtime;
 pub mod session;
+pub mod watchers;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub fn err(message: impl Into<String>) -> Box<dyn std::error::Error> {

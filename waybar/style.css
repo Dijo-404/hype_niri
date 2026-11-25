@@ -69,11 +69,6 @@ window#waybar.hidden {
   padding: 2px 2px 0 2px;
 }
 
-/* shortcut: WARP is the middle icon in the three-item tray. */
-#connectivity #tray > widget:nth-child(2):nth-last-child(2) image {
-  -gtk-icon-transform: translateY(1px);
-}
-
 #custom-hotspot {
   margin-right: 6px;
   font-size: 14.7px;

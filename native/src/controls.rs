@@ -327,17 +327,9 @@ async fn audio(mic: bool, action: &str) -> Result<()> {
     } else {
         "hype-volume-control.lock"
     };
-    let Some(lock) = runtime::lock(
-        name,
-        if mic {
-            Duration::from_secs(1)
-        } else {
-            Duration::ZERO
-        },
-    )?
-    else {
-        return Ok(());
-    };
+    // Wait for the in-flight PulseAudio update so repeated key presses are applied in full.
+    let lock = runtime::lock(name, Duration::from_secs(4))?
+        .ok_or_else(|| err("Another audio change is still running"))?;
     let state = match Audio::connect().and_then(|mut audio| audio.change(mic, action)) {
         Ok(state) => state,
         Err(error) => {

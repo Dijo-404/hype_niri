@@ -63,20 +63,22 @@ These are the primary default keybindings for the Hype Niri environment.
 
 ## Applications & Launchers
 
-| Keybinding           | Action                   | Description                                                        |
-| :------------------- | :----------------------- | :----------------------------------------------------------------- |
-| `Super + T`          | `alacritty`              | Launch Terminal                                                    |
-| `Super + E`          | `nautilus`               | Launch File Manager                                                |
-| `Super + Shift + D`  | `monitor-refresh`        | Toggle monitor settings and save refresh-rate defaults             |
-| `Super + U`          | `open-drives`            | Mount/unlock known external/secondary drives, then launch Nautilus |
-| `Super + C`          | `launch-default editor`  | Launch the installed default text editor                           |
-| `Super + Copilot`    | `copilot-shortcut`       | Open VS Code after a 400ms double-press window                     |
-| `Super + B`          | `launch-default browser` | Launch the installed default browser                               |
-| `Ctrl + Shift + Esc` | `launch-default monitor` | Launch an installed system monitor                                 |
-| `Super + A`          | `app-launcher`           | Toggle the native application picker                               |
-| `Super + Tab`        | `toggle-overview`        | Open Window Overview                                               |
-| `Super + .`          | `emoji`                  | Toggle the native emoji picker                                     |
-| `Super + V`          | `clipboard pick`         | Toggle native clipboard history                                    |
+| Keybinding           | Action                  | Description                                                        |
+| :------------------- | :---------------------- | :----------------------------------------------------------------- |
+| `Super + T`          | `alacritty`             | Launch Terminal                                                    |
+| `Super + E`          | `nautilus`              | Launch File Manager                                                |
+| `Super + Shift + D`  | `monitor-refresh`       | Toggle monitor settings and save refresh-rate defaults             |
+| `Super + U`          | `open-drives`           | Mount/unlock known external/secondary drives, then launch Nautilus |
+| `Super + C`          | `launch-default neovim` | Open Neovim in Alacritty, or use the default text editor           |
+| `Super + Copilot`    | `copilot-shortcut`      | Open VS Code after a 400ms double-press window                     |
+| `Super + B`          | `launch-default brave`  | Open Brave, or use the default browser                             |
+| `Ctrl + Shift + Esc` | `launch-default htop`   | Open htop in Alacritty, or choose an installed system monitor      |
+| `Super + A`          | `app-launcher`          | Toggle the native application picker                               |
+| `Super + Tab`        | `toggle-overview`       | Open Window Overview                                               |
+| `Super + .`          | `emoji`                 | Toggle the native emoji picker                                     |
+| `Super + V`          | `clipboard pick`        | Toggle native clipboard history                                    |
+
+In Power, press `L` to lock, `S` to sleep, `E` to log out, `P` to shut down, or `R` to reboot. Escape closes the Bluetooth Manager. In pickers, `Ctrl+N` and `Ctrl+P` move the selection, `Ctrl+Y` confirms it, and `Ctrl+G` closes the picker.
 
 For the Copilot shortcuts, hold Super and press Copilot once to open VS Code, or twice within 400ms to lock and turn off the displays without opening the editor. A single press uses the default text editor if VS Code is unavailable. Ordinary keyboard and mouse input leaves the displays off. Repeat Super + double Copilot to show Hyprlock's password prompt, then enter your Linux account password (normally the same password used by sudo) to unlock the desktop. A single press while locked does nothing.
 

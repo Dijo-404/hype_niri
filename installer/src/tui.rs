@@ -167,11 +167,20 @@ pub fn run(
 
     let lock = runtime_directory().and_then(|directory| InstallLock::acquire(&directory));
     let result = match &lock {
-        Ok(_) => installer.run_phases(action.phases(), |index, name| {
-            let mut ui = ui.borrow_mut();
-            ui.phase = Some(index);
-            ui.working(action.label(), name)
-        }),
+        Ok(_) => installer
+            .run_phases(action.phases(), |index, name| {
+                let mut ui = ui.borrow_mut();
+                ui.phase = Some(index);
+                ui.working(action.label(), name)
+            })
+            .and_then(|()| {
+                if action == Action::Update {
+                    ui.borrow_mut()
+                        .working(action.label(), "Refreshing the Hype CLI")?;
+                    installer.refresh_cli()?;
+                }
+                Ok(())
+            }),
         Err(cause) => Err(error(cause.to_string())),
     };
     if let Err(cause) = result {

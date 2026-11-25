@@ -236,6 +236,15 @@ impl Controller {
     }
     fn start_services(self: &Rc<Self>) {
         self.fetch_weather();
+        prune_shelf();
+        let shelf = Rc::downgrade(self);
+        glib::timeout_add_local(crate::shelf::LIFETIME, move || {
+            if shelf.upgrade().is_none() {
+                return glib::ControlFlow::Break;
+            }
+            prune_shelf();
+            glib::ControlFlow::Continue
+        });
         let weak = Rc::downgrade(self);
         *self.weather_source.borrow_mut() =
             Some(glib::timeout_add_seconds_local(1800, move || {
@@ -543,6 +552,18 @@ impl Controller {
             }
         });
     }
+}
+
+fn prune_shelf() {
+    glib::spawn_future_local(async {
+        let result = gio::spawn_blocking(|| {
+            crate::shelf::prune(&crate::shelf::cache_dir(), std::time::SystemTime::now())
+        })
+        .await;
+        if let Ok(Err(error)) = result {
+            eprintln!("Could not clean up the notch shelf: {error}");
+        }
+    });
 }
 impl Drop for Controller {
     fn drop(&mut self) {

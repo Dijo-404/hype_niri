@@ -4,7 +4,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     os::{
-        fd::AsRawFd,
+        fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     },
     path::{Path, PathBuf},
@@ -29,6 +29,58 @@ pub fn state_dir() -> PathBuf {
 }
 pub fn uid() -> u32 {
     unsafe { libc::geteuid() }
+}
+
+pub(crate) struct Process(OwnedFd);
+
+impl Process {
+    pub(crate) fn open(pid: u32) -> std::io::Result<Option<Self>> {
+        if pid == 0 || pid > i32::MAX as u32 {
+            return Ok(None);
+        }
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        if fd >= 0 {
+            return Ok(Some(Self(unsafe { OwnedFd::from_raw_fd(fd as i32) })));
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(None)
+        } else {
+            Err(error)
+        }
+    }
+
+    pub(crate) fn terminate(&self) -> std::io::Result<()> {
+        let sent = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.0.as_raw_fd(),
+                libc::SIGTERM,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+        if sent < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn exited(&self) -> std::io::Result<bool> {
+        let mut poll = libc::pollfd {
+            fd: self.0.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut poll, 1, 0) };
+        if ready < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(ready > 0)
+    }
 }
 fn owned_dir(path: &Path) -> bool {
     fs::symlink_metadata(path)

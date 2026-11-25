@@ -2,10 +2,11 @@ use crate::{Result, bus, dialog, err, notify, runtime};
 use gtk::{gio, glib, prelude::*};
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsString,
     fs,
     os::unix::{ffi::OsStringExt, fs::symlink},
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 const SERVICE: &str = "org.freedesktop.UDisks2";
 const ROOT: &str = "/org/freedesktop/UDisks2";
@@ -74,59 +75,87 @@ fn sanitize_name(name: &str) -> String {
         value
     }
 }
-fn links(root: &Path, media: &Path, devices: &Objects) -> Result<()> {
+fn mountinfo_paths(contents: &[u8]) -> Vec<PathBuf> {
+    let mut mounts: Vec<_> = contents
+        .split(|&byte| byte == b'\n')
+        .filter_map(|line| line.split(|&byte| byte == b' ').nth(4))
+        .map(|mut field| {
+            let mut path = Vec::with_capacity(field.len());
+            while let Some((&byte, rest)) = field.split_first() {
+                // mountinfo escapes space, tab, newline, and backslash as octal.
+                let escaped = match field.get(..4) {
+                    Some(b"\\040") => Some(b' '),
+                    Some(b"\\011") => Some(b'\t'),
+                    Some(b"\\012") => Some(b'\n'),
+                    Some(b"\\134") => Some(b'\\'),
+                    _ => None,
+                };
+                if let Some(decoded) = escaped {
+                    path.push(decoded);
+                    field = &field[4..];
+                } else {
+                    path.push(byte);
+                    field = rest;
+                }
+            }
+            PathBuf::from(OsString::from_vec(path))
+        })
+        .collect();
+    mounts.sort_unstable();
+    mounts.dedup();
+    mounts
+}
+fn links(root: &Path, media: &Path, devices: &Objects, kernel_mounts: &[PathBuf]) -> Result<()> {
     fs::create_dir_all(root)?;
     for entry in fs::read_dir(root)?.flatten() {
         if entry.file_type()?.is_symlink() && !entry.path().exists() {
             fs::remove_file(entry.path())?;
         }
     }
-    let mut used = HashSet::new();
     let mut entries: Vec<_> = devices.iter().collect();
     entries.sort_by_key(|(path, _)| path.to_string());
+    let mut candidates = Vec::new();
     for (_, interfaces) in entries {
         let Some(block) = interfaces.get(BLOCK) else {
             continue;
         };
-        for mount in mounts(interfaces) {
-            if !mount.starts_with(media) || mount == media {
-                continue;
-            }
-            let label = text(block, "IdLabel")
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| {
-                    interfaces
-                        .get("org.freedesktop.UDisks2.Partition")
-                        .and_then(|p| text(p, "Name"))
-                        .filter(|v| !v.trim().is_empty())
-                })
-                .map(String::from)
-                .unwrap_or_else(|| {
-                    mount
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned()
-                });
-            let base = sanitize_name(&label);
-            let mut name = base.clone();
-            let mut suffix = 2;
-            while used.contains(&name)
-                || fs::symlink_metadata(root.join(&name)).is_ok_and(|m| !m.file_type().is_symlink())
-            {
-                name = format!("{base}-{suffix}");
-                suffix += 1;
-            }
-            used.insert(name.clone());
-            let destination = root.join(name);
-            let temporary = tempfile::Builder::new()
-                .prefix(".drive-link-")
-                .tempfile_in(root)?;
-            let path = temporary.into_temp_path();
-            fs::remove_file(&path)?;
-            symlink(&mount, &path)?;
-            fs::rename(&path, destination)?;
+        let label = text(block, "IdLabel")
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                interfaces
+                    .get("org.freedesktop.UDisks2.Partition")
+                    .and_then(|p| text(p, "Name"))
+                    .filter(|v| !v.trim().is_empty())
+            });
+        candidates.extend(mounts(interfaces).into_iter().map(|mount| (mount, label)));
+    }
+    candidates.extend(kernel_mounts.iter().cloned().map(|mount| (mount, None)));
+
+    let mut linked = HashSet::new();
+    let mut used = HashSet::new();
+    for (mount, label) in &candidates {
+        if !mount.starts_with(media) || mount == media || !linked.insert(mount) {
+            continue;
         }
+        let basename = mount.file_name().unwrap_or_default().to_string_lossy();
+        let base = sanitize_name(label.unwrap_or(&basename));
+        let mut name = base.clone();
+        let mut suffix = 2;
+        while used.contains(&name)
+            || fs::symlink_metadata(root.join(&name)).is_ok_and(|m| !m.file_type().is_symlink())
+        {
+            name = format!("{base}-{suffix}");
+            suffix += 1;
+        }
+        used.insert(name.clone());
+        let destination = root.join(name);
+        let temporary = tempfile::Builder::new()
+            .prefix(".drive-link-")
+            .tempfile_in(root)?;
+        let path = temporary.into_temp_path();
+        fs::remove_file(&path)?;
+        symlink(mount, &path)?;
+        fs::rename(&path, destination)?;
     }
     Ok(())
 }
@@ -237,48 +266,50 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
     };
     let root = runtime::home()?.join("drives");
     fs::create_dir_all(&root)?;
+    let mut snapshot = Objects::new();
     let mounting: Result<()> = async {
         let manager = bus::system().await;
         if let Ok(conn) = manager {
             match objects(&conn).await {
                 Ok(initial) => {
-                    unlock(&conn, &initial).await?;
-                    let deadline = Instant::now() + Duration::from_secs(20);
-                    loop {
-                        let snapshot = objects(&conn).await?;
-                        let mut pending = false;
-                        for (path, interfaces) in &snapshot {
-                            let Some(block) = interfaces.get(BLOCK) else {
-                                continue;
-                            };
-                            let fstype = text(block, "IdType").unwrap_or_default();
-                            if supported(fstype)
-                                && interfaces.contains_key(FILESYSTEM)
-                                && mounts(interfaces).is_empty()
-                            {
-                                pending = true;
-                                if let Err(error) = mount(&conn, path.as_str(), fstype).await {
-                                    let _ = notify::send(
-                                        0,
-                                        "Could not mount drive",
-                                        &error.to_string(),
-                                        None,
-                                        "drives",
-                                    )
-                                    .await;
+                    snapshot = initial;
+                    unlock(&conn, &snapshot).await?;
+                    glib::future_with_timeout(Duration::from_secs(20), async {
+                        loop {
+                            snapshot = objects(&conn).await?;
+                            let mut pending = false;
+                            for (path, interfaces) in &snapshot {
+                                let Some(block) = interfaces.get(BLOCK) else {
+                                    continue;
+                                };
+                                let fstype = text(block, "IdType").unwrap_or_default();
+                                if supported(fstype)
+                                    && interfaces.contains_key(FILESYSTEM)
+                                    && mounts(interfaces).is_empty()
+                                {
+                                    pending = true;
+                                    if let Err(error) = mount(&conn, path.as_str(), fstype).await {
+                                        let _ = notify::send(
+                                            0,
+                                            "Could not mount drive",
+                                            &error.to_string(),
+                                            None,
+                                            "drives",
+                                        )
+                                        .await;
+                                    }
                                 }
                             }
+                            if !pending {
+                                break;
+                            }
+                            snapshot = objects(&conn).await?;
+                            glib::timeout_future(Duration::from_secs(1)).await;
                         }
-                        let snapshot = objects(&conn).await?;
-                        let media = PathBuf::from("/run/media").join(
-                            std::env::var("USER").unwrap_or_else(|_| runtime::uid().to_string()),
-                        );
-                        links(&root, &media, &snapshot)?;
-                        if !pending || Instant::now() >= deadline {
-                            break;
-                        }
-                        glib::timeout_future(Duration::from_secs(1)).await;
-                    }
+                        Ok::<_, Box<dyn std::error::Error>>(())
+                    })
+                    .await
+                    .map_err(|_| err("Drive mounting reached its 20-second deadline"))??;
                 }
                 Err(error) => {
                     let _ = notify::send(
@@ -304,6 +335,22 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
         Ok(())
     }
     .await;
+    let media = PathBuf::from("/run/media")
+        .join(std::env::var_os("USER").unwrap_or_else(|| runtime::uid().to_string().into()));
+    let kernel_mounts = fs::read("/proc/self/mountinfo").map(|contents| mountinfo_paths(&contents));
+    let aliases = links(
+        &root,
+        &media,
+        &snapshot,
+        kernel_mounts.as_deref().unwrap_or_default(),
+    );
+    let mounting = mounting
+        .and(aliases)
+        .and(kernel_mounts.map(drop).map_err(Into::into));
+    drop(_lock);
+    let uri = gio::File::for_path(root).uri();
+    let launched =
+        gio::AppInfo::launch_default_for_uri_future(&uri, None::<&gio::AppLaunchContext>).await;
     if let Err(error) = mounting {
         let _ = notify::send(
             0,
@@ -314,9 +361,7 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
         )
         .await;
     }
-    drop(_lock);
-    let uri = gio::File::for_path(root).uri();
-    gio::AppInfo::launch_default_for_uri_future(&uri, None::<&gio::AppLaunchContext>).await?;
+    launched?;
     Ok(())
 }
 #[cfg(test)]
@@ -358,9 +403,35 @@ mod tests {
                 ]),
             );
         }
-        links(&root, &media, &devices).unwrap();
+        let c = media.join("manual").join("Work");
+        fs::create_dir_all(&c).unwrap();
+        let sibling = media.with_file_name("media-other").join("Outside");
+        links(
+            &root,
+            &media,
+            &devices,
+            &[a.clone(), c.clone(), media.clone(), sibling],
+        )
+        .unwrap();
         assert_eq!(fs::read_to_string(root.join("Work")).unwrap(), "keep");
         assert_eq!(fs::read_link(root.join("Work-2")).unwrap(), a);
         assert_eq!(fs::read_link(root.join("Work-3")).unwrap(), b);
+        assert_eq!(fs::read_link(root.join("Work-4")).unwrap(), c);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 4);
+    }
+    #[test]
+    fn mountinfo_decodes_paths_and_deduplicates_mounts() {
+        let contents = b"20 19 8:1 / /run/media/me rw - ext4 /dev/sda1 rw\n\
+            21 20 8:2 / /run/media/me/My\\040Disk\\011\\012\\134040\xff rw - ext4 /dev/sda2 rw\n\
+            22 21 8:2 / /run/media/me/My\\040Disk\\011\\012\\134040\xff rw - ext4 /dev/sda2 rw\n";
+        assert_eq!(
+            mountinfo_paths(contents),
+            [
+                PathBuf::from("/run/media/me"),
+                PathBuf::from(OsString::from_vec(
+                    b"/run/media/me/My Disk\t\n\\040\xff".to_vec()
+                )),
+            ]
+        );
     }
 }

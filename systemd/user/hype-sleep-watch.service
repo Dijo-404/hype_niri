@@ -1,0 +1,11 @@
+[Unit]
+Description=Hype Niri lock before suspend
+PartOf=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+ExecStart=%h/.config/scripts/hype-control prepare-sleep --watch
+TimeoutStartSec=20
+Restart=always
+RestartSec=2

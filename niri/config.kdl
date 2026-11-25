@@ -218,9 +218,7 @@ spawn-at-startup "~/.config/scripts/hype-control" "wallpaper" "init"
 spawn-at-startup "~/.config/scripts/hype-control" "display-scale"
 
 spawn-at-startup "~/.config/scripts/hype-control" "start-idle"
-spawn-at-startup "~/.config/scripts/hype-control" "prepare-sleep" "--watch"
-
-spawn-at-startup "~/.config/scripts/hype-control" "clipboard" "watch"
+spawn-at-startup "~/.config/scripts/hype-control" "start-watchers"
 
 binds {
 
@@ -264,15 +262,15 @@ binds {
     Mod+E { spawn "nautilus" "-w"; }
     Mod+Shift+D repeat=false hotkey-overlay-title="Display Refresh Rate" { spawn "~/.config/scripts/hype-control" "monitor-refresh"; }
     Mod+U { spawn "~/.config/scripts/hype-control" "open-drives"; }
-    Mod+C { spawn "~/.config/scripts/hype-control" "launch-default" "editor"; }
+    Mod+C { spawn "~/.config/scripts/hype-control" "launch-default" "neovim"; }
     Mod+Shift+F23 repeat=false allow-when-locked=true hotkey-overlay-title="Copilot: VS Code / double press: lock displays or show password prompt" { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+Shift+XF86TouchpadOff repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+Shift+XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+F23 repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     Mod+XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
     XF86Assistant repeat=false allow-when-locked=true { spawn "~/.config/scripts/hype-control" "copilot-shortcut"; }
-    Mod+B hotkey-overlay-title="Default Browser" { spawn "~/.config/scripts/hype-control" "launch-default" "browser"; }
-    Ctrl+Shift+Escape { spawn "~/.config/scripts/hype-control" "launch-default" "monitor"; }
+    Mod+B hotkey-overlay-title="Browser: Brave" { spawn "~/.config/scripts/hype-control" "launch-default" "brave"; }
+    Ctrl+Shift+Escape { spawn "~/.config/scripts/hype-control" "launch-default" "htop"; }
 
     Mod+A repeat=false hotkey-overlay-title="Application Launcher" { spawn "~/.config/scripts/hype-control" "app-launcher"; }
     Mod+N repeat=false hotkey-overlay-title="Toggle Niri Notch" { spawn "~/.config/scripts/hype-notch" "--toggle"; }

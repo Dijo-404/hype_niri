@@ -1,29 +1,90 @@
 use gtk::{gdk, gdk_pixbuf, gio, glib, prelude::*};
 use std::{
     fs, io,
-    os::unix::fs::{DirBuilderExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     rc::Rc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
-const LIFETIME: Duration = Duration::from_secs(10 * 60);
+pub const LIFETIME: Duration = Duration::from_secs(10 * 60);
+const ITEM_PREFIX: &str = "item-";
 
 pub struct CachedFile {
     path: PathBuf,
     source: Option<PathBuf>,
     _directory: tempfile::TempDir,
+    _lock: fs::File,
+}
+
+fn open_directory(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(path)
+}
+
+pub fn prune(root: &Path, now: SystemTime) -> io::Result<()> {
+    let root_lock = match open_directory(root) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    root_lock.lock()?;
+    for item in fs::read_dir(root)? {
+        let item = item?;
+        if let Err(error) = prune_item(item, now)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn prune_item(item: fs::DirEntry, now: SystemTime) -> io::Result<()> {
+    if !item.file_type()?.is_dir() {
+        return Ok(());
+    }
+    let name = item.file_name();
+    let Some(name) = name.to_str() else {
+        return Ok(());
+    };
+    if let Some(suffix) = name.strip_prefix(".tmp")
+        && suffix.len() == 6
+        && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && now
+            .duration_since(item.metadata()?.modified()?)
+            .is_ok_and(|age| age >= LIFETIME)
+    {
+        // Earlier versions left unmarked directories and used the same ten-minute lifetime.
+        fs::remove_dir_all(item.path())?;
+    } else if name.starts_with(ITEM_PREFIX) {
+        let lock = open_directory(&item.path())?;
+        match lock.try_lock() {
+            Ok(()) => fs::remove_dir_all(item.path())?,
+            Err(std::fs::TryLockError::WouldBlock) => (),
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 impl CachedFile {
-    fn directory(root: &Path) -> io::Result<tempfile::TempDir> {
+    fn directory(root: &Path) -> io::Result<(tempfile::TempDir, fs::File)> {
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(root)?;
-        tempfile::Builder::new()
+        let root_lock = open_directory(root)?;
+        root_lock.lock()?;
+        let item = tempfile::Builder::new()
+            .prefix(ITEM_PREFIX)
             .permissions(fs::Permissions::from_mode(0o700))
-            .tempdir_in(root)
+            .tempdir_in(root)?;
+        let lock = open_directory(item.path())?;
+        lock.lock()?;
+        Ok((item, lock))
     }
 
     pub fn copy(root: &Path, source: PathBuf) -> io::Result<Self> {
@@ -33,13 +94,14 @@ impl CachedFile {
                 "Expected a local file",
             ));
         };
-        let directory = Self::directory(root)?;
+        let (directory, lock) = Self::directory(root)?;
         let path = directory.path().join(name);
         fs::copy(&source, &path)?;
         Ok(Self {
             path,
             source: Some(source),
             _directory: directory,
+            _lock: lock,
         })
     }
 
@@ -47,13 +109,14 @@ impl CachedFile {
         let time = glib::DateTime::now_local()
             .and_then(|time| time.format("%H-%M-%S-%f"))
             .map_err(io::Error::other)?;
-        let directory = Self::directory(root)?;
+        let (directory, lock) = Self::directory(root)?;
         let path = directory.path().join(format!("Screenshot {time}.png"));
         fs::write(&path, texture.save_to_png_bytes())?;
         Ok(Self {
             path,
             source: None,
             _directory: directory,
+            _lock: lock,
         })
     }
 
@@ -127,6 +190,26 @@ impl Shelf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pruning_keeps_live_copies_and_clears_unlocked_caches() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("cache");
+        let source = fixture.path().join("original");
+        fs::write(&source, "keep").unwrap();
+        let live = CachedFile::copy(&root, source).unwrap();
+        let orphan = root.join("item-dead");
+        let legacy = root.join(".tmpabc123");
+        let unrelated = root.join("personal");
+        for path in [&orphan, &legacy, &unrelated] {
+            fs::create_dir(path).unwrap();
+        }
+        prune(&root, SystemTime::now() + LIFETIME).unwrap();
+        assert!(live.path().is_file());
+        assert!(!orphan.exists());
+        assert!(!legacy.exists());
+        assert!(unrelated.is_dir());
+    }
 
     #[test]
     fn shelf_caches_copies_and_removes_only_expired_cache_files() {

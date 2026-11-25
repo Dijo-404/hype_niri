@@ -14,6 +14,7 @@ struct Fake {
     decline: bool,
     build_fails: bool,
     binary_fails: &'static str,
+    invalid_niri: bool,
     clone_fails: bool,
     clone_incomplete: bool,
     pairing_fails: bool,
@@ -77,6 +78,10 @@ impl Runner for Rc<Fake> {
         self.record(program, args);
         match (program, args) {
             ("cargo", _) if self.build_fails => Err(error("cargo failed")),
+            ("niri", ["validate", "-c", path]) if self.invalid_niri => {
+                assert!(Path::new(path).with_file_name("outputs.kdl").is_file());
+                Err(error("invalid generated output"))
+            }
             ("cargo", [targets @ .., "--target-dir", target]) => {
                 let host = targets
                     .windows(2)
@@ -84,6 +89,9 @@ impl Runner for Rc<Fake> {
                     .unwrap()[1];
                 let release = Path::new(target).join(host).join("release");
                 fs::create_dir_all(&release)?;
+                if targets.contains(&"hype-blueman-keys") {
+                    fs::write(release.join(BLUEMAN_KEYS), "built module")?;
+                }
                 for name in targets
                     .windows(2)
                     .filter_map(|pair| (pair[0] == "--bin").then_some(pair[1]))
@@ -208,6 +216,9 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
     ] {
         fs::write(installer.source.join(file), contents).unwrap();
     }
+    for unit in WATCHER_UNITS {
+        fs::write(installer.source.join(unit), "watcher service").unwrap();
+    }
     for icon in [
         "blueman-tray",
         "blueman-disabled",
@@ -327,31 +338,52 @@ fn only_the_stealth_build_requests_its_binary_and_uses_the_desktop_cache() {
 }
 
 #[test]
-fn failed_niri_stage_keeps_legacy_entrypoints_for_old_bindings() {
+fn failed_niri_stage_keeps_existing_scripts_and_configuration() {
     let (_temp, mut installer, _) = fixture(Fake::default());
     fs::remove_dir_all(installer.source.join("niri")).unwrap();
     let old = installer.user(".config/niri/config.kdl");
     write(old.clone(), "previous config");
+    let legacy = installer.user(".config/scripts/start-waybar.sh");
+    write(legacy.clone(), "original launcher");
     assert!(installer.copy_configs().is_err());
     assert_eq!(fs::read_to_string(old).unwrap(), "previous config");
+    assert_eq!(fs::read_to_string(legacy).unwrap(), "original launcher");
+}
+
+#[test]
+fn invalid_staged_config_is_rejected_before_any_publication() {
+    let (_temp, mut installer, _) = fixture(Fake {
+        invalid_niri: true,
+        ..Default::default()
+    });
+    let old = installer.user(".config/niri/config.kdl");
+    let outputs = installer.user(".config/niri/outputs.kdl");
+    let launcher = installer.user(".config/scripts/start-waybar.sh");
+    write(old.clone(), "previous config");
+    write(outputs.clone(), "saved monitor config");
+    write(launcher.clone(), "original launcher");
+    let message = installer.copy_configs().unwrap_err().to_string();
+    assert!(message.contains("Staged Niri configuration is invalid"));
+    assert_eq!(fs::read_to_string(old).unwrap(), "previous config");
+    assert_eq!(fs::read_to_string(outputs).unwrap(), "saved monitor config");
+    assert_eq!(fs::read_to_string(launcher).unwrap(), "original launcher");
+    assert!(!installer.user(".config/waybar").exists());
+}
+
+#[test]
+fn failed_publication_restores_all_earlier_directories() {
+    let root = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir_in(root.path()).unwrap();
+    let config = root.path().join("config");
+    write(config.join("first/setting"), "old");
+    write(stage.path().join("first/setting"), "new");
+    write(stage.path().join("extra/setting"), "new directory");
+    assert!(publish_config_dirs(stage, &config, &["first", "extra", "missing"]).is_err());
     assert_eq!(
-        fs::read_link(installer.user(".config/scripts/notch.sh")).unwrap(),
-        Path::new("hype-notch")
+        fs::read_to_string(config.join("first/setting")).unwrap(),
+        "old"
     );
-    assert_eq!(
-        fs::read_link(installer.user(".config/scripts/start-waybar.sh")).unwrap(),
-        Path::new("hype-control")
-    );
-    assert_ne!(
-        installer
-            .user(".config/scripts/start-waybar.sh")
-            .metadata()
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o111,
-        0
-    );
+    assert!(!config.join("extra").exists());
 }
 
 #[test]
@@ -375,12 +407,11 @@ fn binaries_are_executable_and_legacy_links_retire_after_publish() {
     );
     assert!(!scripts.join("notch.sh").is_symlink());
     assert!(!scripts.join("fullscreen-toggle.sh").exists());
-    for helper in [
-        "menu-toggle",
-        "power-menu",
-        "warp-indicator",
-        "stealth-indicator",
-    ] {
+    for helper in WAYBAR_COMPATIBILITY
+        .iter()
+        .copied()
+        .chain(["prepare-sleep"])
+    {
         assert_eq!(
             fs::read_link(scripts.join(format!("{helper}.sh"))).unwrap(),
             Path::new("hype-control")
@@ -748,11 +779,15 @@ fn blueman_cleanup_removes_old_wrappers_and_keeps_user_overrides() {
         entry.clone(),
         "[Desktop Entry]\nExec=/usr/bin/python3 \"/some/path/.config/scripts/blueman-manager.py\"\n",
     );
-    write(dropin.join("hype-niri.conf"), "[Service]\nExecStart=\n");
+    write(
+        dropin.join("hype-niri.conf"),
+        "[Service]\nExecStart=\nExecStart=/usr/bin/python3 %h/.config/scripts/blueman-manager.py\n",
+    );
+    installer.optional_groups = Some(Vec::new());
     installer.setup_desktop_integrations().unwrap();
     assert!(!entry.exists());
-    assert!(!dropin.exists());
-    assert!(fake.called(
+    assert!(!dropin.join("hype-niri.conf").exists());
+    assert!(!fake.called(
         "gsettings",
         &["set", "org.blueman.general", "notification-daemon", "false"]
     ));
@@ -761,13 +796,74 @@ fn blueman_cleanup_removes_old_wrappers_and_keeps_user_overrides() {
     write(entry.clone(), custom);
     write(dropin.join("hype-niri.conf"), "installer override");
     write(dropin.join("mine.conf"), "custom override");
-    installer.remove_blueman_wrapper().unwrap();
+    installer.configure_blueman_wrapper().unwrap();
     assert_eq!(fs::read_to_string(entry).unwrap(), custom);
-    assert_eq!(fs::read_dir(&dropin).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(&dropin).unwrap().count(), 2);
     assert_eq!(
         fs::read_to_string(dropin.join("mine.conf")).unwrap(),
         "custom override"
     );
+}
+
+#[test]
+fn existing_blueman_gains_native_escape_when_extra_is_skipped() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    installer.optional_groups = Some(Vec::new());
+    write(
+        installer.system("/usr/share/applications/blueman-manager.desktop"),
+        "[Desktop Entry]\nName=Bluetooth Manager\nExec=blueman-manager\n",
+    );
+    write(
+        installer.user(".config/scripts").join(BLUEMAN_KEYS),
+        "module",
+    );
+    let user_entry = installer.user(".local/share/applications/blueman-manager.desktop");
+    write(
+        user_entry.clone(),
+        "[Desktop Entry]\nName=My Bluetooth\nExec=/usr/bin/python3 \"/some/path/.config/scripts/blueman-manager.py\"\n",
+    );
+    installer.setup_desktop_integrations().unwrap();
+    let entry =
+        fs::read_to_string(installer.user(".local/share/applications/blueman-manager.desktop"))
+            .unwrap();
+    assert!(entry.contains("Name=My Bluetooth"));
+    assert!(entry.contains("/.config/scripts/hype-control\" blueman-manager"));
+    assert!(!entry.contains("python3"));
+    let dropin = installer.user(".config/systemd/user/blueman-manager.service.d/hype-niri.conf");
+    assert!(
+        fs::read_to_string(dropin)
+            .unwrap()
+            .contains("%h/.config/scripts/hype-control blueman-manager")
+    );
+}
+
+#[test]
+fn updater_rebuilds_and_replaces_its_registered_binary() {
+    let (_temp, installer, fake) = fixture(Fake::default());
+    let first = installer.home.join("previous-installer");
+    write(first.clone(), "previous executable");
+    let launcher = installer.publish_cli(&first).unwrap();
+    installer.refresh_cli().unwrap();
+    assert_eq!(fs::read_to_string(launcher).unwrap(), "staged executable");
+    assert!(fake.calls.borrow().iter().any(|call| {
+        call[..2] == ["cargo", "build"]
+            && call
+                .windows(2)
+                .any(|args| args == ["--package", "hype-install"])
+    }));
+}
+
+#[test]
+fn updater_keeps_the_previous_binary_if_the_new_build_fails() {
+    let (_temp, installer, _) = fixture(Fake {
+        build_fails: true,
+        ..Default::default()
+    });
+    let first = installer.home.join("previous-installer");
+    write(first.clone(), "previous executable");
+    let launcher = installer.publish_cli(&first).unwrap();
+    assert!(installer.refresh_cli().is_err());
+    assert_eq!(fs::read_to_string(launcher).unwrap(), "previous executable");
 }
 
 #[test]

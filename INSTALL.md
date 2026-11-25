@@ -97,7 +97,7 @@ done
 Build the native programs before copying configuration. Niri validation is pinned to Niri 26.04 and wallpaper IPC to awww 0.12.1; update the pinned Rust dependencies alongside backend upgrades. Then move the dotfiles and binaries to their respective locations in your home directory.
 
 ```bash
-cargo build --release --locked -p hype-notch --bin hype-notch -p hype-desktop --bin hype-control --bin hype-status
+cargo build --release --locked -p hype-notch --bin hype-notch -p hype-desktop --bin hype-control --bin hype-status -p hype-blueman-keys --lib
 ./target/release/hype-control --check
 ./target/release/hype-notch --check
 ./target/release/hype-status --check
@@ -108,8 +108,9 @@ mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
 cp -r niri waybar scripts alacritty mako fastfetch hypr ~/.config/
 install -m 755 target/release/hype-control target/release/hype-notch target/release/hype-status ~/.config/scripts/
+install -m 644 target/release/libhype_blueman_keys.so ~/.config/scripts/
 mkdir -p ~/.config/systemd/user
-cp systemd/user/hype-auto-power-profile.service ~/.config/systemd/user/
+cp systemd/user/hype-*.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 touch ~/.config/niri/outputs.kdl
 
@@ -198,7 +199,7 @@ InhibitDelayMaxSec=5
 EOF
 ```
 
-Niri starts `hype-control prepare-sleep --watch`, which subscribes to logind D-Bus events. The watcher confirms the session lock and blanks the displays before releasing the sleep delay inhibitor. Hyprlock uses the wallpaper without capturing desktop frames for its transitions. Caffeine pauses idle timeouts and keeps its setting across suspend. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
+Niri starts the sleep and clipboard watcher user services. The sleep watcher subscribes to logind, confirms the session lock, and blanks the displays before releasing the sleep delay inhibitor. Hyprlock uses the wallpaper without capturing desktop frames for its transitions. Caffeine pauses idle timeouts and keeps its setting across suspend. Hypridle continues to handle idle timeouts and display restoration after resume. Explicit suspend requests stop if locking fails. External sleep requests can still proceed when `InhibitDelayMaxSec` expires, so this setting bounds the available lock preparation time.
 
 To switch to Ly at the next boot, review your current display manager first. Arch ships `ly@tty2.service`. Enable it successfully before disabling an existing display manager, then reserve its TTY:
 
@@ -353,9 +354,11 @@ To update from any directory, run:
 hype update
 ```
 
+If your installed `hype` predates updater self-refresh, run `./install.sh --setup-cli` from an up-to-date checkout once before using it for a desktop update.
+
 Choose **Update system packages** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
 
-Choose **Update packages and Hype Niri** to also download GitHub `main` into a temporary checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
+Choose **Update packages and Hype Niri** to refresh the GitHub `main` checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations and validates staged Niri files before publishing them. A completed desktop update also refreshes the installed `hype` command. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
 
 To run the package managers directly:
 

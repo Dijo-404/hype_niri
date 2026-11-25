@@ -4,6 +4,7 @@
 import concurrent.futures
 import json
 import select
+import socket
 import unittest
 
 from runtime_fixture import RuntimeFixture
@@ -25,6 +26,15 @@ class MonitorTests(RuntimeFixture):
             self.assertFalse((self.root / "niri-log").exists())
 
     def test_sleep_watcher_preserves_caffeine_and_blanks_before_releasing_delay(self):
+        scripts = self.home / ".config/scripts"
+        scripts.mkdir(parents=True)
+        hook = scripts / "prepare-sleep.sh"
+        hook.symlink_to("hype-control")
+        readiness = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(readiness.close)
+        notify_socket = self.root / "notify-service"
+        readiness.bind(str(notify_socket))
+        readiness.settimeout(3)
         self.mock(
             "hyprlock",
             'touch "$FIXTURE_ROOT/locker-started"\n'
@@ -46,6 +56,7 @@ class MonitorTests(RuntimeFixture):
                 "control caffeine toggle\n"
                 'initial=$(cat "$state")\n'
                 "control prepare-sleep --watch & watcher=$!\n"
+                'until [[ ! -L "$HOME/.config/scripts/prepare-sleep.sh" ]]; do sleep 0.01; done\n'
                 'wait_for "$FIXTURE_ROOT/locker-started"\n'
                 '[[ ! -e "$FIXTURE_ROOT/niri-log" ]]\n'
                 'touch "$FIXTURE_ROOT/locked"\n'
@@ -54,9 +65,11 @@ class MonitorTests(RuntimeFixture):
                 "control caffeine status\n"
                 'kill "$watcher"\n'
                 'wait "$watcher" || :',
+                extra_env={"NOTIFY_SOCKET": str(notify_socket)},
             )
             idle = inhibitor("idle")
             delay = inhibitor("sleep")
+            self.assertEqual(readiness.recv(32), b"READY=1")
             self.bus.prepare_for_sleep(True)
             self.assertEqual(delay.recv(1), b"")
             self.assertTrue((self.root / "locked").exists())

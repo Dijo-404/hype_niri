@@ -110,14 +110,15 @@ Log in to the **Niri** session from your display manager. Then try these shortcu
 
 Desktop commands use the installed binaries. Run `hype --help` for installer options.
 
-| Command                                                     | Description                                         |
-| :---------------------------------------------------------- | :-------------------------------------------------- |
-| `~/.config/scripts/hype-control --check`                    | Check the native desktop control binary.            |
-| `~/.config/scripts/hype-control --help`                     | List desktop commands.                              |
-| `~/.config/scripts/hype-control auto-power-profile --check` | Inspect the current power policy and D-Bus support. |
-| `~/.config/scripts/hype-control clipboard clear`            | Clear stored clipboard history.                     |
-| `~/.config/scripts/hype-notch --toggle`                     | Open or close the notch drawer.                     |
-| `./install.sh --help`                                       | Show bootstrap usage from a local checkout.         |
+| Command                                                     | Description                                                |
+| :---------------------------------------------------------- | :--------------------------------------------------------- |
+| `~/.config/scripts/hype-control --check`                    | Check the native desktop control binary.                   |
+| `~/.config/scripts/hype-control --help`                     | List desktop commands.                                     |
+| `~/.config/scripts/hype-control auto-power-profile --check` | Inspect the current power policy and D-Bus support.        |
+| `~/.config/scripts/hype-control clipboard clear`            | Clear stored clipboard history.                            |
+| `~/.config/scripts/hype-control clipboard import-cliphist`  | Import a legacy history using the installed cliphist tool. |
+| `~/.config/scripts/hype-notch --toggle`                     | Open or close the notch drawer.                            |
+| `./install.sh --help`                                       | Show bootstrap usage from a local checkout.                |
 
 ### Keybindings
 
@@ -141,7 +142,7 @@ See the [full keybinding reference](keybindings.md).
 
 **Use the notch.** Hover over the pill below Waybar for a compact view and move within it to open the controls. Press `Super+N` to pin the drawer and focus search. You can also open controls from the grid button in the file shelf. Press `Esc` to close it. The drawer includes media controls, volume and brightness sliders, a 25-minute focus timer with a five-minute break, and a stopwatch. With Hype Flow installed, it also shows dictation status and controls. The speech worker loads on first use and unloads after 10 idle minutes by default.
 
-**Hold files in the notch.** Hover over the notch and press `Ctrl+V` to paste a screenshot, or drag local files onto the pill. Either action opens the file shelf. Use the folder button beside search to reopen the shelf when it contains files. Drag one item or use **Drag all** to copy them to another app. Use the **×** on a tile to remove its cached copy. Copies in `~/.cache/hype-niri/notch-shelf/` expire after 10 minutes.
+**Hold files in the notch.** Hover over the notch and press `Ctrl+V` to paste a screenshot, or drag local files onto the pill. Either action opens the file shelf. Use the folder button beside search to reopen the shelf when it contains files. Drag one item or use **Drag all** to copy them to another app. Use the **×** on a tile to remove its cached copy. Copies in `~/.cache/hype-niri/notch-shelf/` expire after 10 minutes. The notch clears abandoned copies when it starts again.
 
 **Copy and paste in Alacritty.** Select text and press `Ctrl+C` to copy it. Press `Ctrl+V` to paste and `Ctrl+Shift+C` to interrupt a running command.
 
