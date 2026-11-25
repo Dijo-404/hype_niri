@@ -1,4 +1,4 @@
-use crate::{Installer, Result, error};
+use crate::{Installer, Result, core::InstallLock, error};
 use std::{
     ffi::CString,
     fs::{self, File, FileTimes, Metadata, Permissions},
@@ -13,6 +13,7 @@ use std::{
 use tempfile::{Builder, NamedTempFile};
 
 pub(crate) const DESKTOP_PROGRAMS: &[&str] = &["hype-notch", "hype-control", "hype-status"];
+const REPOSITORY: &str = "https://github.com/Dijo-404/hype_niri.git";
 
 const DESKTOP_DIRS: &[&str] = &[
     "scripts",
@@ -91,12 +92,72 @@ const WAYBAR_COMPATIBILITY: &[&str] = &[
 ];
 
 impl Installer {
+    fn managed_directory(&self) -> Result<PathBuf> {
+        let directory = self.prepare_user_directory("hype-niri")?;
+        let entry = fs::symlink_metadata(&directory)?;
+        if !entry.is_dir() || entry.uid() != unsafe { libc::geteuid() } {
+            return Err(error(format!(
+                "Expected an owned directory at {}",
+                directory.display()
+            )));
+        }
+        Ok(directory)
+    }
+
+    pub fn prepare_managed_source(&mut self, refresh: bool) -> Result<InstallLock> {
+        let directory = self.managed_directory()?;
+        let lock = InstallLock::lock_source(&directory)?;
+        let checkout = directory.join("source");
+        if let Some(entry) = metadata(&checkout)? {
+            if !entry.is_dir() || !metadata(&checkout.join(".git"))?.is_some_and(|git| git.is_dir())
+            {
+                return Err(error(format!(
+                    "Expected a Git checkout at {}",
+                    checkout.display()
+                )));
+            }
+            if refresh {
+                self.command(
+                    "git",
+                    &[
+                        "-C",
+                        path_arg(&checkout)?,
+                        "pull",
+                        "--ff-only",
+                        "--",
+                        REPOSITORY,
+                        "main",
+                    ],
+                )?;
+            }
+        } else {
+            let staging = Builder::new().prefix(".source.").tempdir_in(&directory)?;
+            let staged = staging.path().join("source");
+            self.command(
+                "git",
+                &[
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    "main",
+                    "--single-branch",
+                    "--progress",
+                    "--",
+                    REPOSITORY,
+                    path_arg(&staged)?,
+                ],
+            )?;
+            fs::rename(staged, &checkout)?;
+        }
+        self.source = checkout;
+        Ok(lock)
+    }
+
     pub fn publish_cli(&self, binary: &Path) -> Result<PathBuf> {
-        let launcher = self.user(".local/bin/hype");
-        let installed = self
-            .home
-            .canonicalize()?
-            .join(".local/share/hype-niri/hype-install");
+        let launcher = self.user("bin/hype");
+        let home = self.home.canonicalize()?;
+        let installed = home.join("hype-niri/hype-install");
         let registered = match metadata(&launcher)? {
             None => false,
             Some(entry) if entry.is_symlink() && fs::read_link(&launcher)? == installed => true,
@@ -107,11 +168,17 @@ impl Installer {
                 )));
             }
         };
-        self.prepare_user_directory(".local/share/hype-niri")?;
-        self.prepare_user_directory(".local/bin")?;
+        self.managed_directory()?;
+        self.prepare_user_directory("bin")?;
         copy_regular(binary, &installed, Some(0o755), true)?;
         if !registered {
             symlink(&installed, &launcher)?;
+        }
+        let legacy = self.user(".local/bin/hype");
+        if metadata(&legacy)?.is_some_and(|entry| entry.is_symlink())
+            && fs::read_link(&legacy)? == home.join(".local/share/hype-niri/hype-install")
+        {
+            write_symlink(&installed, &legacy)?;
         }
         Ok(launcher)
     }

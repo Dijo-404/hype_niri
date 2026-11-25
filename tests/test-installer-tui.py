@@ -66,7 +66,10 @@ class InstallerTuiTests(unittest.TestCase):
         self.tool(
             "git",
             """printf 'git %s\\n' "$*" >> "$HYPE_TEST_CALLS"
-/usr/bin/ln -s -- "$HYPE_TEST_SOURCE" "${@: -1}"
+[[ $1 != -C ]] || exit 0
+destination=${@: -1}
+/usr/bin/mkdir -p -- "$destination/.git"
+/usr/bin/ln -s -- "$HYPE_TEST_SOURCE/optional-packages.txt" "$destination/optional-packages.txt"
 """,
         )
         self.tool(
@@ -95,7 +98,7 @@ exit 78
             check=False,
             timeout=5,
         )
-        return result, self.home / ".local/bin/hype"
+        return result, self.home / "bin/hype"
 
     def start(self, *arguments, executable=BINARY, source=REPO):
         self.master, slave = pty.openpty()
@@ -185,13 +188,17 @@ exit 78
         self.assertEqual(termios.tcgetattr(slave), original)
         self.assertIn("git clone --depth 1 --branch main", self.calls.read_text())
         self.assertNotIn("preflight", self.calls.read_text())
-        self.assertFalse(list(self.root.glob("hype-niri-update-*")))
+        self.assertTrue((self.home / "hype-niri/source/.git").is_dir())
+        self.assertFalse(list(self.home.glob("hype-niri/.source.*")))
 
     def test_install_command_starts_the_fresh_install_checklist(self):
         result, launcher = self.register_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         result, _ = self.register_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
+        checkout = self.home / "hype-niri/source"
+        (checkout / ".git").mkdir(parents=True)
+        (checkout / "optional-packages.txt").symlink_to(REPO / "optional-packages.txt")
         process, _, _ = self.start("install", executable=launcher, source=None)
         self.expect("[x] Firefox")
         self.send(b"\r")
@@ -202,16 +209,26 @@ exit 78
         self.expect("Install desktop")
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 0)
-        self.assertIn("git clone --depth 1 --branch main", self.calls.read_text())
+        self.assertIn(f"git -C {checkout} pull --ff-only", self.calls.read_text())
+        self.assertEqual(launcher.resolve(), self.home / "hype-niri/hype-install")
 
     def test_registration_preserves_an_existing_hype_command(self):
-        launcher = self.home / ".local/bin/hype"
+        launcher = self.home / "bin/hype"
         launcher.parent.mkdir(parents=True)
         launcher.write_text("another command\n")
         result, _ = self.register_cli()
         self.assertEqual(result.returncode, 1)
         self.assertIn("Another command already uses", result.stderr)
         self.assertEqual(launcher.read_text(), "another command\n")
+
+    def test_registration_keeps_legacy_launcher_working(self):
+        legacy = self.home / ".local/bin/hype"
+        old_binary = self.home / ".local/share/hype-niri/hype-install"
+        legacy.parent.mkdir(parents=True)
+        legacy.symlink_to(old_binary)
+        result, launcher = self.register_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(legacy.resolve(), launcher.resolve())
 
     def test_sigterm_restores_terminal_mode(self):
         process, slave, original = self.start()
@@ -236,7 +253,8 @@ exit 78
         self.assertFalse(self.calls.exists())
         self.send(b"\r")
         self.expect("Refresh Arch mirrors")
-        self.send(b"\r")
+        self.expect("Yes in 5s")
+        self.send(b"n")
         self.expect("Native package confirmation")
         self.assertEqual(termios.tcgetattr(slave), original)
         self.send(b"terminal answer\r")
@@ -257,8 +275,10 @@ exit 78
         self.send(b"\r")
         self.expect("Review package update")
         self.assertFalse(self.calls.exists())
-        self.send(b"\r")
+        self.expect("Yes in 5s")
+        start = time.monotonic()
         self.expect("Package update complete")
+        self.assertGreaterEqual(time.monotonic() - start, 4.5)
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 0)
         self.assertEqual(
@@ -269,6 +289,18 @@ exit 78
                 "yay -Syu --aur --noconfirm=false --confirm",
             ],
         )
+
+    def test_plain_package_update_defaults_to_yes(self):
+        self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
+        self.tool("yay", 'printf "yay %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
+        process, _, _ = self.start("update", "--plain", source=None)
+        self.expect("Also refresh Hype Niri desktop files?")
+        self.send(b"n\r")
+        self.expect("Start the system package update? [Y/n] (Yes in 5s)")
+        self.assertFalse(self.calls.exists())
+        self.expect("Package update complete")
+        self.assertEqual(process.wait(timeout=5), 0)
+        self.assertIn("sudo pacman -Syu", self.calls.read_text())
 
     def test_first_install_bootstraps_missing_yay_as_regular_user(self):
         self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
@@ -289,11 +321,12 @@ printf '%s (uid %s)\\n' "$*" "$EUID" >> "$HYPE_TEST_CALLS"
         self.tool("yay-stub", 'printf "yay %s\\n" "$*" >> "$HYPE_TEST_CALLS"\nexit 15')
         process, _, _ = self.start("install")
         self.expect("Continue to review")
+        self.assertTrue((self.home / "bin/hype").is_file())
         self.send(b"n\r")
         self.expect("Start installation")
         self.send(b"\r")
         self.expect("Refresh Arch mirrors")
-        self.send(b"\r")
+        self.send(b"n")
         self.expect("Install failed")
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 1)

@@ -758,7 +758,7 @@ class NativeRuntimeTests(unittest.TestCase):
                 command.result()
         self.run_control("power-profile", "cycle")
         self.assertEqual(
-            self.bus.snapshot()["sets"], ["balanced", "power-saver", "performance"]
+            self.bus.snapshot()["sets"], ["power-saver", "balanced", "performance"]
         )
 
         def supported_profiles(*names):
@@ -776,14 +776,14 @@ class NativeRuntimeTests(unittest.TestCase):
 
         self.bus.invoke(
             lambda: self.bus.change(
-                PP_ROOT, PP, "ActiveProfile", GLib.Variant("s", "power-saver")
+                PP_ROOT, PP, "ActiveProfile", GLib.Variant("s", "balanced")
             )
         )
         supported_profiles("balanced", "power-saver")
         self.run_control("power-profile", "cycle")
-        self.assertEqual(self.bus.snapshot()["sets"][-1], "balanced")
+        self.assertEqual(self.bus.snapshot()["sets"][-1], "power-saver")
 
-        supported_profiles("balanced")
+        supported_profiles("power-saver")
         self.run_control("power-profile", "cycle")
         self.assertEqual(len(self.bus.snapshot()["sets"]), 4)
 

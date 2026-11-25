@@ -170,6 +170,17 @@ fn entry() -> Result<()> {
         optional_groups: None,
         runner: Box::new(ProcessRunner),
     };
+    let bootstrap_source = std::env::var_os("HYPE_NIRI_BOOTSTRAP_SOURCE");
+    if options.mode == Mode::Install
+        && options.source_seen
+        && bootstrap_source
+            .as_deref()
+            .is_some_and(|source| source == "checkout" || source == "main")
+    {
+        let _lock = InstallLock::acquire(&runtime_directory()?)?;
+        let launcher = installer.publish_cli(&std::env::current_exe()?)?;
+        println!("Installed {}", launcher.display());
+    }
     match options.mode {
         Mode::Menu | Mode::Install | Mode::Update => {
             let direct = match options.mode {
@@ -178,9 +189,8 @@ fn entry() -> Result<()> {
                 _ => None,
             };
             let local_source = options.source_seen || (direct.is_none() && !launched_as_hype);
-            let fetched = options.source_seen
-                && std::env::var_os("HYPE_NIRI_BOOTSTRAP_SOURCE").as_deref()
-                    == Some("main".as_ref());
+            let fetched =
+                options.source_seen && bootstrap_source.as_deref() == Some("main".as_ref());
             if !options.plain && tui::available() {
                 return tui::run(installer, direct, local_source, fetched);
             }
@@ -191,8 +201,8 @@ fn entry() -> Result<()> {
             } else {
                 direct.unwrap_or(tui::Action::Install)
             };
-            let _staging = if action.downloads_source(local_source, fetched) {
-                Some(tui::fetch_latest(&mut installer)?)
+            let _source_lock = if action.uses_managed_source(local_source, fetched) {
+                Some(installer.prepare_managed_source(!fetched)?)
             } else {
                 None
             };

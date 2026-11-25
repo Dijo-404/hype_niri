@@ -1,5 +1,7 @@
 use std::{
-    io::{self, IsTerminal, Write},
+    fs::File,
+    io::{self, IsTerminal, Read, Write},
+    os::fd::AsFd,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -35,6 +37,9 @@ pub trait Runner {
     fn run(&self, program: &str, args: &[&str]) -> Result<()>;
     fn confirm(&self, prompt: &str) -> Result<bool>;
     fn input(&self, prompt: &str) -> Result<String>;
+    fn input_or_default(&self, prompt: &str, _default: &str) -> Result<String> {
+        self.input(prompt)
+    }
     fn available(&self, program: &str) -> bool;
     fn message(&self, message: std::fmt::Arguments<'_>, warning: bool) {
         if warning {
@@ -48,6 +53,47 @@ pub trait Runner {
     }
 }
 pub struct ProcessRunner;
+impl ProcessRunner {
+    fn read_input(prompt: &str, default: Option<&str>) -> Result<String> {
+        if terminal_color(io::stderr().is_terminal()) {
+            eprint!("  \x1b[1;33m>\x1b[0m {prompt}");
+        } else {
+            eprint!("  > {prompt}");
+        }
+        if let Some(answer) = default {
+            eprint!("({answer} in {}s) ", core::CONFIRM_TIMEOUT.as_secs());
+        }
+        io::stderr().flush()?;
+        if let Some(answer) = default {
+            let mut input = libc::pollfd {
+                fd: libc::STDIN_FILENO,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ready =
+                unsafe { libc::poll(&mut input, 1, core::CONFIRM_TIMEOUT.as_millis() as i32) };
+            if ready < 0 {
+                return Err(io::Error::last_os_error().into());
+            }
+            if ready == 0 {
+                // Discard unfinished input so it cannot answer the next prompt.
+                if unsafe { libc::tcflush(input.fd, libc::TCIFLUSH) } != 0 {
+                    return Err(io::Error::last_os_error().into());
+                }
+                eprintln!("{answer}");
+                return Ok(answer.to_owned());
+            }
+        }
+        let mut terminal = File::from(io::stdin().as_fd().try_clone_to_owned()?);
+        let mut answer = [0; 4096];
+        let count = terminal.read(&mut answer)?;
+        if count == 0 {
+            return Err(error("Terminal input ended; installation stopped"));
+        }
+        Ok(String::from_utf8_lossy(&answer[..count]).trim().to_owned())
+    }
+}
+
 impl Runner for ProcessRunner {
     fn run_logged(&self, program: &str, args: &[&str], log: &Path) -> Result<()> {
         use std::{
@@ -126,26 +172,19 @@ impl Runner for ProcessRunner {
     }
     fn confirm(&self, prompt: &str) -> Result<bool> {
         loop {
-            let answer = self.input(&format!("{prompt} [y/n]: "))?;
+            let answer = self.input_or_default(&format!("{prompt} [Y/n] "), "Yes")?;
             match answer.trim().to_ascii_lowercase().as_str() {
-                "y" | "yes" => return Ok(true),
+                "" | "y" | "yes" => return Ok(true),
                 "n" | "no" => return Ok(false),
                 _ => eprintln!("Please answer y or n."),
             }
         }
     }
     fn input(&self, prompt: &str) -> Result<String> {
-        if terminal_color(io::stderr().is_terminal()) {
-            eprint!("  \x1b[1;33m>\x1b[0m {prompt}");
-        } else {
-            eprint!("  > {prompt}");
-        }
-        io::stderr().flush()?;
-        let mut answer = String::new();
-        if io::stdin().read_line(&mut answer)? == 0 {
-            return Err(error("Terminal input ended; installation stopped"));
-        }
-        Ok(answer.trim().to_owned())
+        Self::read_input(prompt, None)
+    }
+    fn input_or_default(&self, prompt: &str, default: &str) -> Result<String> {
+        Self::read_input(prompt, Some(default))
     }
     fn available(&self, program: &str) -> bool {
         available(program)

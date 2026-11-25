@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-hype_bootstrap() {
+hype_bootstrap() (
     set -Eeuo pipefail
     if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-        printf 'Usage: install.sh --setup-cli\n       install.sh [install | update] [--plain]\n       install.sh [--plain] --phase NAME\n\n--setup-cli installs the hype command in ~/.local/bin.\nRun as a regular Arch Linux user with sudo. The installer sets up yay when it is missing.\n'
+        printf 'Usage: install.sh --setup-cli\n       install.sh [install | update] [--plain]\n       install.sh [--plain] --phase NAME\n\ninstall and --setup-cli register ~/bin/hype. Downloads go to ~/hype-niri/source.\nRun as a regular Arch Linux user with sudo. The installer sets up yay when it is missing.\n'
         return 0
     fi
-    local temporary="" source_dir="" source_origin=checkout here="${BASH_SOURCE[0]:-}" build_log="" cargo_host answer code=0
-    trap 'code=$?; [[ -z ${temporary:-} ]] || rm -rf -- "$temporary"; exit "$code"' EXIT
+    local source_dir="" source_origin=checkout here="${BASH_SOURCE[0]:-}" build_log cargo_host answer code
+    bootstrap_stage=""
+    trap 'code=$?; [[ -z $bootstrap_stage ]] || rm -rf -- "$bootstrap_stage"; exit "$code"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     if ((EUID == 0)); then
@@ -17,7 +18,7 @@ hype_bootstrap() {
         printf 'This installer requires Arch Linux (pacman).\n' >&2
         exit 1
     fi
-    # stdin can contain this script, so all interactive input comes from the terminal.
+    # A piped bootstrap still needs the terminal for prompts.
     if ! { exec 3<>/dev/tty; } 2>/dev/null; then
         printf 'An interactive terminal is required. Run the command from a terminal.\n' >&2
         exit 1
@@ -26,9 +27,21 @@ hype_bootstrap() {
         export PATH="$HOME/.cargo/bin:$PATH"
     fi
     if ! command -v git >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1 || ! command -v cc >/dev/null 2>&1; then
-        printf 'Git, Rust and build tools are needed. Run a full Arch upgrade and install them? [y/N]: ' >&3
-        IFS= read -r answer <&3 || exit 1
-        [[ $answer == y || $answer == Y || $answer == yes || $answer == YES ]] || exit 1
+        while true; do
+            printf 'Git, Rust and build tools are needed. Run a full Arch upgrade and install them? [Y/n, Yes in 5s]: ' >&3
+            if IFS= read -r -t 5 answer <&3; then
+                case ${answer,,} in
+                    '' | y | yes) break ;;
+                    n | no) exit 1 ;;
+                    *) printf 'Please answer y or n.\n' >&3 ;;
+                esac
+            else
+                code=$?
+                ((code > 128)) || exit 1
+                printf '\n' >&3
+                break
+            fi
+        done
         sudo pacman -Syu --needed git rust base-devel <&3 || exit 1
     fi
     if [[ -n $here && -f $here ]]; then
@@ -38,10 +51,36 @@ hype_bootstrap() {
         fi
     fi
     if [[ -z $source_dir ]]; then
-        temporary="$(mktemp -d "${TMPDIR:-/tmp}/hype-niri-source.XXXXXXXX")"
-        source_dir="$temporary/source"
-        printf 'Hype Niri  /  Fetching main\n' >&2
-        git clone --depth 1 --branch main --single-branch -- https://github.com/Dijo-404/hype_niri.git "$source_dir" <&3 || exit 1
+        local app_dir="$HOME/hype-niri" repository=https://github.com/Dijo-404/hype_niri.git
+        mkdir -p -- "$app_dir"
+        if [[ -L $app_dir || ! -O $app_dir ]]; then
+            printf 'Expected an owned directory at %s\n' "$app_dir" >&2
+            exit 1
+        fi
+        exec 4<"$app_dir"
+        if ! flock -n 4; then
+            printf 'Another Hype Niri operation is using %s\n' "$app_dir" >&2
+            exit 1
+        fi
+        source_dir="$app_dir/source"
+        printf 'Hype Niri  /  Fetching main into %s\n' "$source_dir" >&2
+        if [[ -e $source_dir || -L $source_dir ]]; then
+            if [[ -L $source_dir || ! -d $source_dir/.git || -L $source_dir/.git ]]; then
+                printf 'Expected a Git checkout at %s\n' "$source_dir" >&2
+                exit 1
+            fi
+            git -C "$source_dir" pull --ff-only -- "$repository" main <&3
+        else
+            bootstrap_stage="$(mktemp -d "$app_dir/.source.XXXXXXXX")"
+            git clone --depth 1 --branch main --single-branch -- "$repository" "$bootstrap_stage/source" <&3
+            mv -T --no-clobber -- "$bootstrap_stage/source" "$source_dir"
+            if [[ -e $bootstrap_stage/source ]]; then
+                printf 'Download destination appeared during setup: %s\n' "$source_dir" >&2
+                exit 1
+            fi
+            rmdir -- "$bootstrap_stage"
+            bootstrap_stage=""
+        fi
         source_origin=main
     fi
     printf 'Hype Niri  /  Building installer\n' >&2
@@ -56,9 +95,12 @@ hype_bootstrap() {
         exit 1
     fi
     rm -f -- "$build_log"
+    if [[ $source_origin == main ]]; then
+        exec 4<&-
+    fi
     local status=0
     HYPE_NIRI_BOOTSTRAP_SOURCE="$source_origin" "$source_dir/target/$cargo_host/release/hype-install" --source "$source_dir" "$@" <&3 || status=$?
     exit "$status"
-}
+)
 
 hype_bootstrap "$@"

@@ -54,17 +54,15 @@ Copy the whole block into an interactive Bash or Zsh terminal as your regular us
 ```bash
 (
   set -o pipefail
-  curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli
-) &&
-export PATH="$HOME/.local/bin:$PATH" &&
-hype install
+  curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- install
+)
 ```
 
-The bootstrap builds the Rust installer and places `hype` in `~/.local/bin`. The `export` makes `hype` available in the current terminal. If a new terminal reports `hype: command not found`, run `~/.local/bin/hype` with the same arguments or add `~/.local/bin` to your shell's `PATH` in its startup file.
+The bootstrap keeps the downloaded checkout in `~/hype-niri/source` and registers `~/bin/hype`. Run `~/bin/hype` directly or add `export PATH="$HOME/bin:$PATH"` to your shell startup file. Hype Niri's Zsh configuration adds this path automatically.
 
-The installer asks before upgrading Arch and before backing up and replacing existing configurations.
+Installer confirmations default to Yes after five seconds. Press Enter to accept immediately or `n` to decline. For line prompts, submit `n` with Enter. Package tools such as `sudo`, `pacman`, and `yay` use their own prompts.
 
-Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, then Enter on **Start installation**. Hype installs `yay` from the AUR if it is missing. The default extras include Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri.
+Use the arrow keys to browse extras, Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, where the countdown begins. Hype installs `yay` from the AUR if it is missing. The default extras include Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri. [Extras list](optional-packages.txt)
 
 <details>
 <summary><b>Install from a local checkout</b></summary>
@@ -74,9 +72,7 @@ Use the arrow keys to browse [extras](optional-packages.txt), Space to toggle a 
 ```bash
 git clone https://github.com/Dijo-404/hype_niri.git &&
 cd hype_niri &&
-./install.sh --setup-cli &&
-export PATH="$HOME/.local/bin:$PATH" &&
-hype install --source "$PWD"
+./install.sh install
 ```
 
 The [installation guide](INSTALL.md#manual-install) also covers applying individual components.
@@ -91,9 +87,9 @@ Run the updater from any directory.
 hype update
 ```
 
-Choose **Update system packages** and press Enter to review, then Enter to start. Hype runs `sudo pacman -Syu` for Arch packages and `yay -Syu --aur` for AUR packages. Follow their prompts in the terminal.
+Choose **Update system packages** and press Enter to review. Hype runs `sudo pacman -Syu` for Arch packages and `yay -Syu --aur` for AUR packages. Follow their prompts in the terminal.
 
-Choose **Update packages and Hype Niri** to also fetch the latest desktop files from GitHub `main` and review your saved extras. Use `--plain` for line prompts.
+Choose **Update packages and Hype Niri** to also refresh `~/hype-niri/source` from GitHub `main` and review your saved extras. Use `--plain` for line prompts.
 
 ### Uninstalling
 
@@ -132,7 +128,7 @@ Desktop commands use the installed binaries. Run `hype --help` for installer opt
 | `Super+←` / `Super+→`       | Focus the adjacent tiling column         |
 | `Super+1` through `Super+0` | Switch to workspaces 1 through 10        |
 | `Super+N`                   | Toggle the notch drawer                  |
-| `Super+M`                   | Cycle supported power profiles           |
+| `Super+M`                   | Cycle Power Saver, Balanced, Performance |
 | `Super+V`                   | Open clipboard history                   |
 | `Super+Shift+H`             | Open hotspot settings                    |
 | `Super+L`                   | Lock the session                         |

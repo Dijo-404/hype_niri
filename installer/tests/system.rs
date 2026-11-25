@@ -762,7 +762,6 @@ fn warp_waits_before_registration_and_respects_skip_connection() {
 fn stealth_bad_preview_keeps_existing_installation_before_any_backup() {
     let mut f = Fixture::new();
     let payload = f.prepare_stealth();
-    // A broken source configuration must fail before any live file changes or backup creation.
     f.calls.borrow_mut().overrides.insert(
         "tor preview".into(),
         VecDeque::from([(1, "syntax error".into())]),

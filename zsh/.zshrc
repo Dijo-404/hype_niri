@@ -183,6 +183,7 @@ export ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE="fg=245"
 
 
 [[ -f "$HOME/.local/bin/env" ]] && . "$HOME/.local/bin/env"
+[[ ":$PATH:" == *":$HOME/bin:"* ]] || export PATH="$HOME/bin:$PATH"
 
 
 [[ -d "$HOME/.opencode/bin" ]] && export PATH="$HOME/.opencode/bin:$PATH"

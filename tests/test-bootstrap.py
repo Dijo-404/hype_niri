@@ -29,8 +29,11 @@ class BootstrapTests(unittest.TestCase):
         (self.source / "installer/Cargo.toml").write_text("fixture")
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        self.home = self.root / "home with spaces"
+        self.home.mkdir()
         self.log = self.root / "calls"
         self.environment = os.environ | {
+            "HOME": str(self.home),
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "BOOTSTRAP_LOG": str(self.log),
             "BOOTSTRAP_SOURCE": str(self.source),
@@ -72,8 +75,9 @@ chmod +x "$release_dir/hype-install"
         self.tool(
             "git",
             """printf 'git %s\\n' "$*" >> "$BOOTSTRAP_LOG"
+[[ $1 != -C ]] || exit 0
 destination=${@: -1}
-mkdir -p "$destination"
+mkdir -p "$destination/.git"
 cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
 """,
         )
@@ -83,7 +87,9 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         path.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
         path.chmod(0o755)
 
-    def run_bootstrap(self, *, piped=False, arguments=(), terminal=True):
+    def run_bootstrap(
+        self, *, piped=False, arguments=(), terminal=True, answer=b"terminal answer\n"
+    ):
         if not terminal:
             return subprocess.run(
                 ["bash", str(self.source / "install.sh"), *arguments],
@@ -121,7 +127,8 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
             if piped:
                 process.stdin.write((self.source / "install.sh").read_bytes())
                 process.stdin.close()
-            os.write(master, b"terminal answer\n")
+            if answer is not None:
+                os.write(master, answer)
             deadline = time.monotonic() + 15
             while process.poll() is None and time.monotonic() < deadline:
                 if select.select([master], [], [], 0.05)[0]:
@@ -163,9 +170,15 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         self.assertEqual(result.returncode, 0, result.stdout)
         calls = self.log.read_text()
         self.assertIn("git clone", calls)
+        self.assertIn(f"<--source> <{self.home}/hype-niri/source>", calls)
         self.assertIn("source <main>", calls)
         self.assertIn("answer <terminal answer>", calls)
-        self.assertTrue(self.source.exists())
+        self.assertTrue((self.home / "hype-niri/source/.git").is_dir())
+        result = self.run_bootstrap(piped=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        calls = self.log.read_text()
+        self.assertEqual(calls.count("git clone"), 1)
+        self.assertIn(f"git -C {self.home}/hype-niri/source pull --ff-only", calls)
 
     def test_missing_terminal_fails_before_any_install(self):
         result = self.run_bootstrap(terminal=False)
@@ -176,10 +189,23 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
     def test_missing_compiler_requires_confirmation_before_packages(self):
         (self.bin / "bash").symlink_to("/usr/bin/bash")
         self.environment["PATH"] = str(self.bin)
-        result = self.run_bootstrap()
+        result = self.run_bootstrap(answer=b"n\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("full Arch upgrade", result.stdout)
         self.assertFalse(self.log.exists())
+
+    def test_missing_compiler_defaults_to_yes_after_five_seconds(self):
+        (self.bin / "bash").symlink_to("/usr/bin/bash")
+        self.environment["PATH"] = str(self.bin)
+        self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$BOOTSTRAP_LOG"\nexit 78')
+        start = time.monotonic()
+        result = self.run_bootstrap(answer=None)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertGreaterEqual(time.monotonic() - start, 4.9)
+        self.assertIn("Yes in 5s", result.stdout)
+        self.assertIn(
+            "sudo pacman -Syu --needed git rust base-devel", self.log.read_text()
+        )
 
     def test_failed_source_download_never_builds_or_installs(self):
         self.tool("git", "exit 7")
@@ -187,7 +213,7 @@ cp -a "$BOOTSTRAP_SOURCE/." "$destination/"
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.log.exists())
         self.assertTrue((self.source / "Cargo.toml").exists())
-        self.assertFalse(list(self.root.glob("hype-niri-source.*")))
+        self.assertEqual(list((self.home / "hype-niri").iterdir()), [])
 
     def test_failed_build_never_runs_installer(self):
         self.tool(

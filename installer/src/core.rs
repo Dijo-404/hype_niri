@@ -8,7 +8,10 @@ use std::{
         io::AsRawFd,
     },
     path::{Path, PathBuf},
+    time::Duration,
 };
+
+pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub type Phase = fn(&mut Installer) -> Result<()>;
 pub const PACKAGE_PHASES: &[(&str, Phase)] = &[
@@ -75,8 +78,23 @@ impl InstallLock {
         if !meta.is_file() || meta.uid() != unsafe { libc::geteuid() } {
             return Err(error("Installer lock is not an owned regular file"));
         }
+        Self::lock(file, "Another Hype Niri installation is already running")
+    }
+
+    pub(crate) fn lock_source(directory: &Path) -> Result<Self> {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+            .open(directory)?;
+        Self::lock(
+            file,
+            "Another Hype Niri operation is using the downloaded checkout",
+        )
+    }
+
+    fn lock(file: fs::File, busy: &str) -> Result<Self> {
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(error("Another Hype Niri installation is already running"));
+            return Err(error(busy));
         }
         Ok(Self { _file: file })
     }
@@ -383,12 +401,6 @@ impl Installer {
         println!("  Super+A opens the launcher. Super+T opens a terminal.");
         if self.selected("hype-flow") {
             println!("  Alt+Space starts or finishes dictation with the default shortcut.");
-        }
-        println!();
-        if self.confirm("Restart now?")? {
-            self.command("systemctl", &["reboot"])?;
-        } else {
-            println!("Reboot when ready to start using Niri.");
         }
         Ok(())
     }

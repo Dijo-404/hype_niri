@@ -381,9 +381,9 @@ async fn set_profile(connection: &gio::DBusConnection, profile: &str) -> Result<
 
 async fn power_profile(action: &str) -> Result<()> {
     let connection = bus::system().await?;
-    let order = ["performance", "balanced", "power-saver"];
     let (profile, cycle_lock) = match action {
         "menu" => {
+            let order = ["performance", "balanced", "power-saver"];
             let choices = order.map(|profile| {
                 let (icon, name) = profile_label(profile);
                 format!("{icon} {name}")
@@ -392,6 +392,7 @@ async fn power_profile(action: &str) -> Result<()> {
             (selected.map(|index| order[index]), None)
         }
         "cycle" => {
+            let order = PROFILE_NAMES;
             let lock = runtime::lock("hype-power-profile-cycle.lock", Duration::from_secs(5))?
                 .ok_or_else(|| err("Power profile change is busy"))?;
             let active = active_profile(&connection).await?;

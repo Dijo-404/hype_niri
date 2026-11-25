@@ -92,7 +92,9 @@ impl Installer {
         println!("  n          Core desktop only");
         println!("  custom     Choose extras by group\n");
         let selected = loop {
-            let answer = self.runner.input("Install extras? [Y/n/custom] ")?;
+            let answer = self
+                .runner
+                .input_or_default("Install extras? [Y/n/custom] ", "Yes")?;
             match answer.to_ascii_lowercase().as_str() {
                 "" | "y" | "yes" => break groups.iter().map(|(name, _)| name.clone()).collect(),
                 "n" | "no" => break Vec::new(),

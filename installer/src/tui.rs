@@ -5,7 +5,7 @@ use crossterm::{
 };
 use hype_install::{
     CommandOutput, Installer, ProcessRunner, Result, Runner,
-    core::{InstallLock, PACKAGE_PHASES, PHASES, Phase, runtime_directory},
+    core::{CONFIRM_TIMEOUT, InstallLock, PACKAGE_PHASES, PHASES, Phase, runtime_directory},
     error,
 };
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
@@ -22,13 +22,12 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod view;
 
 const POLL: Duration = Duration::from_millis(100);
-const REPOSITORY: &str = "https://github.com/Dijo-404/hype_niri.git";
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Action {
@@ -38,8 +37,8 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn downloads_source(self, local_source: bool, fetched: bool) -> bool {
-        self != Self::Packages && !fetched && (!local_source || self == Self::Update)
+    pub fn uses_managed_source(self, local_source: bool, fetched: bool) -> bool {
+        self != Self::Packages && (fetched || !local_source || self == Self::Update)
     }
 
     fn phases(self) -> &'static [(&'static str, Phase)] {
@@ -73,32 +72,6 @@ pub fn available() -> bool {
         && io::stdout().is_terminal()
         && io::stderr().is_terminal()
         && term.is_some_and(|term| !term.is_empty() && term != "dumb")
-}
-
-pub fn fetch_latest(installer: &mut Installer) -> Result<tempfile::TempDir> {
-    let staging = tempfile::Builder::new()
-        .prefix("hype-niri-update-")
-        .tempdir()?;
-    let checkout = staging.path().join("source");
-    installer.command(
-        "git",
-        &[
-            "clone",
-            "--depth",
-            "1",
-            "--branch",
-            "main",
-            "--single-branch",
-            "--progress",
-            "--",
-            REPOSITORY,
-            checkout
-                .to_str()
-                .ok_or_else(|| error("Update staging path is not UTF-8"))?,
-        ],
-    )?;
-    installer.source = checkout;
-    Ok(staging)
 }
 
 pub fn update_defaults(
@@ -137,7 +110,7 @@ pub fn run(
     let ui = Rc::new(RefCell::new(Ui::new()?));
     installer.runner = Box::new(TuiRunner(ui.clone()));
 
-    let mut latest = None;
+    let mut managed_source = None;
     let mut direct = direct == Some(Action::Install);
     loop {
         if !direct {
@@ -154,35 +127,25 @@ pub fn run(
             }
             continue;
         }
-        let download = action.downloads_source(local_source, fetched);
-        {
-            let mut ui = ui.borrow_mut();
-            ui.source = if download || fetched {
-                "GitHub main"
-            } else {
-                "Local checkout"
-            };
-        }
-        if download {
-            if latest.is_none() {
-                ui.borrow_mut().working(
-                    "Fetching latest source",
-                    "Downloading GitHub main into a temporary checkout",
-                )?;
-                match fetch_latest(&mut installer) {
-                    Ok(staging) => latest = Some(staging),
+        if action.uses_managed_source(local_source, fetched) {
+            ui.borrow_mut().source = "~/hype-niri/source (GitHub main)";
+            if managed_source.is_none() {
+                ui.borrow_mut()
+                    .working("Preparing desktop source", "Checking ~/hype-niri/source")?;
+                match installer.prepare_managed_source(!fetched) {
+                    Ok(lock) => managed_source = Some((installer.source.clone(), lock)),
                     Err(cause) => {
-                        ui.borrow_mut().finish(
-                            "Source download failed",
-                            &cause.to_string(),
-                            true,
-                        )?;
+                        ui.borrow_mut()
+                            .finish("Source setup failed", &cause.to_string(), true)?;
                         return Err(cause);
                     }
                 }
             }
-            installer.source = latest.as_ref().unwrap().path().join("source");
+            installer
+                .source
+                .clone_from(&managed_source.as_ref().unwrap().0);
         } else {
+            ui.borrow_mut().source = "Local checkout";
             installer.source.clone_from(&original);
         }
 
@@ -352,6 +315,19 @@ impl Screen {
         Ok(())
     }
 
+    fn confirmation_seconds(&self, deadline: &mut Instant) -> Result<u64> {
+        self.check_interrupt()?;
+        let (width, height) = terminal::size()?;
+        let now = Instant::now();
+        if width < view::MIN_WIDTH || height < view::MIN_HEIGHT {
+            *deadline = now + CONFIRM_TIMEOUT;
+        }
+        Ok(deadline
+            .saturating_duration_since(now)
+            .as_millis()
+            .div_ceil(1000) as u64)
+    }
+
     fn key(&self, wait: bool) -> Result<Option<KeyCode>> {
         let event = loop {
             self.check_interrupt()?;
@@ -507,9 +483,14 @@ impl Ui {
     }
 
     fn review(&mut self, extras: Option<&[String]>) -> Result<bool> {
+        let mut deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
-            self.draw(view::Page::Review { extras })?;
-            match self.screen.key(true)? {
+            let seconds = self.screen.confirmation_seconds(&mut deadline)?;
+            if seconds == 0 {
+                return Ok(true);
+            }
+            self.draw(view::Page::Review { extras, seconds })?;
+            match self.screen.key(false)? {
                 Some(KeyCode::Enter | KeyCode::Char('y' | 'Y')) => return Ok(true),
                 Some(KeyCode::Esc | KeyCode::BackTab | KeyCode::Char('q' | 'n' | 'N')) => {
                     return Ok(false);
@@ -529,15 +510,28 @@ impl Ui {
     }
 
     fn confirm(&mut self, question: &str) -> Result<bool> {
-        let mut yes = false;
+        let mut yes = true;
+        let mut deadline = Some(Instant::now() + CONFIRM_TIMEOUT);
         self.scroll = 0;
         loop {
-            self.draw(view::Page::Progress(view::Prompt::Confirm(question, yes)))?;
-            match self.screen.key(true)? {
+            let seconds = deadline
+                .as_mut()
+                .map(|deadline| self.screen.confirmation_seconds(deadline))
+                .transpose()?;
+            if seconds == Some(0) {
+                return Ok(true);
+            }
+            self.draw(view::Page::Progress(view::Prompt::Confirm(
+                question, yes, seconds,
+            )))?;
+            match self.screen.key(false)? {
                 Some(KeyCode::Enter) => return Ok(yes),
                 Some(KeyCode::Char('y' | 'Y')) => return Ok(true),
                 Some(KeyCode::Esc | KeyCode::Char('n' | 'N')) => return Ok(false),
-                Some(KeyCode::Left | KeyCode::Right | KeyCode::Tab) => yes = !yes,
+                Some(KeyCode::Left | KeyCode::Right | KeyCode::Tab) => {
+                    yes = !yes;
+                    deadline = None;
+                }
                 Some(key) => self.navigate_log(key),
                 None => {}
             }

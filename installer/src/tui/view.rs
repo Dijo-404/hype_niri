@@ -20,6 +20,7 @@ pub(super) enum Page<'a> {
     },
     Review {
         extras: Option<&'a [String]>,
+        seconds: u64,
     },
     Progress(Prompt<'a>),
 }
@@ -27,7 +28,7 @@ pub(super) enum Page<'a> {
 #[derive(Clone, Copy)]
 pub(super) enum Prompt<'a> {
     Working,
-    Confirm(&'a str, bool),
+    Confirm(&'a str, bool, Option<u64>),
     Input(&'a str, &'a str),
     Finished(bool),
 }
@@ -118,6 +119,7 @@ impl Ui {
                 _ => action.title(),
             };
             header(frame, top, theme, section);
+            let review_keys;
             let keys = match page {
                 Page::Actions { choices, selected } => {
                     actions(frame, body, theme, choices, selected);
@@ -145,9 +147,10 @@ impl Ui {
                     .draw(frame, body, theme);
                     "↑↓  Move     Space  Toggle     a/n  All/none     Esc  Back"
                 }
-                Page::Review { extras } => {
+                Page::Review { extras, seconds } => {
                     draw_review(frame, body, theme, *action, source, extras);
-                    "Enter  Start     Esc  Back"
+                    review_keys = format!("Enter  Start     n / Esc  Back     Yes in {seconds}s");
+                    &review_keys
                 }
                 Page::Progress(prompt) => {
                     let progress = Progress {
@@ -452,7 +455,7 @@ impl Progress<'_> {
         let (title, status, action) = match self.prompt {
             Prompt::Working => (self.title, placeholder, None),
             Prompt::Finished(_) => (self.title, placeholder, None),
-            Prompt::Confirm(question, yes) => {
+            Prompt::Confirm(question, yes, seconds) => {
                 let select = |text, active| {
                     Span::styled(
                         text,
@@ -467,9 +470,15 @@ impl Progress<'_> {
                     " Confirm ",
                     question,
                     Some(Line::from(vec![
-                        select(" No ", !yes),
+                        select(" No ".to_owned(), !yes),
                         Span::raw("  "),
-                        select(" Yes ", yes),
+                        select(
+                            seconds.map_or_else(
+                                || " Yes ".to_owned(),
+                                |seconds| format!(" Yes in {seconds}s "),
+                            ),
+                            yes,
+                        ),
                     ])),
                 )
             }

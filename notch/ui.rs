@@ -1109,7 +1109,6 @@ impl View {
             State::Hidden
         });
         if self.pinned.get() && focus {
-            // The shortcut and shelf button focus search when opening the controls.
             self.window.set_keyboard_mode(KeyboardMode::Exclusive);
             self.search.grab_focus();
         }
