@@ -56,7 +56,7 @@ browser-firefox editor-neovim bluetooth
 | `hype-flow`                                                   | Offline dictation, Parakeet model setup, `wl-clipboard`, `wtype` and Bubblewrap                  |
 | `desktop-tools`                                               | Optional audio mixer, color picker and system monitor; wl-clipboard supports hyprpicker autocopy |
 | `docker`                                                      | Docker tools, socket activation and optional group membership                                    |
-| `bluetooth`                                                   | BlueZ/Blueman, Bluetooth service, pairing dialogs and a Rust GTK3 module for Escape-to-close     |
+| `bluetooth`                                                   | BlueZ, Bluetooth service, pairing dialogs, Waybar Bluetooth icon, notch connect alerts           |
 | `warp`, `proton-vpn`, `stealth`                               | Explicit VPN or Tor integrations                                                                 |
 | `firewall`                                                    | UFW package and separately confirmed firewall configuration                                      |
 | `login-manager-ly`                                            | Ly package and separately confirmed login-manager switch                                         |

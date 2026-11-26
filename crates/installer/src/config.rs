@@ -464,6 +464,9 @@ impl Installer {
                     let path = staged.join("config.jsonc");
                     let contents = fs::read_to_string(&path)?;
                     let mut modules = vec!["\"custom/hotspot\"", "\"tray\""];
+                    if self.selected("bluetooth") {
+                        modules.push("\"bluetooth\"");
+                    }
                     if self.selected("stealth") {
                         modules.push("\"image#stealth\"");
                     }
@@ -921,6 +924,16 @@ impl Installer {
                 "Could not enable Bluetooth pairing dialogs. Run gsettings set org.blueman.general notification-daemon false."
             ));
         }
+        let mut plugins = vec!["!ConnectionNotifier"];
+        if self.selected("bluetooth") {
+            plugins.extend(["!StatusIcon", "!ShowConnected"]);
+        }
+        if let Err(err) = self.append_gsettings_list("org.blueman.general", "plugin-list", &plugins)
+        {
+            self.warn(format_args!(
+                "Could not move Bluetooth connection alerts to notifications: {err}"
+            ));
+        }
         if let Err(err) = self.set_default_browser() {
             self.warn(format_args!("Could not set the default browser: {err}"));
         }
@@ -1121,8 +1134,24 @@ impl Installer {
     }
 
     fn configure_file_indexing(&self) -> Result<()> {
-        let schema = "org.freedesktop.Tracker3.Miner.Files";
-        let key = "ignored-directories";
+        self.append_gsettings_list(
+            "org.freedesktop.Tracker3.Miner.Files",
+            "ignored-directories",
+            &[
+                "node_modules",
+                ".venv",
+                "venv",
+                "miniconda3",
+                "__pycache__",
+                "target",
+                ".mypy_cache",
+                ".pytest_cache",
+                ".ruff_cache",
+            ],
+        )
+    }
+
+    fn append_gsettings_list(&self, schema: &str, key: &str, wanted: &[&str]) -> Result<()> {
         if !self.runner.available("gsettings") {
             return Ok(());
         }
@@ -1140,25 +1169,19 @@ impl Installer {
         let entries = current
             .strip_prefix('[')
             .and_then(|list| list.strip_suffix(']'))
-            .ok_or_else(|| error("Tracker returned an invalid ignored-directories setting"))?;
+            .ok_or_else(|| error(format!("{schema} returned an invalid {key} setting")))?;
         let mut updated = entries.trim_end().to_owned();
-        for dir in [
-            "node_modules",
-            ".venv",
-            "venv",
-            "miniconda3",
-            "__pycache__",
-            "target",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".ruff_cache",
-        ] {
-            if !variant_contains(entries, dir) {
+        for &entry in wanted {
+            if !variant_contains(entries, entry)
+                && !entry
+                    .strip_prefix('!')
+                    .is_some_and(|name| variant_contains(entries, name))
+            {
                 if !updated.trim_start().is_empty() {
                     updated.push_str(", ");
                 }
                 updated.push('\'');
-                updated.push_str(dir);
+                updated.push_str(entry);
                 updated.push('\'');
             }
         }

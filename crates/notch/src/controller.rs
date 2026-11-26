@@ -7,7 +7,7 @@ use crate::{
 use gtk::{gio, glib, prelude::*};
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::Path,
     rc::Rc,
     time::{Duration, Instant},
@@ -74,6 +74,7 @@ pub struct Controller {
     weather_retry: RefCell<Option<glib::SourceId>>,
     flow_watch: RefCell<Option<gio::WatcherId>>,
     bus_signal: RefCell<Option<gio::SignalSubscription>>,
+    bluetooth_signal: RefCell<Option<gio::SignalSubscription>>,
     weather_busy: Cell<bool>,
     hold: RefCell<Option<gio::ApplicationHoldGuard>>,
 }
@@ -101,6 +102,7 @@ impl Controller {
             weather_retry: RefCell::new(None),
             flow_watch: RefCell::new(None),
             bus_signal: RefCell::new(None),
+            bluetooth_signal: RefCell::new(None),
             weather_busy: Cell::new(false),
             hold: RefCell::new(Some(app.hold())),
         });
@@ -253,6 +255,7 @@ impl Controller {
     }
     fn start_services(self: &Rc<Self>) {
         self.fetch_weather();
+        self.watch_bluetooth();
         prune_shelf();
         let weak = Rc::downgrade(self);
         *self.weather_source.borrow_mut() =
@@ -367,6 +370,42 @@ impl Controller {
                     }
                 }
             }
+        });
+    }
+    fn watch_bluetooth(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let Ok(bus) = gio::bus_get_future(gio::BusType::System).await else {
+                return;
+            };
+            let Some(this) = weak.upgrade() else {
+                return;
+            };
+            let app = this.app.downgrade();
+            let signal = bus.subscribe_to_signal(
+                Some("org.bluez"),
+                Some("org.freedesktop.DBus.Properties"),
+                Some("PropertiesChanged"),
+                None,
+                Some("org.bluez.Device1"),
+                gio::DBusSignalFlags::NONE,
+                move |signal| {
+                    let Some(connected) = signal
+                        .parameters
+                        .get::<(String, HashMap<String, glib::Variant>, Vec<String>)>()
+                        .and_then(|(_, changed, _)| changed.get("Connected")?.get::<bool>())
+                    else {
+                        return;
+                    };
+                    glib::spawn_future_local(notify_bluetooth(
+                        app.clone(),
+                        signal.connection.clone(),
+                        signal.object_path.to_owned(),
+                        connected,
+                    ));
+                },
+            );
+            *this.bluetooth_signal.borrow_mut() = Some(signal);
         });
     }
     fn fetch_weather(self: &Rc<Self>) {
@@ -602,6 +641,49 @@ impl Controller {
     }
 }
 
+async fn notify_bluetooth(
+    app: glib::WeakRef<gtk::Application>,
+    bus: gio::DBusConnection,
+    path: String,
+    connected: bool,
+) {
+    let Some((properties,)) = bus
+        .call_future(
+            Some("org.bluez"),
+            &path,
+            "org.freedesktop.DBus.Properties",
+            "GetAll",
+            Some(&("org.bluez.Device1",).to_variant()),
+            None,
+            gio::DBusCallFlags::NONE,
+            3000,
+        )
+        .await
+        .ok()
+        .and_then(|reply| reply.get::<(HashMap<String, glib::Variant>,)>())
+    else {
+        return;
+    };
+    let text = |key: &str| properties.get(key)?.get::<String>();
+    let Some(app) = app.upgrade() else {
+        return;
+    };
+    let notification = gio::Notification::new(
+        &text("Alias")
+            .or_else(|| text("Name"))
+            .unwrap_or_else(|| "Bluetooth device".into()),
+    );
+    notification.set_body(Some(if connected {
+        "Connected"
+    } else {
+        "Disconnected"
+    }));
+    notification.set_icon(&gio::ThemedIcon::new(
+        &text("Icon").unwrap_or_else(|| "bluetooth".into()),
+    ));
+    app.send_notification(Some(&format!("bluetooth:{path}")), &notification);
+}
+
 fn prune_shelf() {
     glib::spawn_future_local(async {
         let result = gio::spawn_blocking(|| {
@@ -640,6 +722,7 @@ impl Drop for Controller {
             gio::bus_unwatch_name(watch);
         }
         self.bus_signal.take();
+        self.bluetooth_signal.take();
         for view in self.views.get_mut().drain(..) {
             view.window.destroy();
         }

@@ -21,6 +21,7 @@ struct Fake {
     manager_running: bool,
     configured_dir: Option<PathBuf>,
     tracker_list: String,
+    blueman_plugins: String,
 }
 
 impl Fake {
@@ -67,6 +68,11 @@ impl Runner for Rc<Fake> {
                     "ignored-directories",
                 ],
             ) if !self.tracker_list.is_empty() => success(self.tracker_list.clone()),
+            ("gsettings", ["get", "org.blueman.general", "plugin-list"])
+                if !self.blueman_plugins.is_empty() =>
+            {
+                success(self.blueman_plugins.clone())
+            }
             _ => Ok(CommandOutput {
                 code: 1,
                 ..Default::default()
@@ -1009,6 +1015,50 @@ fn audio_cleanup_leaves_working_units_and_other_commands() {
 }
 
 #[test]
+fn blueman_connection_alerts_move_to_notifications_without_overriding_user_choice() {
+    for (bluetooth, current, expected) in [
+        (false, "@as []", Some("['!ConnectionNotifier']")),
+        (false, "['Foo']", Some("['Foo', '!ConnectionNotifier']")),
+        (false, "['!ConnectionNotifier']", None),
+        (false, "['ConnectionNotifier']", None),
+        (
+            true,
+            "@as []",
+            Some("['!ConnectionNotifier', '!StatusIcon', '!ShowConnected']"),
+        ),
+        (
+            true,
+            "['StatusIcon', 'ShowConnected']",
+            Some("['StatusIcon', 'ShowConnected', '!ConnectionNotifier']"),
+        ),
+    ] {
+        let (_temp, mut installer, fake) = fixture(Fake {
+            blueman_plugins: current.into(),
+            ..Default::default()
+        });
+        installer.optional_groups = Some(if bluetooth {
+            vec!["bluetooth".into()]
+        } else {
+            Vec::new()
+        });
+        installer.setup_desktop_integrations().unwrap();
+        let set = |value: &str| {
+            fake.called(
+                "gsettings",
+                &["set", "org.blueman.general", "plugin-list", value],
+            )
+        };
+        if let Some(value) = expected {
+            assert!(set(value));
+        } else {
+            assert!(!fake.calls.borrow().iter().any(|call| {
+                call.get(3).is_some_and(|key| key == "plugin-list") && call[1] == "set"
+            }));
+        }
+    }
+}
+
+#[test]
 fn tracker_indexing_preserves_user_exclusions_and_appends_only_missing_entries() {
     let wanted = "'node_modules', '.venv', 'venv', 'miniconda3', '__pycache__', 'target', '.mypy_cache', '.pytest_cache', '.ruff_cache'";
     let all = format!("['po', {wanted}]");
@@ -1105,14 +1155,16 @@ fn selected_firefox_sets_firefox_defaults_and_persists_selected_groups() {
 }
 
 #[test]
-fn selected_vpn_indicators_are_added_to_the_staged_waybar_group() {
+fn selected_indicators_are_added_to_the_staged_waybar_group() {
     let (_temp, mut installer, _) = fixture(Fake::default());
-    installer.optional_groups = Some(vec!["warp".into(), "stealth".into()]);
+    installer.optional_groups = Some(vec!["warp".into(), "stealth".into(), "bluetooth".into()]);
     installer.copy_configs().unwrap();
     assert!(
         fs::read_to_string(installer.user(".config/waybar/config.jsonc"))
             .unwrap()
-            .contains("\"modules\": [\"custom/hotspot\", \"tray\", \"image#stealth\"]")
+            .contains(
+                "\"modules\": [\"custom/hotspot\", \"tray\", \"bluetooth\", \"image#stealth\"]"
+            )
     );
 }
 

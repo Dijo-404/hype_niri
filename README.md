@@ -152,7 +152,7 @@ See the [full keybinding reference](docs/keys.md).
 
 **Share a connection over Wi-Fi.** Click the hotspot icon in Waybar to toggle sharing. Right-click it or press `Super+Shift+H` for credentials and password settings. The first start creates `Hype-Niri` with a random password. It tries 5 GHz where supported, falls back to 2.4 GHz, and remembers the working band. The hotspot uses WPA2 Personal with AES/CCMP and accepts an 8–63 character ASCII password or a 64-digit hexadecimal key. Internet sharing requires an upstream connection such as Ethernet, USB tethering, or a second Wi-Fi adapter. Starting a hotspot can disconnect Wi-Fi on the selected adapter. Changing an active hotspot password restarts it.
 
-**Pair a Bluetooth keyboard.** With the `bluetooth` group installed, open **Bluetooth Devices** from the tray and select **Pair**. If Blueman displays a passkey, type it on the Bluetooth keyboard and press `Enter`.
+**Pair a Bluetooth keyboard.** With the `bluetooth` group installed, click the Bluetooth icon in Waybar and select **Pair**. If Blueman displays a passkey, type it on the Bluetooth keyboard and press `Enter`.
 
 ## Configuration
 

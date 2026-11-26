@@ -272,6 +272,110 @@ fn gtk4_parity_and_native_dbus() {
     until(|| !view.media_card.property::<bool>("visible"));
     assert_eq!(view.summary.text(), "No media playing");
     bus.unregister_object(registration).unwrap();
+    let xml = r#"<node><interface name="org.freedesktop.Notifications">
+    <method name="Notify"><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="as" direction="in"/><arg type="a{sv}" direction="in"/><arg type="i" direction="in"/><arg type="u" direction="out"/></method>
+    <method name="CloseNotification"><arg type="u" direction="in"/></method>
+    <method name="GetCapabilities"><arg type="as" direction="out"/></method>
+    <method name="GetServerInformation"><arg type="s" direction="out"/><arg type="s" direction="out"/><arg type="s" direction="out"/><arg type="s" direction="out"/></method>
+    </interface><interface name="org.bluez.Device1">
+    <property name="Alias" type="s" access="read"/><property name="Icon" type="s" access="read"/>
+    </interface></node>"#;
+    let info = gio::DBusNodeInfo::for_xml(xml).unwrap();
+    let notices = Rc::new(RefCell::new(Vec::<(u32, String, String, String)>::new()));
+    let seen = notices.clone();
+    let server = bus
+        .register_object(
+            "/org/freedesktop/Notifications",
+            &info
+                .lookup_interface("org.freedesktop.Notifications")
+                .unwrap(),
+        )
+        .method_call(
+            move |_, _, _, _, method, parameters, invocation| match method {
+                "Notify" => {
+                    let (_, replaces, icon, summary, body, _, hints, _) = parameters
+                        .get::<(
+                            String,
+                            u32,
+                            String,
+                            String,
+                            String,
+                            Vec<String>,
+                            HashMap<String, glib::Variant>,
+                            i32,
+                        )>()
+                        .unwrap();
+                    let icon = hints
+                        .get("image-path")
+                        .and_then(|value| value.get::<String>())
+                        .unwrap_or(icon);
+                    seen.borrow_mut().push((replaces, summary, body, icon));
+                    invocation.return_value(Some(&(7_u32,).to_variant()));
+                }
+                "GetCapabilities" => {
+                    invocation.return_value(Some(&(vec!["body"],).to_variant()));
+                }
+                "GetServerInformation" => {
+                    invocation.return_value(Some(&("test", "test", "1", "1.2").to_variant()));
+                }
+                _ => invocation.return_value(None),
+            },
+        )
+        .build()
+        .unwrap();
+    let device = bus
+        .register_object(
+            "/org/bluez/hci0/dev_AA_BB",
+            &info.lookup_interface("org.bluez.Device1").unwrap(),
+        )
+        .property(|_, _, _, _, property| match property {
+            "Alias" => "Test keyboard".to_variant(),
+            _ => "input-keyboard".to_variant(),
+        })
+        .build()
+        .unwrap();
+    let names = ["org.freedesktop.Notifications", "org.bluez"].map(|name| {
+        gio::bus_own_name_on_connection(
+            &bus,
+            name,
+            gio::BusNameOwnerFlags::NONE,
+            |_, _| {},
+            |_, _| {},
+        )
+    });
+    settle();
+    for connected in [true, false] {
+        bus.emit_signal(
+            None,
+            "/org/bluez/hci0/dev_AA_BB",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            Some(
+                &(
+                    "org.bluez.Device1",
+                    HashMap::from([("Connected", connected.to_variant())]),
+                    Vec::<String>::new(),
+                )
+                    .to_variant(),
+            ),
+        )
+        .unwrap();
+        let count = if connected { 1 } else { 2 };
+        until(|| notices.borrow().len() == count);
+    }
+    {
+        let notices = notices.borrow();
+        assert_eq!(notices[0].1, "Test keyboard");
+        assert_eq!(notices[0].2, "Connected");
+        assert!(notices[0].3.contains("input-keyboard"));
+        assert_eq!(notices[1].0, 7);
+        assert_eq!(notices[1].2, "Disconnected");
+    }
+    for name in names {
+        gio::bus_unown_name(name);
+    }
+    bus.unregister_object(device).unwrap();
+    bus.unregister_object(server).unwrap();
     let group = gio::SimpleActionGroup::new();
     let status = gio::SimpleAction::new_stateful(
         "status",

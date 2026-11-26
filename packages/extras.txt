@@ -43,7 +43,6 @@ docker-buildx
 lazydocker
 [bluetooth]
 bluez
-bluez-utils
 blueman
 [warp]
 cloudflare-warp-bin

@@ -69,6 +69,25 @@ window#waybar.hidden {
   padding: 2px 2px 0 2px;
 }
 
+#connectivity #bluetooth {
+  min-width: 15px;
+  margin-left: 5px;
+  color: transparent;
+  background-image: -gtk-icontheme("blueman-tray");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 15px 15px;
+}
+
+#connectivity #bluetooth.connected {
+  background-image: -gtk-icontheme("blueman-active");
+}
+
+#connectivity #bluetooth.off,
+#connectivity #bluetooth.disabled {
+  background-image: -gtk-icontheme("blueman-disabled");
+}
+
 #custom-hotspot {
   margin-right: 6px;
   font-size: 14.7px;
