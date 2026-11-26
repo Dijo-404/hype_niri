@@ -246,7 +246,6 @@ Run the regression suites against the debug binaries. The runtime tests use priv
 /usr/bin/python3 tests/installer.py
 /usr/bin/python3 tests/runtime.py
 /usr/bin/python3 tests/native.py
-/usr/bin/python3 tests/warp.py
 /usr/bin/python3 tests/media.py
 /usr/bin/python3 tests/session.py
 /usr/bin/python3 tests/gui.py

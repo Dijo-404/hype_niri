@@ -1112,9 +1112,7 @@ fn selected_vpn_indicators_are_added_to_the_staged_waybar_group() {
     assert!(
         fs::read_to_string(installer.user(".config/waybar/config.jsonc"))
             .unwrap()
-            .contains(
-                "\"modules\": [\"custom/hotspot\", \"tray\", \"custom/warp\", \"image#stealth\"]"
-            )
+            .contains("\"modules\": [\"custom/hotspot\", \"tray\", \"image#stealth\"]")
     );
 }
 

@@ -57,7 +57,6 @@ const LEGACY_CONTROLS: &[&str] = &[
     "start-tray-applets",
     "start-waybar",
     "stealth-indicator",
-    "warp-indicator",
 ];
 const XDG_USER_DIRS: &[(&str, &str, &str)] = &[
     ("DESKTOP", "desktop", "Desktop"),
@@ -102,7 +101,6 @@ const WAYBAR_COMPATIBILITY: &[&str] = &[
     "stealth-indicator",
     "temperature-control",
     "volume-control",
-    "warp-indicator",
 ];
 
 impl Installer {
@@ -466,9 +464,6 @@ impl Installer {
                     let path = staged.join("config.jsonc");
                     let contents = fs::read_to_string(&path)?;
                     let mut modules = vec!["\"custom/hotspot\"", "\"tray\""];
-                    if self.selected("warp") {
-                        modules.push("\"custom/warp\"");
-                    }
                     if self.selected("stealth") {
                         modules.push("\"image#stealth\"");
                     }

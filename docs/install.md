@@ -311,7 +311,7 @@ warp-cli --accept-tos status
 
 Disconnect anytime with `warp-cli disconnect`. Inspect logs with `journalctl -u warp-svc`.
 
-When `warp` is selected, Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
+When `warp` is selected, Waybar shows WARP's native tray icon while its desktop app is running.
 
 #### Stealth Tor routing
 
