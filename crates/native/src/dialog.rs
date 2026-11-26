@@ -149,13 +149,18 @@ pub async fn choose_with_keys(
     if choices.len() != keys.len() {
         return Err(err("Every picker row needs a shortcut key"));
     }
+    let width = choices
+        .iter()
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or(0);
     let rows = choices
         .iter()
         .zip(keys)
         .enumerate()
         .map(|(index, (label, key))| {
             let mut row = Choice::new(index, label.clone(), None);
-            row.label = format!("{label}  [{}]", key.to_ascii_uppercase());
+            row.label = format!("{label:<width$}  [{}]", key.to_ascii_uppercase());
             row
         });
     pick(
