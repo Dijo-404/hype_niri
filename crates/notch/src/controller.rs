@@ -164,6 +164,10 @@ impl Controller {
             self.sync_shelf();
         }
     }
+    pub fn clear_files(self: &Rc<Self>) {
+        self.shelf.take();
+        self.sync_shelf();
+    }
     fn sync_shelf(self: &Rc<Self>) {
         if let Some(source) = self.shelf_source.take() {
             source.remove();

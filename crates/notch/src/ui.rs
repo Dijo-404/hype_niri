@@ -75,7 +75,8 @@ pub struct View {
     shelf_open: gtk::Button,
     shelf_controls: gtk::Button,
     shelf_message: gtk::Label,
-    shelf_all: gtk::Label,
+    shelf_all: gtk::Button,
+    shelf_clear: gtk::Button,
     shelf_scroll: gtk::ScrolledWindow,
     shelf_items: gtk::Box,
     shelf_dirty: Cell<bool>,
@@ -369,10 +370,16 @@ impl View {
         let shelf_title = label("File shelf", "strong");
         shelf_title.set_hexpand(true);
         shelf_heading.append(&shelf_title);
-        let shelf_all = label("", "shelf-item");
+        let shelf_all = button(
+            "list-drag-handle-symbolic",
+            "Drag all files out of the shelf",
+        );
         shelf_all.set_visible(false);
-        shelf_all.set_tooltip_text(Some("Drag all files out of the shelf"));
+        shelf_all.set_focusable(false);
         shelf_heading.append(&shelf_all);
+        let shelf_clear = button("user-trash-symbolic", "Remove all files from the shelf");
+        shelf_clear.set_visible(false);
+        shelf_heading.append(&shelf_clear);
         let shelf_controls = button("view-grid-symbolic", "Open notch controls");
         shelf_heading.append(&shelf_controls);
         shelf.append(&shelf_heading);
@@ -514,6 +521,7 @@ impl View {
             shelf_controls,
             shelf_message,
             shelf_all,
+            shelf_clear,
             shelf_scroll,
             shelf_items,
             shelf_dirty: Cell::new(false),
@@ -582,6 +590,12 @@ impl View {
         self.shelf_controls.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
                 this.pin(true);
+            }
+        });
+        let shared = self.shared.clone();
+        self.shelf_clear.connect_clicked(move |_| {
+            if let Some(shared) = shared.upgrade() {
+                shared.clear_files();
             }
         });
         let weak = Rc::downgrade(self);
@@ -1036,9 +1050,13 @@ impl View {
         self.shelf_message
             .set_text("Drop files or paste a screenshot");
         self.shelf_message.set_visible(files.is_empty());
-        self.shelf_all
-            .set_text(&format!("Drag all ({})", files.len()));
+        set_button(
+            &self.shelf_all,
+            "list-drag-handle-symbolic",
+            &format!("Drag all {} files out of the shelf", files.len()),
+        );
         self.shelf_all.set_visible(files.len() > 1);
+        self.shelf_clear.set_visible(files.len() > 1);
         self.shelf_scroll.set_visible(!files.is_empty());
         self.shelf_open.set_visible(!files.is_empty());
         while let Some(child) = self.shelf_items.first_child() {

@@ -146,7 +146,7 @@ See the [full keybinding reference](docs/keys.md).
 
 **Use the notch.** Hover over the pill below Waybar for a compact view and move within it to open the controls. Press `Super+N` to pin the drawer and focus search. You can also open controls from the grid button in the file shelf. Press `Esc` to close it. The drawer includes media controls, volume and brightness sliders, a 25-minute focus timer with a five-minute break, and a stopwatch. With Hype Flow installed, it also shows dictation status and controls. The speech worker loads on first use and unloads after 10 idle minutes by default.
 
-**Hold files in the notch.** Hover over the notch and press `Ctrl+V` to paste a screenshot, or drag local files onto the pill. Either action opens the file shelf. Use the folder button beside search to reopen the shelf when it contains files. Drag one item or use **Drag all** to copy them to another app. Use the **×** on a tile to remove its cached copy. Copies in `~/.cache/hype-niri/notch-shelf/` expire after 10 minutes. The notch clears abandoned copies when it starts again.
+**Hold files in the notch.** Hover over the notch and press `Ctrl+V` to paste a screenshot, or drag local files onto the pill. Either action opens the file shelf. Use the folder button beside search to reopen the shelf when it contains files. Drag one item, or drag the grip button to copy them all to another app. Use the **×** on a tile to remove its cached copy, or the trash button to clear the shelf. Copies in `~/.cache/hype-niri/notch-shelf/` expire after 10 minutes. The notch clears abandoned copies when it starts again.
 
 **Copy and paste in Alacritty.** Select text and press `Ctrl+C` to copy it. Press `Ctrl+V` to paste and `Ctrl+Shift+C` to interrupt a running command.
 

@@ -97,7 +97,11 @@ fn gtk4_parity_and_native_dbus() {
     settle();
     assert_eq!(view.state.get(), State::Open);
     for other in shared.views.borrow().iter() {
-        assert_eq!(other.shelf_all.text(), "Drag all (5)");
+        assert_eq!(
+            other.shelf_all.tooltip_text().as_deref(),
+            Some("Drag all 5 files out of the shelf")
+        );
+        assert!(other.shelf_clear.property::<bool>("visible"));
         assert_eq!(other.shelf_items.observe_children().n_items(), 5);
     }
     let cached = shared.shelf_files()[0].path().to_path_buf();
@@ -336,6 +340,18 @@ fn gtk4_parity_and_native_dbus() {
     assert!(weak.upgrade().is_none());
     settle();
     assert!(!shared.brightness_writes.borrow().busy());
+    let cached: Vec<_> = shared
+        .shelf_files()
+        .iter()
+        .map(|file| file.path().to_path_buf())
+        .collect();
+    assert_eq!(cached.len(), 4);
+    view.shelf_clear.emit_clicked();
+    settle();
+    assert!(shared.shelf_files().is_empty());
+    assert!(!view.shelf_clear.property::<bool>("visible"));
+    assert!(cached.iter().all(|path| !path.exists()));
+    assert!(fixture.path().join("shot 2.txt").exists());
     shared.views.borrow_mut().clear();
     view.window.destroy();
     drop(view);
