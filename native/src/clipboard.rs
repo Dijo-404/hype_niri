@@ -33,7 +33,9 @@ const OWNER_TIMEOUT: Duration = Duration::from_secs(4);
 const IMPORT_TIMEOUT: Duration = Duration::from_secs(30);
 const IMPORT_LIST_BYTES: usize = 1024 * 1024;
 const OWNER_TOKEN_PREFIX: &str = "application/x-hype-clipboard-";
-const MAGIC: &[u8] = b"HYPECLIP1";
+const LEGACY_MAGIC: &[u8] = b"HYPECLIP1";
+const MAGIC: &[u8] = b"HYPECLIP2";
+const BLOB_BYTES: usize = 64 * 1024;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Entry {
     mime: String,
@@ -47,15 +49,23 @@ impl Entry {
         }
         Ok(())
     }
-    fn write_to(&self, mut writer: impl Write) -> Result<()> {
+    fn write_to(&self, mut writer: impl Write, blobs: bool) -> Result<()> {
         self.validate()?;
         writer.write_all(&(self.mime.len() as u16).to_le_bytes())?;
         writer.write_all(&(self.data.len() as u32).to_le_bytes())?;
         writer.write_all(self.mime.as_bytes())?;
-        writer.write_all(&self.data)?;
+        if blobs && self.data.len() > BLOB_BYTES {
+            writer.write_all(blob_name(&self.data).as_bytes())?;
+        } else {
+            writer.write_all(&self.data)?;
+        }
         Ok(())
     }
-    fn read_from(mut reader: impl Read, budget: usize) -> Result<Self> {
+    fn read_from(
+        mut reader: impl Read,
+        budget: usize,
+        blobs: Option<&Path>,
+    ) -> Result<Option<Self>> {
         let mut mime_length = [0; 2];
         let mut data_length = [0; 4];
         reader.read_exact(&mut mime_length)?;
@@ -71,9 +81,22 @@ impl Entry {
         if !supported_mime(&mime) || data_length == 0 {
             return Err(err("Invalid clipboard entry"));
         }
-        let mut data = vec![0; data_length];
-        reader.read_exact(&mut data)?;
-        Ok(Self { mime, data })
+        let data = match blobs {
+            Some(blobs) if data_length > BLOB_BYTES => {
+                let mut name = [0; 64];
+                reader.read_exact(&mut name)?;
+                let Ok(data) = read_blob(blobs, std::str::from_utf8(&name)?, data_length) else {
+                    return Ok(None);
+                };
+                data
+            }
+            _ => {
+                let mut data = vec![0; data_length];
+                reader.read_exact(&mut data)?;
+                data
+            }
+        };
+        Ok(Some(Self { mime, data }))
     }
     fn id(&self) -> String {
         let mut hash = Sha256::new();
@@ -142,16 +165,18 @@ impl History {
         writer.write_all(MAGIC)?;
         writer.write_all(&(self.entries.len() as u32).to_le_bytes())?;
         for entry in &self.entries {
-            entry.write_to(&mut writer)?;
+            entry.write_to(&mut writer, true)?;
         }
         Ok(())
     }
-    fn read_from(mut reader: impl Read) -> Result<Self> {
+    fn read_from(mut reader: impl Read, blobs: &Path) -> Result<Self> {
         let mut header = [0; MAGIC.len()];
         reader.read_exact(&mut header)?;
-        if header.as_slice() != MAGIC {
-            return Err(err("Invalid clipboard history header"));
-        }
+        let blobs = match header.as_slice() {
+            MAGIC => Some(blobs),
+            LEGACY_MAGIC => None,
+            _ => return Err(err("Invalid clipboard history header")),
+        };
         let mut count = [0; 4];
         reader.read_exact(&mut count)?;
         let count = u32::from_le_bytes(count) as usize;
@@ -161,7 +186,9 @@ impl History {
         let mut entries = Vec::with_capacity(count);
         let mut budget = MAX_TOTAL_BYTES;
         for _ in 0..count {
-            let entry = Entry::read_from(&mut reader, budget)?;
+            let Some(entry) = Entry::read_from(&mut reader, budget, blobs)? else {
+                continue;
+            };
             budget -= entry.data.len();
             entries.push(entry);
         }
@@ -225,12 +252,19 @@ fn state_path() -> Result<PathBuf> {
             .parent()
             .ok_or_else(|| err("Missing state directory"))?,
     )?;
-    match fs::DirBuilder::new().mode(0o700).create(&directory) {
+    private_dir(&directory)?;
+    Ok(directory.join("history.bin"))
+}
+fn private_dir(directory: &Path) -> Result<()> {
+    match fs::DirBuilder::new().mode(0o700).create(directory) {
         Ok(()) => (),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
         Err(e) => return Err(e.into()),
     }
-    let metadata = fs::symlink_metadata(&directory)?;
+    checked_dir(directory)
+}
+fn checked_dir(directory: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(directory)?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
         || metadata.uid() != runtime::uid()
@@ -238,16 +272,16 @@ fn state_path() -> Result<PathBuf> {
     {
         return Err(err("Unsafe clipboard history directory"));
     }
-    Ok(directory.join("history.bin"))
+    Ok(())
 }
-fn load(path: &Path) -> Result<History> {
+fn private_file(path: &Path, limit: u64) -> Result<Option<File>> {
     let file = match OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(History::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     let metadata = file.metadata()?;
@@ -255,25 +289,54 @@ fn load(path: &Path) -> Result<History> {
         || metadata.uid() != runtime::uid()
         || metadata.mode() & 0o077 != 0
         || metadata.nlink() != 1
-        || metadata.len() > MAX_FILE_BYTES as u64
+        || metadata.len() > limit
     {
         return Err(err("Unsafe clipboard history file"));
     }
-    History::read_from(BufReader::new(file))
+    Ok(Some(file))
+}
+fn load(path: &Path) -> Result<History> {
+    let Some(file) = private_file(path, MAX_FILE_BYTES as u64)? else {
+        return Ok(History::default());
+    };
+    History::read_from(BufReader::new(file), &blob_dir(path)?)
+}
+fn blob_dir(history: &Path) -> Result<PathBuf> {
+    Ok(history
+        .parent()
+        .ok_or_else(|| err("Missing clipboard directory"))?
+        .join("blobs"))
+}
+fn blob_name(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
+}
+fn is_blob_name(name: &str) -> bool {
+    name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+fn read_blob(blobs: &Path, name: &str, length: usize) -> Result<Vec<u8>> {
+    if !is_blob_name(name) {
+        return Err(err("Invalid clipboard blob reference"));
+    }
+    checked_dir(blobs)?;
+    let mut file = private_file(&blobs.join(name), length as u64)?
+        .ok_or_else(|| err("Missing clipboard blob"))?;
+    let mut data = vec![0; length];
+    file.read_exact(&mut data)?;
+    if file.read(&mut [0])? != 0 || blob_name(&data) != name {
+        return Err(err("Corrupt clipboard blob"));
+    }
+    Ok(data)
 }
 fn update(entry: Option<Entry>) -> Result<()> {
     let _lock = runtime::lock_blocking("clipboard-history.lock")?;
     let path = state_path()?;
-    let mut history = load(&path)?;
-    let changed = match entry {
-        Some(entry) => history.insert(entry)?,
-        None => {
-            // A later watcher start must not repopulate a cleared history.
-            mark_imported(&path)?;
-            !std::mem::take(&mut history.entries).is_empty()
-        }
+    let Some(entry) = entry else {
+        // A later watcher start must not repopulate a cleared history.
+        mark_imported(&path)?;
+        return save(&path, &History::default());
     };
-    if !changed {
+    let mut history = load(&path)?;
+    if !history.insert(entry)? {
         return Ok(());
     }
     save(&path, &history)
@@ -282,6 +345,26 @@ fn save(path: &Path, history: &History) -> Result<()> {
     let directory = path
         .parent()
         .ok_or_else(|| err("Missing clipboard directory"))?;
+    let blobs = blob_dir(path)?;
+    private_dir(&blobs)?;
+    let mut kept = HashSet::new();
+    for entry in &history.entries {
+        if entry.data.len() <= BLOB_BYTES {
+            continue;
+        }
+        let name = blob_name(&entry.data);
+        let target = blobs.join(&name);
+        if read_blob(&blobs, &name, entry.data.len()).is_err() {
+            let mut staged = tempfile::NamedTempFile::new_in(&blobs)?;
+            staged
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o600))?;
+            staged.write_all(&entry.data)?;
+            staged.as_file().sync_all()?;
+            staged.persist(&target)?;
+        }
+        kept.insert(name);
+    }
     let mut staged = tempfile::NamedTempFile::new_in(directory)?;
     staged
         .as_file()
@@ -291,8 +374,23 @@ fn save(path: &Path, history: &History) -> Result<()> {
         history.write_to(&mut writer)?;
         writer.flush()?;
     }
-    staged.as_file().sync_all()?;
+    let mut orphans = Vec::new();
+    for file in fs::read_dir(&blobs)? {
+        let name = file?.file_name();
+        if let Some(name) = name.to_str()
+            && is_blob_name(name)
+            && !kept.contains(name)
+        {
+            orphans.push(blobs.join(name));
+        }
+    }
+    if !orphans.is_empty() {
+        staged.as_file().sync_all()?;
+    }
     staged.persist(path)?;
+    for orphan in orphans {
+        fs::remove_file(orphan)?;
+    }
     Ok(())
 }
 fn import_marker(history: &Path) -> PathBuf {
@@ -576,7 +674,9 @@ async fn watch() -> Result<()> {
     };
     // Create the protocol connection in its own thread: GTK's context owns signal handling.
     let (started, receive) = std::sync::mpsc::sync_channel(1);
+    let (done, finished) = futures_channel::oneshot::channel::<()>();
     let worker = std::thread::spawn(move || -> std::result::Result<(), String> {
+        let _done = done;
         let mut watcher = match Watcher::new(ClipboardType::Regular, paste::Seat::Unspecified) {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -633,9 +733,7 @@ async fn watch() -> Result<()> {
             eprintln!("Clipboard history import failed: {error}");
         }
     });
-    while !worker.is_finished() {
-        gtk::glib::timeout_future(Duration::from_millis(100)).await;
-    }
+    let _ = finished.await;
     for source in signals {
         source.remove();
     }
@@ -656,7 +754,7 @@ fn start_owner(entry: &Entry) -> Result<()> {
         .stderr(Stdio::null())
         .spawn()?;
     let transfer = (|| -> Result<()> {
-        entry.write_to(&mut parent)?;
+        entry.write_to(&mut parent, false)?;
         parent.shutdown(Shutdown::Write)?;
         let mut ready = [0; 1];
         parent.read_exact(&mut ready)?;
@@ -694,7 +792,8 @@ fn owner(token: &str) -> Result<()> {
     let mut socket = UnixStream::from(std::io::stdin().as_fd().try_clone_to_owned()?);
     socket.set_read_timeout(Some(OWNER_TIMEOUT))?;
     socket.set_write_timeout(Some(OWNER_TIMEOUT))?;
-    let entry = Entry::read_from(&mut socket, MAX_ENTRY_BYTES)?;
+    let entry = Entry::read_from(&mut socket, MAX_ENTRY_BYTES, None)?
+        .ok_or_else(|| err("Invalid clipboard owner entry"))?;
     if socket.read(&mut [0])? != 0 {
         return Err(err("Trailing clipboard owner data"));
     }
@@ -864,16 +963,67 @@ mod tests {
         history
             .insert(entry("text/plain;charset=utf-8", "👩🏽‍💻\0".as_bytes()))
             .unwrap();
-        let saved = History::read_from(encode(&history).as_slice()).unwrap();
+        let saved = History::read_from(encode(&history).as_slice(), Path::new("blobs")).unwrap();
         assert_eq!(saved.entries, history.entries);
     }
     #[test]
     fn reads_existing_history_without_changing_its_format() {
         let fixture = b"HYPECLIP1\x01\0\0\0\x09\0\x06\0\0\0image/png\x89PNG\0\xff";
-        let history = History::read_from(fixture.as_slice()).unwrap();
+        let history = History::read_from(fixture.as_slice(), Path::new("blobs")).unwrap();
         assert_eq!(history.entries, [entry("image/png", b"\x89PNG\0\xff")]);
-        assert_eq!(encode(&history), fixture);
-        assert!(Entry::read_from(&fixture[13..], 5).is_err());
+        let encoded = encode(&history);
+        assert_eq!(&encoded[..MAGIC.len()], MAGIC);
+        assert_eq!(&encoded[MAGIC.len()..], &fixture[MAGIC.len()..]);
+        assert!(Entry::read_from(&fixture[13..], 5, None).is_err());
+    }
+    #[test]
+    fn large_payloads_use_blobs_and_legacy_inline_history_still_loads() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("history.bin");
+        let blobs = temp.path().join("blobs");
+        let large = entry("image/png", &vec![7; BLOB_BYTES + 1]);
+        let other = entry("image/png", &vec![8; BLOB_BYTES + 1]);
+        let mut legacy = LEGACY_MAGIC.to_vec();
+        legacy.extend(1u32.to_le_bytes());
+        large.write_to(&mut legacy, false).unwrap();
+        runtime::atomic_write(&path, &legacy).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(load(&path).unwrap().entries, std::slice::from_ref(&large));
+        let mut history = History::default();
+        history.insert(large.clone()).unwrap();
+        history.insert(other.clone()).unwrap();
+        history.insert(entry("text/plain", b"small")).unwrap();
+        save(&path, &history).unwrap();
+        assert!(fs::metadata(&path).unwrap().len() < 1024);
+        let blob = blobs.join(blob_name(&large.data));
+        assert_eq!(fs::metadata(&blob).unwrap().mode() & 0o777, 0o600);
+        assert_eq!(load(&path).unwrap().entries, history.entries);
+        fs::write(blobs.join("unrelated"), b"kept").unwrap();
+        history.entries.retain(|entry| entry != &large);
+        save(&path, &history).unwrap();
+        assert!(!blob.exists());
+        assert!(blobs.join(blob_name(&other.data)).exists());
+        save(&path, &History::default()).unwrap();
+        assert!(!blobs.join(blob_name(&other.data)).exists());
+        assert!(blobs.join("unrelated").exists());
+        fs::write(&blob, b"tampered").unwrap();
+        history.entries = vec![large.clone()];
+        save(&path, &history).unwrap();
+        assert_eq!(load(&path).unwrap().entries, std::slice::from_ref(&large));
+        let mut same_length = vec![9; BLOB_BYTES + 1];
+        same_length[0] = 7;
+        fs::write(&blob, &same_length).unwrap();
+        fs::set_permissions(&blob, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(load(&path).unwrap().entries.is_empty());
+        save(&path, &history).unwrap();
+        assert_eq!(load(&path).unwrap().entries, [large]);
+        history.entries.insert(0, entry("text/plain", b"small"));
+        save(&path, &history).unwrap();
+        fs::remove_file(&blob).unwrap();
+        assert_eq!(
+            load(&path).unwrap().entries,
+            [entry("text/plain", b"small")]
+        );
     }
     #[test]
     fn duplicate_moves_to_front_and_retention_is_bounded() {
@@ -947,7 +1097,7 @@ mod tests {
     }
     #[test]
     fn malformed_state_and_oversized_entries_fail_closed() {
-        assert!(History::read_from(b"{}".as_slice()).is_err());
+        assert!(History::read_from(b"{}".as_slice(), Path::new("blobs")).is_err());
         let mut history = History::default();
         assert!(
             history
@@ -962,9 +1112,9 @@ mod tests {
         assert!(history.insert(entry("text/plain", b"ok")).is_ok());
         let mut bytes = encode(&history);
         bytes.push(0);
-        assert!(History::read_from(bytes.as_slice()).is_err());
+        assert!(History::read_from(bytes.as_slice(), Path::new("blobs")).is_err());
         bytes.truncate(12);
-        assert!(History::read_from(bytes.as_slice()).is_err());
+        assert!(History::read_from(bytes.as_slice(), Path::new("blobs")).is_err());
     }
 }
 

@@ -194,7 +194,7 @@ fn gtk4_parity_and_native_dbus() {
     <method name="PlayPause"/><method name="Next"/><method name="Previous"/>
     <property name="PlaybackStatus" type="s" access="read"/>
     <property name="Metadata" type="a{sv}" access="read"/>
-    <property name="CanPlay" type="b" access="read"/><property name="CanPause" type="b" access="read"/>
+    <property name="CanPlay" type="b" access="read"/><property name="CanPause" type="b" access="read"/><property name="CanControl" type="b" access="read"/>
     <property name="CanGoNext" type="b" access="read"/><property name="CanGoPrevious" type="b" access="read"/>
     </interface></node>"#;
     let info = gio::DBusNodeInfo::for_xml(xml).unwrap();

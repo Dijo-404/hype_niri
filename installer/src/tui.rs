@@ -518,9 +518,9 @@ impl Ui {
         };
     }
 
-    fn confirm(&mut self, question: &str) -> Result<bool> {
-        let mut yes = true;
-        let mut deadline = Some(Instant::now() + CONFIRM_TIMEOUT);
+    fn confirm(&mut self, question: &str, explicit: bool) -> Result<bool> {
+        let mut yes = !explicit;
+        let mut deadline = (!explicit).then(|| Instant::now() + CONFIRM_TIMEOUT);
         self.scroll = 0;
         loop {
             let seconds = deadline
@@ -575,7 +575,7 @@ impl Ui {
             match self.screen.key(true)? {
                 Some(KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q')) => return Ok(false),
                 Some(KeyCode::Char('r')) if !failed => {
-                    if self.confirm("Restart the system now?")? {
+                    if self.confirm("Restart the system now?", false)? {
                         return Ok(true);
                     }
                 }
@@ -722,7 +722,11 @@ impl Runner for TuiRunner {
     }
 
     fn confirm(&self, prompt: &str) -> Result<bool> {
-        self.0.borrow_mut().confirm(prompt)
+        self.0.borrow_mut().confirm(prompt, false)
+    }
+
+    fn confirm_explicit(&self, prompt: &str) -> Result<bool> {
+        self.0.borrow_mut().confirm(prompt, true)
     }
 
     fn input(&self, prompt: &str) -> Result<String> {

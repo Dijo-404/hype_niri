@@ -1,5 +1,5 @@
 polkit.addRule(function(action, subject) {
-    if (!subject.isInGroup("wheel")) return;
+    if (!subject.isInGroup("wheel") || !subject.local || !subject.active) return;
 
     var allow_unattended = [
         "org.freedesktop.NetworkManager.network-control",

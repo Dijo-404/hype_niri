@@ -2,7 +2,7 @@ use crate::{
     model::{FocusTimer, Stopwatch, Weather, WriteQueue},
     services::{Audio, Backlight, Media},
     shelf::{CachedFile, Shelf},
-    ui::View,
+    ui::{State, View},
 };
 use gtk::{gio, glib, prelude::*};
 use std::{
@@ -67,10 +67,11 @@ pub struct Controller {
     pub flow_actions: RefCell<Option<gio::DBusActionGroup>>,
     pub media: RefCell<BTreeMap<String, gio::DBusProxy>>,
     pub selected: RefCell<Option<gio::DBusProxy>>,
-    clock: RefCell<Option<glib::SourceId>>,
+    clock: RefCell<Option<(glib::SourceId, Duration)>>,
     shelf: RefCell<Shelf>,
     shelf_source: RefCell<Option<glib::SourceId>>,
     weather_source: RefCell<Option<glib::SourceId>>,
+    weather_retry: RefCell<Option<glib::SourceId>>,
     flow_watch: RefCell<Option<gio::WatcherId>>,
     bus_signal: RefCell<Option<gio::SignalSubscription>>,
     weather_busy: Cell<bool>,
@@ -97,6 +98,7 @@ impl Controller {
             shelf: RefCell::new(Shelf::default()),
             shelf_source: RefCell::new(None),
             weather_source: RefCell::new(None),
+            weather_retry: RefCell::new(None),
             flow_watch: RefCell::new(None),
             bus_signal: RefCell::new(None),
             weather_busy: Cell::new(false),
@@ -121,14 +123,14 @@ impl Controller {
             .filter_map(|i| monitors.item(i)?.downcast::<gtk::gdk::Monitor>().ok())
             .collect();
         // Stay alive with no monitors connected; views return on monitor-added.
-        self.views.borrow_mut().retain(|view| {
-            if current.contains(&view.monitor) {
-                true
-            } else {
-                view.window.destroy();
-                false
-            }
-        });
+        let removed: Vec<_> = self
+            .views
+            .borrow_mut()
+            .extract_if(.., |view| !current.contains(&view.monitor))
+            .collect();
+        for view in removed {
+            view.window.destroy();
+        }
         for monitor in current {
             if self
                 .views
@@ -203,48 +205,51 @@ impl Controller {
         for view in self.views.borrow().iter() {
             view.refresh_clocks();
         }
-        let running = self.timer.borrow().running() || self.stopwatch.borrow().running;
-        if !running {
-            if let Some(source) = self.clock.take() {
-                source.remove();
-            }
+        let interval = self.clock_interval();
+        if self.clock.borrow().as_ref().map(|(_, current)| *current) == interval {
             return;
         }
-        if self.clock.borrow().is_some() {
-            return;
+        if let Some((source, _)) = self.clock.take() {
+            source.remove();
         }
+        let Some(interval) = interval else {
+            return;
+        };
         let weak = Rc::downgrade(self);
-        *self.clock.borrow_mut() = Some(glib::timeout_add_local(
-            std::time::Duration::from_millis(100),
-            move || {
-                let Some(this) = weak.upgrade() else {
-                    return glib::ControlFlow::Break;
-                };
-                let completed = this.timer.borrow_mut().update(glib::monotonic_time());
-                this.notify(completed);
-                for view in this.views.borrow().iter() {
+        let source = glib::timeout_add_local(interval, move || {
+            let Some(this) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let completed = this.timer.borrow_mut().update(glib::monotonic_time());
+            this.notify(completed);
+            for view in this.views.borrow().iter() {
+                if view.state.get() != State::Hidden {
                     view.refresh_clocks();
                 }
-                if this.timer.borrow().running() || this.stopwatch.borrow().running {
-                    glib::ControlFlow::Continue
-                } else {
-                    this.clock.take();
-                    glib::ControlFlow::Break
-                }
-            },
-        ));
+            }
+            if this.clock_interval() == Some(interval) {
+                glib::ControlFlow::Continue
+            } else {
+                this.clock.take();
+                this.sync_clocks();
+                glib::ControlFlow::Break
+            }
+        });
+        *self.clock.borrow_mut() = Some((source, interval));
+    }
+    fn clock_interval(&self) -> Option<Duration> {
+        clock_interval(
+            self.views
+                .borrow()
+                .iter()
+                .any(|view| view.state.get() != State::Hidden),
+            self.timer.borrow().running(),
+            self.stopwatch.borrow().running,
+        )
     }
     fn start_services(self: &Rc<Self>) {
         self.fetch_weather();
         prune_shelf();
-        let shelf = Rc::downgrade(self);
-        glib::timeout_add_local(crate::shelf::LIFETIME, move || {
-            if shelf.upgrade().is_none() {
-                return glib::ControlFlow::Break;
-            }
-            prune_shelf();
-            glib::ControlFlow::Continue
-        });
         let weak = Rc::downgrade(self);
         *self.weather_source.borrow_mut() =
             Some(glib::timeout_add_seconds_local(1800, move || {
@@ -366,16 +371,37 @@ impl Controller {
         }
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let weather = gio::spawn_blocking(crate::services::weather).await;
+            let weather = crate::services::weather().await;
             if let Some(this) = weak.upgrade() {
                 this.weather_busy.set(false);
                 this.weather_loaded.set(true);
-                *this.weather.borrow_mut() = weather.ok().and_then(|result| result.ok());
+                match weather {
+                    Ok(weather) => {
+                        if let Some(source) = this.weather_retry.take() {
+                            source.remove();
+                        }
+                        *this.weather.borrow_mut() = Some(weather);
+                    }
+                    Err(_) => this.retry_weather(),
+                }
                 for view in this.views.borrow().iter() {
                     view.refresh_weather();
                 }
             }
         });
+    }
+    fn retry_weather(self: &Rc<Self>) {
+        if self.weather_retry.borrow().is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        *self.weather_retry.borrow_mut() =
+            Some(glib::timeout_add_seconds_local_once(120, move || {
+                if let Some(this) = weak.upgrade() {
+                    this.weather_retry.take();
+                    this.fetch_weather();
+                }
+            }));
     }
     fn add_player(self: &Rc<Self>, name: &str) {
         let name = name.to_owned();
@@ -414,15 +440,33 @@ impl Controller {
         let players = self.media.borrow();
         let selected = players
             .values()
+            .filter_map(|proxy| {
+                crate::mpris::priority(|key| proxy.cached_property(key), "PlayPause")
+                    .map(|rank| (rank, proxy))
+            })
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, proxy)| proxy);
+        *self.selected.borrow_mut() = selected.cloned();
+        if let Some(proxy) = selected {
+            return Media::from_proxy(proxy);
+        }
+        players
+            .values()
             .find(|proxy| Media::from_proxy(proxy).playing)
             .or_else(|| {
                 players
                     .values()
                     .find(|proxy| Media::from_proxy(proxy).active())
             })
-            .or_else(|| players.values().next());
-        *self.selected.borrow_mut() = selected.cloned();
-        selected.map(Media::from_proxy).unwrap_or_default()
+            .or_else(|| players.values().next())
+            .map(|proxy| Media {
+                can_play: false,
+                can_pause: false,
+                can_previous: false,
+                can_next: false,
+                ..Media::from_proxy(proxy)
+            })
+            .unwrap_or_default()
     }
     fn refresh_media(&self) {
         let state = self.media_state();
@@ -565,15 +609,27 @@ fn prune_shelf() {
         }
     });
 }
+fn clock_interval(visible: bool, timer: bool, stopwatch: bool) -> Option<Duration> {
+    if visible && (timer || stopwatch) {
+        Some(Duration::from_millis(100))
+    } else if timer {
+        Some(Duration::from_secs(1))
+    } else {
+        None
+    }
+}
 impl Drop for Controller {
     fn drop(&mut self) {
-        if let Some(source) = self.clock.take() {
+        if let Some((source, _)) = self.clock.take() {
             source.remove();
         }
         if let Some(source) = self.shelf_source.take() {
             source.remove();
         }
         if let Some(source) = self.weather_source.take() {
+            source.remove();
+        }
+        if let Some(source) = self.weather_retry.take() {
             source.remove();
         }
         if let Some(watch) = self.flow_watch.take() {
@@ -584,5 +640,24 @@ impl Drop for Controller {
             view.window.destroy();
         }
         self.hold.take();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clocks_slow_down_while_every_view_is_hidden() {
+        assert_eq!(
+            clock_interval(true, false, true),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            clock_interval(false, true, true),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(clock_interval(false, false, true), None);
+        assert_eq!(clock_interval(true, false, false), None);
     }
 }

@@ -9,3 +9,5 @@ ExecStart=%h/.config/scripts/hype-control clipboard watch
 TimeoutStartSec=20
 Restart=always
 RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=60

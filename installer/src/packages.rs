@@ -154,9 +154,28 @@ impl Installer {
         }
         let listed = self.output("pacman", &["-Slq"])?;
         let names: HashSet<_> = listed.stdout.lines().collect();
+        let mut args = vec!["-T"];
+        args.extend(packages.iter().map(String::as_str));
+        let missing = self.output("pacman", &args)?;
+        // Pacman returns 127 and prints the missing dependency names for -T.
+        if !missing.success() && missing.code != 127 {
+            return Err(error(format!(
+                "Could not check installed package providers: {}",
+                missing.stderr.trim()
+            )));
+        }
+        let missing: HashSet<_> = missing.stdout.lines().collect();
         let mut official = Vec::new();
-        let mut foreign = Vec::new();
+        let mut aur = Vec::new();
         for package in packages.iter().map(String::as_str) {
+            if !missing.contains(package) {
+                if !names.contains(package) {
+                    self.note(format_args!(
+                        "Retaining installed package/provider: {package}"
+                    ));
+                }
+                continue;
+            }
             let in_repo = if listed.success() {
                 names.contains(package)
             } else {
@@ -166,30 +185,7 @@ impl Installer {
             if in_repo {
                 official.push(package);
             } else {
-                foreign.push(package);
-            }
-        }
-        let mut aur = Vec::new();
-        if !foreign.is_empty() {
-            let mut args = vec!["-T"];
-            args.extend_from_slice(&foreign);
-            let missing = self.output("pacman", &args)?;
-            // Pacman returns 127 and prints the missing dependency names for -T.
-            if !missing.success() && missing.code != 127 {
-                return Err(error(format!(
-                    "Could not check installed package providers: {}",
-                    missing.stderr.trim()
-                )));
-            }
-            let missing: HashSet<_> = missing.stdout.lines().collect();
-            for package in foreign {
-                if missing.contains(package) {
-                    aur.push(format!("aur/{package}"));
-                } else {
-                    self.note(format_args!(
-                        "Retaining installed package/provider: {package}"
-                    ));
-                }
+                aur.push(format!("aur/{package}"));
             }
         }
         let mut log = tempfile::Builder::new()
@@ -356,21 +352,25 @@ mod tests {
             self.calls.borrow_mut().push(format!("{p} {}", a.join(" ")));
             if p == "pacman" && a == ["-Slq"] {
                 return Ok(CommandOutput {
-                    stdout: "official\n".into(),
+                    stdout: "official\nrust\n".into(),
                     ..Default::default()
                 });
             }
             if p == "pacman" && a.first() == Some(&"-T") {
-                let is_validation = a.contains(&"official");
-                let unsatisfied =
-                    a.contains(&"missing") && (!is_validation || self.verification_fails);
+                let checks = self.calls.borrow();
+                let is_validation =
+                    checks.iter().filter(|c| c.starts_with("pacman -T")).count() > 1;
+                let unsatisfied: Vec<_> = a
+                    .iter()
+                    .filter(|name| {
+                        **name == "missing" && (!is_validation || self.verification_fails)
+                            || **name == "official" && !is_validation
+                    })
+                    .map(|name| format!("{name}\n"))
+                    .collect();
                 return Ok(CommandOutput {
-                    code: if unsatisfied { 127 } else { 0 },
-                    stdout: if unsatisfied {
-                        "missing\n".into()
-                    } else {
-                        String::new()
-                    },
+                    code: if unsatisfied.is_empty() { 0 } else { 127 },
+                    stdout: unsatisfied.concat(),
                     ..Default::default()
                 });
             }
@@ -606,13 +606,13 @@ mod tests {
         assert!(root.join("optional-packages.txt").is_file());
     }
     #[test]
-    fn retains_foreign_providers_but_upgrades_official_packages() {
+    fn installs_only_packages_without_an_installed_provider() {
         let (_root, mut installer, calls) = fixture(false, false, false);
         installer.install_packages().unwrap();
         let calls = calls.borrow();
         assert_eq!(
             &calls[..2],
-            ["pacman -Slq", "pacman -T foreign provider missing"]
+            ["pacman -Slq", "pacman -T official foreign provider missing"]
         );
         assert!(
             calls
@@ -633,6 +633,23 @@ mod tests {
         assert_eq!(
             calls.last().unwrap(),
             "pacman -T official foreign provider missing"
+        );
+    }
+    #[test]
+    fn official_package_satisfied_by_a_provider_is_not_installed() {
+        let (root, mut installer, calls) = fixture(false, false, false);
+        fs::write(root.path().join("pkglist.txt"), "official\nrust\n").unwrap();
+        installer.install_packages().unwrap();
+        let calls = calls.borrow();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c == "sudo pacman -S --needed --noconfirm official")
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|c| c.contains("rust") && !c.starts_with("pacman -T "))
         );
     }
     #[test]

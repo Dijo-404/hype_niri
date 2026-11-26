@@ -137,7 +137,7 @@ window#waybar.hidden {
   /* The power glyph extends beyond its font's advance width. */
   min-width: 33px;
   padding-right: 3px;
-  font-family: "JetBrainsMono Nerd Font", "Material Design Icons", sans-serif;
+  font-family: "Symbols Nerd Font", "Material Design Icons", sans-serif;
   font-size: 14.7px;
   font-weight: 700;
   text-shadow:

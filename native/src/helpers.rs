@@ -20,13 +20,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const SYSTEMD: &str = "org.freedesktop.systemd1";
-const SYSTEMD_MANAGER: &str = "org.freedesktop.systemd1.Manager";
-const SYSTEMD_UNIT: &str = "org.freedesktop.systemd1.Unit";
-const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
-const LOGIN: &str = "org.freedesktop.login1";
-const LOGIN_MANAGER: &str = "org.freedesktop.login1.Manager";
-const LOGIN_PATH: &str = "/org/freedesktop/login1";
 const WAYBAR_WAIT: Duration = Duration::from_secs(3);
 const MENU_LOCK: &str = "hype-menu-toggle.lock";
 const MENU_WAIT: Duration = Duration::from_secs(1);
@@ -34,49 +27,16 @@ const TRAY_WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const TRAY_ITEM: &str = "org.kde.StatusNotifierItem";
 const TRAY_WAIT: Duration = Duration::from_secs(1);
 
-fn matches_process(pid: i32, name: &str) -> bool {
-    let Ok(status) = fs::read_to_string(format!("/proc/{pid}/status")) else {
-        return false;
-    };
-    let mut named = false;
-    let mut live = false;
-    let mut owned = false;
-    for line in status.lines() {
-        if let Some(value) = line.strip_prefix("Name:") {
-            named = value.trim() == name;
-        } else if let Some(value) = line.strip_prefix("State:") {
-            live = !value.trim_start().starts_with(['Z', 'X', 'x']);
-        } else if let Some(value) = line.strip_prefix("Uid:") {
-            owned = value
-                .split_whitespace()
-                .nth(1)
-                .and_then(|uid| uid.parse().ok())
-                == Some(runtime::uid());
-            break;
-        }
-    }
-    named && live && owned
-}
-
-fn named_processes(name: &str) -> impl Iterator<Item = i32> {
-    fs::read_dir("/proc")
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
-        .filter(move |pid| matches_process(*pid, name))
-}
-
 fn terminate_named(name: &str) -> bool {
     let mut signaled = false;
-    for pid in named_processes(name) {
+    for pid in runtime::named_processes(name) {
         // Recheck after opening the pidfd so PID reuse cannot signal another process.
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
         if fd < 0 {
             continue;
         }
         let fd = unsafe { OwnedFd::from_raw_fd(fd as i32) };
-        if matches_process(pid, name) {
+        if runtime::matches_process(pid, name) {
             signaled |= unsafe {
                 libc::syscall(
                     libc::SYS_pidfd_send_signal,
@@ -196,9 +156,9 @@ async fn password_prompt(args: &[OsString]) -> Result<i32> {
 async fn logind_power(method: &str) -> Result<()> {
     bus::call(
         &bus::system().await?,
-        LOGIN,
-        LOGIN_PATH,
-        LOGIN_MANAGER,
+        bus::LOGIN,
+        bus::LOGIN_PATH,
+        bus::LOGIN_MANAGER,
         method,
         Some(&(true,).to_variant()),
         30_000,
@@ -276,7 +236,7 @@ fn start_tray_applets() -> Result<()> {
         if group.is_some_and(|group| !groups.lines().any(|line| line.trim() == group)) {
             continue;
         }
-        if named_processes(name).next().is_some() {
+        if runtime::named_processes(name).next().is_some() {
             continue;
         }
         let Some(lock) = runtime::lock(&format!("hype-tray-{name}.lock"), Duration::ZERO)? else {
@@ -298,7 +258,7 @@ fn start_tray_applets() -> Result<()> {
 fn start_waybar(restart: bool) -> Result<()> {
     let began = Instant::now();
     if restart && terminate_named("waybar") {
-        while named_processes("waybar").next().is_some() && began.elapsed() < WAYBAR_WAIT {
+        while runtime::named_processes("waybar").next().is_some() && began.elapsed() < WAYBAR_WAIT {
             thread::sleep(Duration::from_millis(20));
         }
     }
@@ -309,7 +269,7 @@ fn start_waybar(restart: bool) -> Result<()> {
     else {
         return Ok(());
     };
-    if named_processes("waybar").next().is_some() {
+    if runtime::named_processes("waybar").next().is_some() {
         return Ok(());
     }
     let config = match env::var_os("WAYBAR_CONFIG").filter(|path| !path.is_empty()) {
@@ -323,21 +283,7 @@ fn start_waybar(restart: bool) -> Result<()> {
 }
 
 async fn active_unit(unit: &str) -> Result<bool> {
-    let conn = bus::system().await?;
-    let path = bus::call(
-        &conn,
-        SYSTEMD,
-        SYSTEMD_PATH,
-        SYSTEMD_MANAGER,
-        "GetUnit",
-        Some(&(unit,).to_variant()),
-        2_000,
-    )
-    .await?
-    .get::<(glib::variant::ObjectPath,)>()
-    .ok_or_else(|| err("systemd returned an invalid unit path"))?
-    .0;
-    let state: String = bus::property(&conn, SYSTEMD, &path, SYSTEMD_UNIT, "ActiveState").await?;
+    let state = bus::unit_state(&bus::system().await?, unit).await?;
     Ok(matches!(
         state.as_str(),
         "active" | "reloading" | "refreshing"
@@ -466,7 +412,7 @@ async fn warp_tray_registered() -> Result<bool> {
     Ok(false)
 }
 
-async fn warp_indicator() {
+pub async fn warp_indicator() {
     if !active_unit("warp-svc.service").await.unwrap_or(false)
         || warp_tray_registered().await.unwrap_or(false)
     {

@@ -187,60 +187,6 @@ impl Installer {
             fs::File::open(self.source.join(&asset))
                 .map_err(|cause| error(format!("Required source asset {asset}: {cause}")))?;
         }
-        for (directory, modules) in [
-            (
-                "native/src",
-                &[
-                    "lib",
-                    "main",
-                    "runtime",
-                    "controls",
-                    "temperature",
-                    "display",
-                    "wallpaper",
-                    "session",
-                    "caffeine",
-                    "network",
-                    "drives",
-                    "bus",
-                    "ipc",
-                    "dialog",
-                    "notify",
-                    "launcher",
-                    "media",
-                    "clipboard",
-                    "emoji",
-                    "keyboard",
-                    "stealth",
-                    "stealth_client",
-                    "helpers",
-                    "bin/hype-status",
-                    "bin/stealth",
-                ][..],
-            ),
-            (
-                "notch",
-                &[
-                    "main",
-                    "controller",
-                    "model",
-                    "services",
-                    "surface",
-                    "morph",
-                    "ui",
-                ][..],
-            ),
-            (
-                "installer/src",
-                &["main", "lib", "config", "core", "packages", "system"][..],
-            ),
-        ] {
-            for module in modules {
-                let source = format!("{directory}/{module}.rs");
-                fs::File::open(self.source.join(&source))
-                    .map_err(|cause| error(format!("Required source file {source}: {cause}")))?;
-            }
-        }
         if self.runner.available("curl") {
             if !self
                 .output(
@@ -385,6 +331,34 @@ impl Installer {
     }
     pub fn run_all(&mut self) -> Result<()> {
         self.run_plain("Installation", false)
+    }
+
+    pub fn run_phase(&mut self, name: &str) -> Result<()> {
+        if matches!(name, "configs" | "gtk" | "shell") {
+            self.backup_configs()?;
+        }
+        match name {
+            "packages" => {
+                self.install_packages()?;
+                self.save_optional_groups()
+            }
+            "user-dirs" => self.setup_user_dirs(),
+            "desktop-integrations" => self.setup_desktop_integrations(),
+            "lazyvim" => self.setup_lazyvim(),
+            "tray-icons" => self.setup_tray_icons(),
+            "docker-socket" => self.configure_docker_socket(),
+            "backup" => self.backup_configs(),
+            "configs" => self.copy_configs(),
+            "gtk" => self.setup_gtk(),
+            "shell" => self.setup_shell(),
+            "system" => self.setup_system(),
+            "logind" => self.setup_logind(),
+            "firewall" => self.setup_firewall(),
+            "warp" => self.setup_cloudflare(),
+            "stealth" => self.setup_stealth(),
+            "validate" => self.validate(),
+            _ => Err(error(format!("Unknown phase: {name}"))),
+        }
     }
 
     pub fn run_plain_update(&mut self) -> Result<()> {

@@ -260,6 +260,11 @@ impl Installer {
                 .map_err(|err| error(format!("Could not back up {}: {err}", target.display())))?;
         }
         self.note(format_args!("Backup saved to {}", backup.display()));
+        if let Err(cause) = prune_backups(&self.home, &backup, 3) {
+            self.warn(format_args!(
+                "Warning: could not remove old backups: {cause}"
+            ));
+        }
         Ok(())
     }
 
@@ -492,20 +497,18 @@ impl Installer {
                             0o644,
                         )?;
                     }
-                    let saved = config.join("niri/outputs.kdl");
-                    match fs::metadata(&saved) {
-                        Ok(metadata) if metadata.is_file() => {
-                            copy_regular(&saved, &staged.join("outputs.kdl"), None, true).map_err(
-                                |err| {
-                                    error(format!(
-                                        "Could not preserve saved monitor settings: {err}"
-                                    ))
-                                },
-                            )?;
+                    for name in ["outputs.kdl", "opacity.kdl"] {
+                        let saved = config.join("niri").join(name);
+                        match fs::metadata(&saved) {
+                            Ok(metadata) if metadata.is_file() => {
+                                copy_regular(&saved, &staged.join(name), None, true).map_err(
+                                    |err| error(format!("Could not preserve saved {name}: {err}")),
+                                )?;
+                            }
+                            Ok(_) => {}
+                            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                            Err(err) => return Err(err.into()),
                         }
-                        Ok(_) => {}
-                        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                        Err(err) => return Err(err.into()),
                     }
                     let outputs = staged.join("outputs.kdl");
                     if metadata(&outputs)?.is_none() {
@@ -1163,6 +1166,34 @@ impl Installer {
         }
         Ok(directory)
     }
+}
+
+fn prune_backups(home: &Path, current: &Path, keep: usize) -> io::Result<()> {
+    let mut backups = Vec::new();
+    for entry in fs::read_dir(home)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some((seconds, suffix)) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(".config-backup-"))
+            .and_then(|rest| rest.split_once('.'))
+        else {
+            continue;
+        };
+        let generated = !seconds.is_empty()
+            && seconds.bytes().all(|byte| byte.is_ascii_digit())
+            && suffix.len() == 6
+            && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric());
+        if generated && entry.file_type()?.is_dir() && entry.path() != current {
+            backups.push((seconds.parse::<u64>().unwrap_or(0), entry.path()));
+        }
+    }
+    backups.sort();
+    // The oldest backup is the pre-Hype snapshot, so it is never pruned.
+    for (_, path) in backups.iter().skip(1).rev().skip(keep.saturating_sub(2)) {
+        fs::remove_dir_all(path)?;
+    }
+    Ok(())
 }
 
 fn metadata(path: &Path) -> io::Result<Option<Metadata>> {

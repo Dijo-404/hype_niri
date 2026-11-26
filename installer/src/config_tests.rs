@@ -296,6 +296,48 @@ fn backup_preserves_generated_config_mimeapps_and_dangling_links() {
 }
 
 #[test]
+fn new_backup_keeps_the_oldest_and_two_newest_generated_backups() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    for name in [
+        ".config-backup-100.aaaaaa",
+        ".config-backup-200.bbbbbb",
+        ".config-backup-300.cccccc",
+        ".config-backup-400.dddddd",
+        ".config-backup-50.mine",
+        ".config-backup-notes",
+    ] {
+        fs::create_dir(installer.home.join(name)).unwrap();
+    }
+    write(installer.home.join(".config-backup-10.eeeeee"), "file");
+    write(installer.user(".zshrc"), "old zshrc");
+    installer.backup_configs().unwrap();
+    let mut left: Vec<_> = fs::read_dir(&installer.home)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(".config-backup-")
+        })
+        .collect();
+    left.sort();
+    let backup = installer.backup.unwrap();
+    assert!(left.contains(&backup));
+    for kept in [
+        ".config-backup-100.aaaaaa",
+        ".config-backup-400.dddddd",
+        ".config-backup-50.mine",
+        ".config-backup-notes",
+        ".config-backup-10.eeeeee",
+    ] {
+        assert!(left.contains(&installer.home.join(kept)), "{kept}");
+    }
+    assert_eq!(left.len(), 6);
+}
+
+#[test]
 fn failed_directory_publication_leaves_previous_config() {
     let (temp, installer, _) = fixture(Fake::default());
     let old = installer.user(".config/niri/config.kdl");
@@ -483,6 +525,18 @@ fn reinstall_preserves_monitor_settings_and_moves_existing_drive_links() {
 }
 
 #[test]
+fn republish_keeps_live_opacity_or_the_repository_default() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    write(installer.source.join("niri/opacity.kdl"), "default opacity");
+    let live = installer.user(".config/niri/opacity.kdl");
+    installer.copy_configs().unwrap();
+    assert_eq!(fs::read_to_string(&live).unwrap(), "default opacity");
+    fs::write(&live, "user opacity").unwrap();
+    installer.copy_configs().unwrap();
+    assert_eq!(fs::read_to_string(&live).unwrap(), "user opacity");
+}
+
+#[test]
 fn wallpaper_seed_handles_large_directories_and_keeps_existing_files_and_pointer() {
     let (_temp, mut installer, _) = fixture(Fake::default());
     let wallpapers = installer.user("pictures/wallpapers");
@@ -529,6 +583,17 @@ fn user_data_symlinks_stay_linked_without_copying_unrelated_collections() {
     }
     assert!(installer.user("pictures/wallpapers").is_dir());
     assert!(!installer.user(".cache/cliphist").exists());
+}
+
+#[test]
+fn configs_phase_backs_up_existing_user_files_first() {
+    let (_temp, mut installer, _) = fixture(Fake::default());
+    write(installer.user(".config/niri/config.kdl"), "user Niri");
+    installer.run_phase("configs").unwrap();
+    assert_eq!(
+        fs::read_to_string(installer.backup.unwrap().join(".config/niri/config.kdl")).unwrap(),
+        "user Niri"
+    );
 }
 
 #[test]

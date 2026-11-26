@@ -1,8 +1,13 @@
-use crate::{Result, bus, caffeine, err, ipc, notify, runtime};
+use crate::{
+    Result,
+    bus::{self, LOGIN, LOGIN_MANAGER, LOGIN_PATH},
+    caffeine, err, ipc, notify, runtime,
+};
 use gtk::{gio, glib, prelude::*};
 use serde_json::{Value, json};
 use std::{
     fs,
+    os::unix::process::ExitStatusExt,
     path::Path,
     process::{Child, Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -53,43 +58,8 @@ fn ready(hint: bool, locker: bool) -> bool {
     hint && locker
 }
 
-const LOGIN: &str = "org.freedesktop.login1";
-const MANAGER: &str = "org.freedesktop.login1.Manager";
-const LOGIN_PATH: &str = "/org/freedesktop/login1";
-
 fn locker_running() -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let Ok(processes) = fs::read_dir("/proc") else {
-        return false;
-    };
-    processes.filter_map(std::result::Result::ok).any(|entry| {
-        if !entry
-            .file_name()
-            .as_encoded_bytes()
-            .iter()
-            .all(u8::is_ascii_digit)
-        {
-            return false;
-        }
-        if !entry
-            .metadata()
-            .is_ok_and(|m| m.uid() == unsafe { libc::geteuid() })
-        {
-            return false;
-        }
-        if !fs::read_to_string(entry.path().join("comm"))
-            .is_ok_and(|name| name.trim() == "hyprlock")
-        {
-            return false;
-        }
-        fs::read_to_string(entry.path().join("stat"))
-            .ok()
-            .and_then(|stat| {
-                stat.rsplit_once(") ")
-                    .map(|(_, fields)| !fields.starts_with('Z'))
-            })
-            .unwrap_or(false)
-    })
+    runtime::named_processes("hyprlock").next().is_some()
 }
 
 async fn session_path(conn: &gio::DBusConnection) -> Result<String> {
@@ -101,7 +71,7 @@ async fn session_path(conn: &gio::DBusConnection) -> Result<String> {
         conn,
         LOGIN,
         LOGIN_PATH,
-        MANAGER,
+        LOGIN_MANAGER,
         "GetSession",
         Some(&(id,).to_variant()),
         2_000,
@@ -199,24 +169,30 @@ async fn lock(sleep: bool, dim: bool) -> Result<()> {
     let Some(mut locker) = spawn_locker(sleep).await? else {
         return Ok(());
     };
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut dimmed = !dim;
-    loop {
-        if let Some(status) = locker.child.as_mut().unwrap().try_wait()? {
-            return if status.success() {
-                Ok(())
-            } else {
-                Err(err(format!("Password locker exited with {status}")))
-            };
-        }
-        if !dimmed && Instant::now() >= deadline {
+    let mut exit = glib::child_watch_future(glib::Pid(locker.child.as_ref().unwrap().id() as i32));
+    let mut exited = None;
+    if dim {
+        exited = glib::future_with_timeout(Duration::from_secs(30), &mut exit)
+            .await
+            .ok();
+        if exited.is_none() {
             let conn = bus::system().await?;
             if ready(locked_hint(&conn).await.unwrap_or(false), locker_running()) {
                 ipc::action(json!({"PowerOffMonitors":{}}))?;
             }
-            dimmed = true;
         }
-        glib::timeout_future(Duration::from_millis(100)).await;
+    }
+    let (_, status) = match exited {
+        Some(exited) => exited,
+        None => exit.await,
+    };
+    // GLib reaped the child, so Locker::drop must not wait on a reusable PID.
+    locker.child.take();
+    let status = std::process::ExitStatus::from_raw(status);
+    if status.success() {
+        Ok(())
+    } else {
+        Err(err(format!("Password locker exited with {status}")))
     }
 }
 
@@ -458,17 +434,24 @@ async fn copilot_shortcut() -> Result<()> {
 }
 
 async fn watch_sleep() -> Result<()> {
-    use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+    use std::{
+        cell::RefCell,
+        collections::VecDeque,
+        rc::Rc,
+        sync::{Arc, Mutex},
+    };
     // The old swayidle hook holds a different lock until this watcher is ready.
     let Some(_lock) = runtime::lock("hype-sleep-watch.lock", Duration::ZERO)? else {
         return Ok(());
     };
     let conn = bus::system().await?;
     let pending = Rc::new(RefCell::new(VecDeque::new()));
+    let wake = Arc::new(Mutex::new(gio::Cancellable::new()));
     let events = pending.clone();
+    let queued = wake.clone();
     let _subscription = conn.subscribe_to_signal(
         Some(LOGIN),
-        Some(MANAGER),
+        Some(LOGIN_MANAGER),
         Some("PrepareForSleep"),
         Some(LOGIN_PATH),
         None,
@@ -476,11 +459,13 @@ async fn watch_sleep() -> Result<()> {
         move |signal| {
             if let Some((start,)) = signal.parameters.get::<(bool,)>() {
                 events.borrow_mut().push_back(start);
+                queued.lock().unwrap().cancel();
             }
         },
     );
     let owner_changed = Rc::new(std::cell::Cell::new(false));
     let changed = owner_changed.clone();
+    let restarted = wake.clone();
     let _owner = conn.subscribe_to_signal(
         Some("org.freedesktop.DBus"),
         Some("org.freedesktop.DBus"),
@@ -495,6 +480,7 @@ async fn watch_sleep() -> Result<()> {
                 .is_some_and(|(_, old, _)| !old.is_empty())
             {
                 changed.set(true);
+                restarted.lock().unwrap().cancel();
             }
         },
     );
@@ -508,8 +494,12 @@ async fn watch_sleep() -> Result<()> {
         )
         .await?,
     );
+    let disconnected = wake.clone();
+    let _closed = conn.connect_closed(move |_, _, _| disconnected.lock().unwrap().cancel());
     crate::watchers::ready(crate::watchers::Watcher::Sleep)?;
     loop {
+        let event = gio::Cancellable::new();
+        *wake.lock().unwrap() = event.clone();
         if conn.is_closed() {
             return Err(err("System bus disconnected while watching sleep"));
         }
@@ -536,39 +526,45 @@ async fn watch_sleep() -> Result<()> {
             }
         }
         let next = pending.borrow_mut().pop_front();
-        if let Some(start) = next {
-            if start {
-                let prepared = ensure_locked(&conn).await.and_then(|()| {
-                    // Clear the scanout before suspend so resume starts with a fresh frame.
-                    ipc::action(json!({"PowerOffMonitors":{}}))
-                });
-                match prepared {
-                    Ok(()) => {
-                        inhibitor.take();
-                    }
-                    Err(error) => {
-                        eprintln!("{error}; retaining sleep delay inhibitor until resume")
-                    }
+        let Some(start) = next else {
+            event.future().await;
+            continue;
+        };
+        if start {
+            let prepared = ensure_locked(&conn).await.and_then(|()| {
+                // Clear the scanout before suspend so resume starts with a fresh frame.
+                ipc::action(json!({"PowerOffMonitors":{}}))
+            });
+            match prepared {
+                Ok(()) => {
+                    inhibitor.take();
                 }
-            } else {
-                if inhibitor.is_none() {
-                    inhibitor = Some(
-                        caffeine::inhibit(
-                            &conn,
-                            "sleep",
-                            "Hype session lock",
-                            "Confirm password lock before sleep",
-                            "delay",
-                        )
-                        .await?,
-                    );
-                }
-                if let Err(error) = copilot_display("resume", None).await {
-                    eprintln!("{error}");
+                Err(error) => {
+                    eprintln!("{error}; retaining sleep delay inhibitor until resume")
                 }
             }
+        } else {
+            if inhibitor.is_none() {
+                match caffeine::inhibit(
+                    &conn,
+                    "sleep",
+                    "Hype session lock",
+                    "Confirm password lock before sleep",
+                    "delay",
+                )
+                .await
+                {
+                    Ok(fd) => inhibitor = Some(fd),
+                    Err(error) => {
+                        eprintln!("Could not renew logind sleep inhibitor: {error}");
+                        owner_changed.set(true);
+                    }
+                }
+            }
+            if let Err(error) = copilot_display("resume", None).await {
+                eprintln!("{error}");
+            }
         }
-        glib::timeout_future(Duration::from_millis(50)).await;
     }
 }
 
@@ -585,7 +581,7 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
                 &conn,
                 LOGIN,
                 LOGIN_PATH,
-                MANAGER,
+                LOGIN_MANAGER,
                 "Suspend",
                 Some(&(true,).to_variant()),
                 30_000,

@@ -1,8 +1,11 @@
-use crate::{Result, bus, err, notify, runtime};
+use crate::{
+    Result,
+    bus::{self, LOGIN, LOGIN_MANAGER, LOGIN_PATH},
+    err, notify, runtime,
+};
 use gtk::{gio, glib, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::Cell,
     fs,
     os::{
         fd::{AsRawFd, OwnedFd},
@@ -10,7 +13,6 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -37,10 +39,6 @@ fn valid_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-const LOGIN: &str = "org.freedesktop.login1";
-const MANAGER: &str = "org.freedesktop.login1.Manager";
-const LOGIN_PATH: &str = "/org/freedesktop/login1";
-
 /// logind keeps the inhibitor only while this received descriptor remains open.
 pub(crate) async fn inhibit(
     conn: &gio::DBusConnection,
@@ -53,7 +51,7 @@ pub(crate) async fn inhibit(
         .call_with_unix_fd_list_future(
             Some(LOGIN),
             LOGIN_PATH,
-            MANAGER,
+            LOGIN_MANAGER,
             "Inhibit",
             Some(&(what, who, why, mode).to_variant()),
             None,
@@ -285,17 +283,19 @@ async fn hold(dir: &Path, token: &str) -> Result<()> {
     let Some(_single) = runtime::lock("caffeine-holder.lock", Duration::ZERO)? else {
         return Err(err("Caffeine holder already running"));
     };
-    let alive = Rc::new(Cell::new(true));
+    let stop = gio::Cancellable::new();
     let mut signals = Vec::new();
     for signum in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-        let alive = alive.clone();
+        let stop = stop.clone();
         signals.push(glib_unix::unix_signal_add_local(signum, move || {
-            alive.set(false);
+            stop.cancel();
             glib::ControlFlow::Continue
         }));
     }
     let conn = bus::system().await?;
-    let owner_alive = alive.clone();
+    let closed = stop.clone();
+    let _closed = conn.connect_closed(move |_, _, _| closed.cancel());
+    let owner = stop.clone();
     let _owner = conn.subscribe_to_signal(
         Some("org.freedesktop.DBus"),
         Some("org.freedesktop.DBus"),
@@ -309,7 +309,7 @@ async fn hold(dir: &Path, token: &str) -> Result<()> {
                 .get::<(String, String, String)>()
                 .is_some_and(|(_, old, _)| !old.is_empty())
             {
-                owner_alive.set(false);
+                owner.cancel();
             }
         },
     );
@@ -330,8 +330,8 @@ async fn hold(dir: &Path, token: &str) -> Result<()> {
     let bytes = serde_json::to_vec(&holder)?;
     runtime::atomic_write(&dir.join("caffeine_pid"), &bytes)?;
     runtime::atomic_write(&ready_path(dir, token), &bytes)?;
-    while alive.get() && !conn.is_closed() {
-        glib::timeout_future(Duration::from_millis(20)).await;
+    if !conn.is_closed() {
+        stop.future().await;
     }
     drop(fd);
     remove(ready_path(dir, token));
@@ -465,7 +465,7 @@ mod tests {
     }
 
     fn descriptor_fixture(missing_fd: bool) {
-        use std::{cell::RefCell, io::Read, os::unix::net::UnixStream};
+        use std::{cell::RefCell, io::Read, os::unix::net::UnixStream, rc::Rc};
         let context = glib::MainContext::new();
         context.with_thread_default(|| context.block_on(async {
             let server = gio::DBusServer::new_sync("unix:tmpdir=/tmp", gio::DBusServerFlags::AUTHENTICATION_ALLOW_ANONYMOUS, &gio::dbus_generate_guid(), None, None::<&gio::Cancellable>).unwrap();
@@ -508,7 +508,10 @@ mod tests {
                 let mut byte = [0];
                 assert_eq!(readers.borrow_mut()[0].read(&mut byte).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
                 drop(fd);
-                assert_eq!(readers.borrow_mut()[0].read(&mut byte).unwrap(), 0, "Inhibitor descriptor leaked after drop");
+                let reader = &mut readers.borrow_mut()[0];
+                reader.set_nonblocking(false).unwrap();
+                reader.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+                assert_eq!(reader.read(&mut byte).unwrap(), 0, "Inhibitor descriptor leaked after drop");
             }
             connection.close_future().await.unwrap();
             server.stop();

@@ -19,7 +19,7 @@ const STYLE: &str = r#"
         color: #d4d4d4;
         border: 2px solid #fff;
         border-radius: 4px;
-        font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+        font-family: "JetBrains Mono", "Symbols Nerd Font", monospace;
         font-size: 11pt;
         box-shadow: none;
     }

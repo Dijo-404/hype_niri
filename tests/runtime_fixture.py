@@ -107,6 +107,10 @@ class PrivateBus:
                     <arg type="s" direction="in"/>
                     <arg type="o" direction="out"/>
                 </method>
+                <method name="LoadUnit">
+                    <arg type="s" direction="in"/>
+                    <arg type="o" direction="out"/>
+                </method>
                 """,
             )
             for path in UNIT_NAMES.values():
@@ -163,7 +167,7 @@ class PrivateBus:
 
     def method(self, _conn, _sender, _path, interface, method, args, invocation):
         try:
-            if interface == SYSTEMD + ".Manager" and method == "GetUnit":
+            if interface == SYSTEMD + ".Manager" and method in ("GetUnit", "LoadUnit"):
                 (name,) = args.unpack()
                 path = UNIT_NAMES.get(name)
                 if path is None or not (self.root / name).exists():

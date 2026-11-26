@@ -95,6 +95,12 @@ class WarpIndicatorTests(RuntimeFixture):
         self.assertEqual(result["class"], "connected")
         self.assertEqual(result["tooltip"], "Cloudflare WARP · Connected")
 
+    def test_status_binary_matches_control(self):
+        status = self.isolated(
+            '"${HYPE_CONTROL_FIXTURE%/*}/hype-status" warp-indicator'
+        )
+        self.assertEqual(json.loads(status.stdout), self.indicator())
+
     def test_running_taskbar_without_registered_icon_keeps_fallback(self):
         self.mock(
             "warp-taskbar",

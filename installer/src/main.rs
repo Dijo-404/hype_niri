@@ -238,28 +238,7 @@ fn entry() -> Result<()> {
                 }
                 installer.optional_groups = Some(groups);
             }
-            match name.as_str() {
-                "packages" => {
-                    installer.install_packages()?;
-                    installer.save_optional_groups()
-                }
-                "user-dirs" => installer.setup_user_dirs(),
-                "desktop-integrations" => installer.setup_desktop_integrations(),
-                "lazyvim" => installer.setup_lazyvim(),
-                "tray-icons" => installer.setup_tray_icons(),
-                "docker-socket" => installer.configure_docker_socket(),
-                "backup" => installer.backup_configs(),
-                "configs" => installer.copy_configs(),
-                "gtk" => installer.setup_gtk(),
-                "shell" => installer.setup_shell(),
-                "system" => installer.setup_system(),
-                "logind" => installer.setup_logind(),
-                "firewall" => installer.setup_firewall(),
-                "warp" => installer.setup_cloudflare(),
-                "stealth" => installer.setup_stealth(),
-                "validate" => installer.validate(),
-                _ => unreachable!(),
-            }
+            installer.run_phase(&name)
         }
         Mode::Help => unreachable!(),
     }

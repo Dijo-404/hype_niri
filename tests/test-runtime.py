@@ -17,22 +17,15 @@ class RuntimeTests(RuntimeFixture):
         config.write_text('// Waybar accepts JSONC.\n{"modules-left": ["clock"],}\n')
         return config
 
-    def test_hypridle_resumes_saved_displays_only_after_system_sleep(self):
+    def test_hypridle_leaves_resume_to_sleep_watcher(self):
         hooks = {"after_sleep_cmd": [], "on-resume": []}
         for line in (self.repo / "hypr/hypridle.conf").read_text().splitlines():
             key, separator, value = line.partition("=")
             if separator and key.strip() in hooks:
                 hooks[key.strip()].append(value.strip())
+        self.assertEqual(hooks["after_sleep_cmd"], [])
         self.assertEqual(
-            hooks["after_sleep_cmd"],
-            ["~/.config/scripts/hype-control copilot-display resume"],
-        )
-        self.assertTrue(hooks["on-resume"])
-        self.assertTrue(
-            all(
-                command == "~/.config/scripts/hype-control monitors on"
-                for command in hooks["on-resume"]
-            )
+            hooks["on-resume"], ["~/.config/scripts/hype-control monitors on"]
         )
 
     def test_fullscreen_toggle_does_not_hide_bars_on_other_outputs(self):

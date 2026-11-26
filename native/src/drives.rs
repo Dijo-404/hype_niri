@@ -274,6 +274,7 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
                 Ok(initial) => {
                     snapshot = initial;
                     unlock(&conn, &snapshot).await?;
+                    let mut tried = HashSet::new();
                     glib::future_with_timeout(Duration::from_secs(20), async {
                         loop {
                             snapshot = objects(&conn).await?;
@@ -283,9 +284,15 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
                                     continue;
                                 };
                                 let fstype = text(block, "IdType").unwrap_or_default();
+                                let ignored = block
+                                    .get("HintIgnore")
+                                    .and_then(|v| v.get::<bool>())
+                                    .unwrap_or(false);
                                 if supported(fstype)
+                                    && !ignored
                                     && interfaces.contains_key(FILESYSTEM)
                                     && mounts(interfaces).is_empty()
+                                    && tried.insert(path.clone())
                                 {
                                     pending = true;
                                     if let Err(error) = mount(&conn, path.as_str(), fstype).await {
@@ -303,7 +310,6 @@ pub async fn run(_command: &str, args: &[String]) -> Result<()> {
                             if !pending {
                                 break;
                             }
-                            snapshot = objects(&conn).await?;
                             glib::timeout_future(Duration::from_secs(1)).await;
                         }
                         Ok::<_, Box<dyn std::error::Error>>(())

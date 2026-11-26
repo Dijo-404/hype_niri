@@ -1,5 +1,6 @@
 use gtk::{gdk, gdk_pixbuf, gio, glib, prelude::*};
 use std::{
+    cell::OnceCell,
     fs, io,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
@@ -15,6 +16,7 @@ pub struct CachedFile {
     source: Option<PathBuf>,
     _directory: tempfile::TempDir,
     _lock: fs::File,
+    pub thumbnail: OnceCell<Option<gdk::Texture>>,
 }
 
 fn open_directory(path: &Path) -> io::Result<fs::File> {
@@ -102,6 +104,7 @@ impl CachedFile {
             source: Some(source),
             _directory: directory,
             _lock: lock,
+            thumbnail: OnceCell::new(),
         })
     }
 
@@ -117,6 +120,7 @@ impl CachedFile {
             source: None,
             _directory: directory,
             _lock: lock,
+            thumbnail: OnceCell::new(),
         })
     }
 

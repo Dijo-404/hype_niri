@@ -20,9 +20,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const SYSTEMD: &str = "org.freedesktop.systemd1";
-const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
-const SYSTEMD_MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const DEVICE: &str = "org.freedesktop.NetworkManager.Device";
 const ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const CONNECTION: &str = "org.freedesktop.NetworkManager.Settings.Connection";
@@ -618,6 +615,18 @@ fn set_mac_policy(settings: &mut Settings, policy: &str) {
         wifi.insert("assigned-mac-address".into(), policy.to_variant());
     }
 }
+fn clone_settings(settings: &mut Settings, state: &State) {
+    let connection = settings.entry("connection".into()).or_default();
+    connection.insert("id".into(), state.clone_name.to_variant());
+    connection.insert("uuid".into(), state.clone_uuid.to_variant());
+    connection.insert("autoconnect".into(), false.to_variant());
+    set_mac_policy(settings, &state.spoof_mac);
+    for family in ["ipv4", "ipv6"] {
+        let ip = settings.entry(family.into()).or_default();
+        ip.insert("dhcp-send-hostname".into(), false.to_variant());
+        ip.insert("dhcp-send-hostname-v2".into(), 0_i32.to_variant());
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Restored {
@@ -786,11 +795,7 @@ impl Platform for Native {
     async fn clone_wifi(&mut self, state: &State) -> Result<()> {
         let original = self.profile(&state.connection).await?;
         let mut settings = self.full_settings(original.as_str()).await?;
-        let connection = settings.entry("connection".into()).or_default();
-        connection.insert("id".into(), state.clone_name.to_variant());
-        connection.insert("uuid".into(), state.clone_uuid.to_variant());
-        connection.insert("autoconnect".into(), false.to_variant());
-        set_mac_policy(&mut settings, &state.spoof_mac);
+        clone_settings(&mut settings, state);
         self.manager.add(&settings, true).await?;
         Ok(())
     }
@@ -951,55 +956,25 @@ impl Platform for Native {
         Ok(())
     }
     async fn unit_state(&mut self, unit: &str) -> Result<String> {
-        let reply = bus::call(
-            &self.manager.connection,
-            SYSTEMD,
-            SYSTEMD_PATH,
-            SYSTEMD_MANAGER,
-            "LoadUnit",
-            Some(&(unit,).to_variant()),
-            5000,
-        )
-        .await?;
-        let (path,) = reply
-            .get::<(ObjectPath,)>()
-            .ok_or_else(|| err("Invalid systemd unit path"))?;
-        bus::property(
-            &self.manager.connection,
-            SYSTEMD,
-            path.as_str(),
-            "org.freedesktop.systemd1.Unit",
-            "ActiveState",
-        )
-        .await
+        bus::unit_state(&self.manager.connection, unit).await
     }
     async fn unit_change(&mut self, unit: &str, start: bool) -> Result<()> {
-        bus::call(
+        let state = bus::unit_change(
             &self.manager.connection,
-            SYSTEMD,
-            SYSTEMD_PATH,
-            SYSTEMD_MANAGER,
-            if start { "StartUnit" } else { "StopUnit" },
-            Some(&(unit, "replace").to_variant()),
-            5000,
+            unit,
+            start,
+            Duration::from_secs(60),
         )
         .await?;
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let state = self.unit_state(unit).await?;
-            if (start && state == "active")
-                || (!start && matches!(state.as_str(), "inactive" | "failed"))
-            {
-                return Ok(());
-            }
-            if start && state == "failed" {
-                return Err(err("Tor service failed to start"));
-            }
-            if Instant::now() >= deadline {
-                return Err(err("Tor service change timed out"));
-            }
-            glib::timeout_future(Duration::from_millis(200)).await;
+        if (start && state == "active")
+            || (!start && matches!(state.as_str(), "inactive" | "failed"))
+        {
+            return Ok(());
         }
+        if start && state == "failed" {
+            return Err(err("Tor service failed to start"));
+        }
+        Err(err("Tor service change timed out"))
     }
     async fn listeners(&mut self) -> Result<bool> {
         tor_listeners()
@@ -1483,6 +1458,30 @@ mod tests {
         assert!(!settings[WIFI].contains_key("cloned-mac-address"));
         set_mac_policy(&mut settings, "");
         assert_eq!(mac_policy(&settings).unwrap(), "");
+    }
+    #[test]
+    fn wifi_clone_never_sends_hostname() {
+        let mut settings = Settings::new();
+        settings
+            .entry("ipv4".into())
+            .or_default()
+            .insert("dhcp-send-hostname".into(), true.to_variant());
+        clone_settings(&mut settings, &state(Link::Wifi));
+        for family in ["ipv4", "ipv6"] {
+            assert_eq!(
+                settings[family]["dhcp-send-hostname"].get::<bool>(),
+                Some(false)
+            );
+            assert_eq!(
+                settings[family]["dhcp-send-hostname-v2"].get::<i32>(),
+                Some(0)
+            );
+        }
+        assert_eq!(
+            settings["connection"]["autoconnect"].get::<bool>(),
+            Some(false)
+        );
+        assert_eq!(mac_policy(&settings).unwrap(), "02:11:22:33:44:55");
     }
     #[test]
     fn saved_profile_restoration_needs_no_secret_agent_and_resets_policy_after_failure() {

@@ -1,6 +1,13 @@
+#[path = "../native/src/backlight.rs"]
+mod backlight;
 mod controller;
 mod model;
 mod morph;
+#[path = "../native/src/mpris.rs"]
+mod mpris;
+#[allow(dead_code)]
+#[path = "../native/src/pulse.rs"]
+mod pulse;
 mod services;
 mod shelf;
 mod surface;

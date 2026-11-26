@@ -201,18 +201,42 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     temp.persist(path)?;
     Ok(())
 }
+pub(crate) fn matches_process(pid: i32, name: &str) -> bool {
+    let Ok(status) = fs::read_to_string(format!("/proc/{pid}/status")) else {
+        return false;
+    };
+    let mut named = false;
+    let mut live = false;
+    let mut owned = false;
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("Name:") {
+            named = value.trim() == name;
+        } else if let Some(value) = line.strip_prefix("State:") {
+            live = !value.trim_start().starts_with(['Z', 'X', 'x']);
+        } else if let Some(value) = line.strip_prefix("Uid:") {
+            owned = value
+                .split_whitespace()
+                .nth(1)
+                .and_then(|uid| uid.parse().ok())
+                == Some(uid());
+            break;
+        }
+    }
+    named && live && owned
+}
+pub(crate) fn named_processes(name: &str) -> impl Iterator<Item = i32> {
+    fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+        .filter(move |pid| matches_process(*pid, name))
+}
 pub fn signal_waybar(offset: i32) -> Result<()> {
     let signal = libc::SIGRTMIN() + offset;
-    for entry in fs::read_dir("/proc")?.flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
-            continue;
-        };
-        if entry.metadata().is_ok_and(|m| m.uid() == uid())
-            && fs::read_to_string(entry.path().join("comm")).is_ok_and(|s| s.trim() == "waybar")
-        {
-            unsafe {
-                libc::kill(pid, signal);
-            }
+    for pid in named_processes("waybar") {
+        unsafe {
+            libc::kill(pid, signal);
         }
     }
     Ok(())

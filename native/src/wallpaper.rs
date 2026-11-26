@@ -13,6 +13,7 @@ use image::{
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs,
     io::Cursor,
     num::NonZeroU8,
@@ -105,7 +106,7 @@ fn decode(path: &Path) -> Result<DynamicImage> {
     image.apply_orientation(orientation);
     Ok(image)
 }
-fn thumbnail(path: &Path, cache: &Path) -> Result<PathBuf> {
+fn thumbnail_name(path: &Path) -> Result<String> {
     let metadata = fs::metadata(path)?;
     let modified = metadata
         .modified()?
@@ -116,7 +117,35 @@ fn thumbnail(path: &Path, cache: &Path) -> Result<PathBuf> {
     hash.update([0]);
     hash.update(modified.as_nanos().to_ne_bytes());
     hash.update(metadata.len().to_ne_bytes());
-    let destination = cache.join(format!("{:x}.png", hash.finalize()));
+    Ok(format!("{:x}.png", hash.finalize()))
+}
+fn prune_thumbnails(cache: &Path, images: &[PathBuf]) -> Result<()> {
+    let keep: HashSet<_> = images
+        .iter()
+        .filter_map(|path| thumbnail_name(path).ok())
+        .collect();
+    let entries = match fs::read_dir(cache) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let cached = name.strip_suffix(".png").is_some_and(|hash| {
+            hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        });
+        if cached && !keep.contains(name) && entry.file_type()?.is_file() {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+fn thumbnail(path: &Path, cache: &Path) -> Result<PathBuf> {
+    let destination = cache.join(thumbnail_name(path)?);
     if destination.metadata().is_ok_and(|m| m.len() > 0) {
         return Ok(destination);
     }
@@ -473,11 +502,15 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
                 .iter()
                 .map(|path| (label(path.strip_prefix(&dir).unwrap_or(path)), path.clone()))
                 .collect();
-            let Some(index) = crate::dialog::images_lazy("Wallpaper", &items, move |path| {
-                thumbnail(path, &cache).ok()
+            let thumbnails = cache.clone();
+            let picked = crate::dialog::images_lazy("Wallpaper", &items, move |path| {
+                thumbnail(path, &thumbnails).ok()
             })
-            .await?
-            else {
+            .await;
+            if let Err(error) = prune_thumbnails(&cache, &images) {
+                eprintln!("Wallpaper thumbnail cleanup failed: {error}");
+            }
+            let Some(index) = picked? else {
                 return Ok(());
             };
             let image = images
@@ -562,7 +595,12 @@ mod tests {
         assert_eq!(image::image_dimensions(&first).unwrap(), (256, 128));
         assert_eq!(thumbnail(&path, &cache).unwrap(), first);
         DynamicImage::new_rgb8(32, 64).save(&path).unwrap();
-        assert_ne!(thumbnail(&path, &cache).unwrap(), first);
+        let second = thumbnail(&path, &cache).unwrap();
+        assert_ne!(second, first);
+        fs::write(cache.join("unrelated.png"), b"kept").unwrap();
+        prune_thumbnails(&cache, std::slice::from_ref(&path)).unwrap();
+        assert!(!first.exists() && second.exists());
+        assert!(cache.join("unrelated.png").exists());
     }
     #[test]
     fn pixel_order_matches_daemon_formats() {

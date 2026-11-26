@@ -137,6 +137,12 @@ fn label(text: &str, class: &str) -> gtk::Label {
     }
     widget
 }
+fn shelf_preview(texture: &gdk::Texture) -> gtk::Picture {
+    let picture = gtk::Picture::for_paintable(texture);
+    picture.set_content_fit(gtk::ContentFit::ScaleDown);
+    picture.set_size_request(52, 38);
+    picture
+}
 fn button(icon: &str, name: &str) -> gtk::Button {
     let widget = gtk::Button::from_icon_name(icon);
     widget.set_focus_on_click(false);
@@ -1049,19 +1055,25 @@ impl View {
             item.set_tooltip_text(Some(&name.to_string_lossy()));
             let image = gtk::Image::from_gicon(&icon);
             image.set_size_request(52, 38);
-            item.append(&image);
-            if content_type.starts_with("image/") {
+            if let Some(Some(preview)) = file.thumbnail.get() {
+                item.append(&shelf_preview(preview));
+            } else {
+                item.append(&image);
+            }
+            if content_type.starts_with("image/") && file.thumbnail.get().is_none() {
                 let path = gio::File::for_path(file.path());
+                let file = Rc::downgrade(file);
                 let image = image.downgrade();
                 glib::spawn_future_local(async move {
-                    if let Some(preview) = thumbnail(path).await
+                    let preview = thumbnail(path).await.map(|texture| texture.upcast());
+                    let Some(file) = file.upgrade() else {
+                        return;
+                    };
+                    if let Some(preview) = file.thumbnail.get_or_init(|| preview)
                         && let Some(image) = image.upgrade()
                         && let Some(item) = image.parent().and_downcast::<gtk::Box>()
                     {
-                        let picture = gtk::Picture::for_paintable(&preview);
-                        picture.set_content_fit(gtk::ContentFit::ScaleDown);
-                        picture.set_size_request(52, 38);
-                        item.prepend(&picture);
+                        item.prepend(&shelf_preview(preview));
                         item.remove(&image);
                     }
                 });
@@ -1124,7 +1136,7 @@ impl View {
         if let Some(source) = self.open_source.take() {
             source.remove();
         }
-        self.state.set(state);
+        let was_hidden = self.state.replace(state) == State::Hidden;
         self.shelf.set_visible(state == State::Shelf);
         self.header.set_visible(state != State::Shelf);
         self.body.set_visible(state == State::Open);
@@ -1147,6 +1159,12 @@ impl View {
         }
         self.retarget();
         self.sync_geometry();
+        self.refresh_media_wave();
+        if was_hidden != (state == State::Hidden)
+            && let Some(shared) = self.shared.upgrade()
+        {
+            shared.sync_clocks();
+        }
     }
     fn update_keyboard(&self) {
         if self.state.get() != State::Open {
@@ -1250,13 +1268,18 @@ impl View {
             tick.remove();
         }
         let start = glib::monotonic_time();
+        let frames = Cell::new(0);
         let weak = Rc::downgrade(self);
         *self.geometry_tick.borrow_mut() = Some(self.window.add_tick_callback(move |_, clock| {
             let Some(this) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
             this.update_regions();
-            if clock.frame_time() - start >= 200_000 {
+            frames.set(frames.get() + 1);
+            let settled = frames.get() >= 2
+                && !this.morph.animating()
+                && this.flow.reveals_child() == this.flow.is_child_revealed();
+            if settled || clock.frame_time() - start >= 200_000 {
                 this.geometry_tick.take();
                 glib::ControlFlow::Break
             } else {
@@ -1454,8 +1477,9 @@ impl View {
         self.sync_geometry();
     }
     fn refresh_media_wave(self: &Rc<Self>) {
-        let animate =
-            self.header_wave.is_visible() && self.window.settings().is_gtk_enable_animations();
+        let animate = self.state.get() != State::Hidden
+            && self.header_wave.is_visible()
+            && self.window.settings().is_gtk_enable_animations();
         if !animate {
             if let Some(tick) = self.wave_tick.take() {
                 tick.remove();

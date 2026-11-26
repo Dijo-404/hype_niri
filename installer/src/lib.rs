@@ -36,6 +36,13 @@ pub trait Runner {
     fn output(&self, program: &str, args: &[&str]) -> Result<CommandOutput>;
     fn run(&self, program: &str, args: &[&str]) -> Result<()>;
     fn confirm(&self, prompt: &str) -> Result<bool>;
+    fn confirm_explicit(&self, prompt: &str) -> Result<bool> {
+        let answer = self.input(&format!("{prompt} [y/N] "))?;
+        Ok(matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "y" | "yes"
+        ))
+    }
     fn input(&self, prompt: &str) -> Result<String>;
     fn input_or_default(&self, prompt: &str, _default: &str) -> Result<String> {
         self.input(prompt)
@@ -234,6 +241,9 @@ impl Installer {
     pub fn confirm(&self, prompt: &str) -> Result<bool> {
         self.runner.confirm(prompt)
     }
+    pub fn confirm_explicit(&self, prompt: &str) -> Result<bool> {
+        self.runner.confirm_explicit(prompt)
+    }
     pub fn command(&self, program: &str, args: &[&str]) -> Result<()> {
         self.runner.run(program, args)
     }
@@ -291,5 +301,29 @@ mod tests {
             }
             .success()
         );
+    }
+    #[test]
+    fn explicit_confirm_accepts_only_yes() {
+        struct Answer(&'static str);
+        impl Runner for Answer {
+            fn output(&self, _: &str, _: &[&str]) -> Result<CommandOutput> {
+                unreachable!()
+            }
+            fn run(&self, _: &str, _: &[&str]) -> Result<()> {
+                unreachable!()
+            }
+            fn confirm(&self, _: &str) -> Result<bool> {
+                Ok(true)
+            }
+            fn input(&self, _: &str) -> Result<String> {
+                Ok(self.0.into())
+            }
+            fn available(&self, _: &str) -> bool {
+                false
+            }
+        }
+        for (answer, accepted) in [(" YES ", true), ("y", true), ("", false), ("n", false)] {
+            assert_eq!(Answer(answer).confirm_explicit("Go?").unwrap(), accepted);
+        }
     }
 }

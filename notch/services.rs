@@ -1,18 +1,11 @@
+use crate::pulse::Pulse;
 use gtk::{gio, glib, prelude::*};
-use libpulse_binding::{
-    callbacks::ListResult,
-    context::{Context, FlagSet, State},
-    mainloop::standard::Mainloop,
-    operation::{Operation, State as OperationState},
-    time::MicroSeconds,
-    volume::Volume,
-};
+use libpulse_binding::volume::Volume;
 use std::{
-    cell::{Cell, RefCell},
-    fs,
+    cell::RefCell,
     io::{BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
-    path::{Path, PathBuf},
+    path::Path,
     rc::Rc,
     sync::mpsc,
     time::{Duration, Instant},
@@ -22,14 +15,14 @@ pub type Result<T> = std::result::Result<T, String>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Backlight {
-    pub name: String,
-    pub maximum: u32,
+    pub light: crate::backlight::Backlight,
     pub percent: f64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     #[test]
     fn backlight_ignores_missing_zero_and_malformed_devices() {
         let root = std::env::temp_dir().join(format!("hype-backlight-{}", std::process::id()));
@@ -44,7 +37,7 @@ mod tests {
             fs::write(root.join(name).join("brightness"), current).unwrap();
         }
         let light = read_backlight(&root).unwrap();
-        assert_eq!(light.name, "panel");
+        assert_eq!(light.light.name, "panel");
         assert_eq!(light.percent, 52.0);
         assert_eq!(brightness_value(0.0, 400), 4);
         assert_eq!(brightness_value(52.0, 400), 208);
@@ -84,54 +77,15 @@ pub fn brightness_value(percent: f64, maximum: u32) -> u32 {
         .clamp(1, maximum.max(1))
 }
 pub fn read_backlight(root: &Path) -> Result<Backlight> {
-    fs::read_dir(root)
-        .map_err(|e| e.to_string())?
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            let maximum = fs::read_to_string(path.join("max_brightness"))
-                .ok()?
-                .trim()
-                .parse::<u32>()
-                .ok()?;
-            let current = fs::read_to_string(path.join("brightness"))
-                .ok()?
-                .trim()
-                .parse::<u32>()
-                .ok()?;
-            (maximum > 0).then(|| Backlight {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                maximum,
-                percent: (f64::from(current) * 100.0 / f64::from(maximum)).clamp(1.0, 100.0),
-            })
-        })
-        .max_by_key(|device| device.maximum)
-        .ok_or_else(|| "No backlight device".into())
+    let light = crate::backlight::find(root).ok_or("No backlight device")?;
+    let percent = (f64::from(light.current) * 100.0 / f64::from(light.maximum)).clamp(1.0, 100.0);
+    Ok(Backlight { light, percent })
 }
 pub async fn set_brightness(device: &Backlight, percent: f64) -> Result<()> {
-    let value = brightness_value(percent, device.maximum);
-    let path = PathBuf::from("/sys/class/backlight")
-        .join(&device.name)
-        .join("brightness");
-    if fs::write(path, value.to_string()).is_ok() {
-        return Ok(());
-    }
-    let bus = gio::bus_get_future(gio::BusType::System)
+    let value = brightness_value(percent, device.light.maximum);
+    crate::backlight::write(&device.light, value)
         .await
-        .map_err(|e| e.to_string())?;
-    bus.call_future(
-        Some("org.freedesktop.login1"),
-        "/org/freedesktop/login1/session/auto",
-        "org.freedesktop.login1.Session",
-        "SetBrightness",
-        Some(&("backlight", device.name.as_str(), value).to_variant()),
-        None,
-        gio::DBusCallFlags::NONE,
-        3000,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 pub fn output_name(reply: &str) -> Result<Option<String>> {
     let data: serde_json::Value = serde_json::from_str(reply).map_err(|e| e.to_string())?;
@@ -170,26 +124,27 @@ pub fn focused_output() -> Result<Option<String>> {
         .map_err(|e| e.to_string())?;
     output_name(&reply)
 }
-pub fn weather() -> Result<crate::model::Weather> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
+const WEATHER_URL: &str = "https://wttr.in/?format=%C|%t|%f|%h|%l";
+
+pub async fn weather() -> Result<crate::model::Weather> {
+    let process = gio::Subprocess::newv(
+        &["curl", "-fsS", "--max-time", "15", WEATHER_URL].map(std::ffi::OsStr::new),
+        gio::SubprocessFlags::STDOUT_PIPE | gio::SubprocessFlags::STDERR_PIPE,
+    )
+    .map_err(|e| e.to_string())?;
+    let (stdout, stderr) = process
+        .communicate_utf8_future(None)
+        .await
         .map_err(|e| e.to_string())?;
-    let response = client
-        .get("https://wttr.in/?format=%C|%t|%f|%h|%l")
-        .send()
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| e.to_string())?;
-    let mut text = String::new();
-    response
-        .take(16384)
-        .read_to_string(&mut text)
-        .map_err(|e| e.to_string())?;
-    crate::model::Weather::parse(&text).ok_or_else(|| "Invalid weather response".into())
+    if !process.is_successful() {
+        return Err(stderr.map_or_else(|| "Weather request failed".into(), |e| e.trim().into()));
+    }
+    let text = stdout.unwrap_or_default();
+    let text = &text[..text.floor_char_boundary(16384)];
+    crate::model::Weather::parse(text).ok_or_else(|| "Invalid weather response".into())
 }
 
 const AUDIO_TIMEOUT: Duration = Duration::from_secs(3);
-const DEFAULT_SINK: &str = "@DEFAULT_SINK@";
 
 #[derive(Clone, Default)]
 pub struct Audio(Rc<RefCell<Option<mpsc::Sender<VolumeRequest>>>>);
@@ -225,7 +180,7 @@ impl Audio {
                 let (sender, requests) = mpsc::channel();
                 if let Err(error) = std::thread::Builder::new()
                     .name("notch-audio".into())
-                    .spawn(move || PulseAudio::serve(requests))
+                    .spawn(move || serve(requests))
                 {
                     request.resolve(Err(format!("Could not start audio worker: {error}")));
                     return;
@@ -240,131 +195,47 @@ impl Audio {
     }
 }
 
-struct PulseAudio {
-    context: Context,
-    mainloop: Mainloop,
-}
-
-impl PulseAudio {
-    fn serve(requests: mpsc::Receiver<VolumeRequest>) {
-        let mut connection = None;
-        for mut request in requests {
-            let deadline = Instant::now() + AUDIO_TIMEOUT;
-            if connection.as_mut().is_some_and(|audio: &mut Self| {
-                // Process any disconnect that arrived while the worker was idle.
-                !audio.mainloop.iterate(false).is_success()
-                    || audio.context.get_state() != State::Ready
-            }) {
-                connection = None;
+fn serve(requests: mpsc::Receiver<VolumeRequest>) {
+    let mut connection: Option<Pulse> = None;
+    for mut request in requests {
+        let deadline = Instant::now() + AUDIO_TIMEOUT;
+        // Process any disconnect that arrived while the worker was idle.
+        if connection.as_mut().is_some_and(|pulse| !pulse.alive()) {
+            connection = None;
+        }
+        let pulse = match connection.as_mut() {
+            Some(pulse) => {
+                pulse.deadline = deadline;
+                pulse
             }
-            if connection.is_none() {
-                match Self::connect(deadline) {
-                    Ok(audio) => connection = Some(audio),
-                    Err(error) => {
-                        request.resolve(Err(error));
-                        continue;
-                    }
+            None => match Pulse::connect("Niri Notch", deadline) {
+                Ok(pulse) => connection.insert(pulse),
+                Err(error) => {
+                    request.resolve(Err(error.to_string()));
+                    continue;
                 }
-            }
-            let result = connection.as_mut().unwrap().volume(request.set, deadline);
-            if result.is_err() {
-                connection = None;
-            }
-            request.resolve(result);
-        }
-    }
-
-    fn connect(deadline: Instant) -> Result<Self> {
-        let mainloop = Mainloop::new().ok_or("Audio mainloop unavailable")?;
-        let context = Context::new(&mainloop, "Niri Notch").ok_or("Audio context unavailable")?;
-        let mut audio = Self { context, mainloop };
-        audio
-            .context
-            .connect(None, FlagSet::NOAUTOSPAWN, None)
-            .map_err(Self::connection_error)?;
-        while audio.context.get_state() != State::Ready {
-            audio.pump(deadline)?;
-        }
-        Ok(audio)
-    }
-
-    fn connection_error(error: libpulse_binding::error::PAErr) -> String {
-        error
-            .to_string()
-            .unwrap_or_else(|| "Audio connection failed".into())
-    }
-
-    fn pump(&mut self, deadline: Instant) -> Result<()> {
-        if matches!(self.context.get_state(), State::Failed | State::Terminated) {
-            return Err("Audio service unavailable".into());
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("Audio request timed out".into());
-        }
-        self.mainloop
-            .prepare(Some(MicroSeconds(remaining.as_micros() as u64)))
-            .and_then(|()| self.mainloop.poll())
-            .and_then(|_| self.mainloop.dispatch())
-            .map_err(Self::connection_error)?;
-        Ok(())
-    }
-
-    fn wait<T: ?Sized>(&mut self, mut operation: Operation<T>, deadline: Instant) -> Result<()> {
-        while operation.get_state() == OperationState::Running {
-            if let Err(error) = self.pump(deadline) {
-                operation.cancel();
-                return Err(error);
-            }
-        }
-        if operation.get_state() != OperationState::Done {
-            return Err("Audio request cancelled".into());
-        }
-        Ok(())
-    }
-
-    fn volume(&mut self, set: Option<f64>, deadline: Instant) -> Result<f64> {
-        let channels = Rc::new(Cell::new(None));
-        let result = channels.clone();
-        let operation =
-            self.context
-                .introspect()
-                .get_sink_info_by_name(DEFAULT_SINK, move |info| {
-                    if let ListResult::Item(info) = info {
-                        result.set(Some(info.volume));
-                    }
-                });
-        self.wait(operation, deadline)?;
-        let mut channels = channels.get().ok_or("Default audio sink unavailable")?;
-        let Some(value) = set else {
-            let percent = f64::from(channels.max().0) / f64::from(Volume::NORMAL.0) * 100.0;
-            return Ok(percent.clamp(0.0, 100.0));
+            },
         };
-        let percent = value.clamp(0.0, 100.0);
-        channels.scale(Volume(
-            (percent / 100.0 * f64::from(Volume::NORMAL.0)).round() as u32,
-        ));
-        let success = Rc::new(Cell::new(false));
-        let result = success.clone();
-        let operation = self.context.introspect().set_sink_volume_by_name(
-            DEFAULT_SINK,
-            &channels,
-            Some(Box::new(move |ok| result.set(ok))),
-        );
-        self.wait(operation, deadline)?;
-        if !success.get() {
-            return Err("Could not change volume".into());
+        let result = volume(pulse, request.set).map_err(|e| e.to_string());
+        if result.is_err() {
+            connection = None;
         }
-        Ok(percent)
+        request.resolve(result);
     }
 }
 
-impl Drop for PulseAudio {
-    fn drop(&mut self) {
-        if self.context.get_state().is_good() {
-            self.context.disconnect();
-        }
-    }
+fn volume(pulse: &mut Pulse, set: Option<f64>) -> std::io::Result<f64> {
+    let mut sink = pulse.read(false)?;
+    let Some(value) = set else {
+        let percent = f64::from(sink.channels.max().0) / f64::from(Volume::NORMAL.0) * 100.0;
+        return Ok(percent.clamp(0.0, 100.0));
+    };
+    let percent = value.clamp(0.0, 100.0);
+    sink.channels.scale(Volume(
+        (percent / 100.0 * f64::from(Volume::NORMAL.0)).round() as u32,
+    ));
+    pulse.set_sink_volume(sink.index, &sink.channels)?;
+    Ok(percent)
 }
 
 #[derive(Clone, Debug, Default)]

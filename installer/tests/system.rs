@@ -111,6 +111,10 @@ impl Runner for Fake {
         Ok(true)
     }
 
+    fn confirm_explicit(&self, _: &str) -> Result<bool> {
+        Ok(true)
+    }
+
     fn input(&self, _: &str) -> Result<String> {
         Ok(self.calls.borrow().answer.clone())
     }

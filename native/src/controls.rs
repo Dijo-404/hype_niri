@@ -1,21 +1,22 @@
 use crate::{Result, bus, dialog, err, notify, runtime};
 use gtk::{gio, glib, prelude::*};
-use libpulse_binding::{
-    callbacks::ListResult,
-    context::{Context, FlagSet, State},
-    mainloop::standard::{IterateResult, Mainloop},
-    operation::{Operation, State as OperationState},
-    volume::{ChannelVolumes, Volume},
-};
+use libpulse_binding::volume::Volume;
+use pulse::{Device, Pulse};
 use serde_json::json;
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+#[path = "backlight.rs"]
+pub mod backlight;
+#[path = "pulse.rs"]
+pub mod pulse;
 
 const UPOWER: &str = "org.freedesktop.UPower";
 const UPOWER_PATH: &str = "/org/freedesktop/UPower";
@@ -24,40 +25,6 @@ const DEVICE: &str = "org.freedesktop.UPower.Device";
 const PROFILES: &str = "org.freedesktop.UPower.PowerProfiles";
 const PROFILES_PATH: &str = "/org/freedesktop/UPower/PowerProfiles";
 const PROFILE_NAMES: [&str; 3] = ["power-saver", "balanced", "performance"];
-
-#[derive(Clone, Debug)]
-struct Backlight {
-    name: String,
-    path: PathBuf,
-    current: u32,
-    maximum: u32,
-}
-
-fn backlight(root: &Path) -> Option<Backlight> {
-    fs::read_dir(root)
-        .ok()?
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            let maximum = fs::read_to_string(path.join("max_brightness"))
-                .ok()?
-                .trim()
-                .parse::<u32>()
-                .ok()?;
-            let current = fs::read_to_string(path.join("brightness"))
-                .ok()?
-                .trim()
-                .parse::<u32>()
-                .ok()?;
-            (maximum > 0 && current <= maximum).then(|| Backlight {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path,
-                current,
-                maximum,
-            })
-        })
-        .max_by_key(|light| light.maximum)
-}
 
 fn brightness_target(current: u32, maximum: u32, up: bool) -> u32 {
     let step = ((u64::from(maximum) + 50) / 100).max(1) as u32;
@@ -79,24 +46,6 @@ fn brightness_ramp(current: u32, target: u32) -> Vec<u32> {
         .collect()
 }
 
-async fn write_brightness(light: &Backlight, value: u32) -> Result<()> {
-    if fs::write(light.path.join("brightness"), value.to_string()).is_ok() {
-        return Ok(());
-    }
-    let connection = bus::system().await?;
-    bus::call(
-        &connection,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1/session/auto",
-        "org.freedesktop.login1.Session",
-        "SetBrightness",
-        Some(&("backlight", light.name.as_str(), value).to_variant()),
-        3000,
-    )
-    .await?;
-    Ok(())
-}
-
 async fn brightness(action: &str) -> Result<()> {
     if !matches!(action, "up" | "down") {
         return Err(err("Usage: hype-control brightness {up|down}"));
@@ -107,13 +56,13 @@ async fn brightness(action: &str) -> Result<()> {
     let root = std::env::var_os("BACKLIGHT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| "/sys/class/backlight".into());
-    let Some(light) = backlight(&root) else {
+    let Some(light) = backlight::find(&root) else {
         return Ok(());
     };
     let target = brightness_target(light.current, light.maximum, action == "up");
     let ramp = brightness_ramp(light.current, target);
     for (index, value) in ramp.iter().enumerate() {
-        write_brightness(&light, *value).await?;
+        backlight::write(&light, *value).await?;
         if index + 1 < ramp.len() {
             glib::timeout_future(Duration::from_millis(5)).await;
         }
@@ -142,158 +91,38 @@ async fn brightness(action: &str) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
-struct AudioState {
-    index: u32,
-    channels: ChannelVolumes,
-    muted: bool,
-}
-
-struct Audio {
-    context: Context,
-    mainloop: Mainloop,
-    deadline: Instant,
-}
-
-impl Audio {
-    fn connect() -> Result<Self> {
-        let mainloop = Mainloop::new().ok_or_else(|| err("Audio mainloop unavailable"))?;
-        let mut context = Context::new(&mainloop, "Hype desktop controls")
-            .ok_or_else(|| err("Audio context unavailable"))?;
-        context
-            .connect(None, FlagSet::NOAUTOSPAWN, None)
-            .map_err(|e| {
-                err(e
-                    .to_string()
-                    .unwrap_or_else(|| "Audio connection failed".into()))
-            })?;
-        let mut audio = Self {
-            context,
-            mainloop,
-            deadline: Instant::now() + Duration::from_secs(3),
-        };
-        while audio.context.get_state() != State::Ready {
-            audio.pump()?;
-        }
-        Ok(audio)
+fn change_audio(mic: bool, action: &str) -> Result<Device> {
+    let mut pulse = Pulse::connect(
+        "Hype desktop controls",
+        Instant::now() + Duration::from_secs(3),
+    )?;
+    let mut state = pulse.read(mic)?;
+    if action == "mute" {
+        pulse.set_mute(mic, state.index, !state.muted)?;
+    } else if !mic && matches!(action, "up" | "down") {
+        let target = volume_target(state.channels.max().0, action == "up");
+        state.channels.scale(Volume(target));
+        pulse.set_sink_volume(state.index, &state.channels)?;
+    } else {
+        return Ok(state);
     }
-    fn pump(&mut self) -> Result<()> {
-        if Instant::now() >= self.deadline {
-            return Err(err("Audio request timed out"));
-        }
-        if matches!(self.context.get_state(), State::Failed | State::Terminated) {
-            return Err(err("Audio service unavailable"));
-        }
-        if matches!(
-            self.mainloop.iterate(false),
-            IterateResult::Err(_) | IterateResult::Quit(_)
-        ) {
-            return Err(err("Audio connection failed"));
-        }
-        std::thread::sleep(Duration::from_millis(2));
-        Ok(())
-    }
-    fn wait<T: ?Sized>(&mut self, mut operation: Operation<T>) -> Result<()> {
-        while operation.get_state() == OperationState::Running {
-            if let Err(error) = self.pump() {
-                operation.cancel();
-                return Err(error);
-            }
-        }
-        if operation.get_state() != OperationState::Done {
-            return Err(err("Audio request cancelled"));
-        }
-        Ok(())
-    }
-    fn read(&mut self, mic: bool) -> Result<AudioState> {
-        let value = Rc::new(RefCell::new(None));
-        let result = value.clone();
-        if mic {
-            let operation = self.context.introspect().get_source_info_by_name(
-                "@DEFAULT_SOURCE@",
-                move |info| {
-                    if let ListResult::Item(info) = info {
-                        *result.borrow_mut() = Some(AudioState {
-                            index: info.index,
-                            channels: info.volume,
-                            muted: info.mute,
-                        });
-                    }
-                },
-            );
-            self.wait(operation)?;
-        } else {
-            let operation =
-                self.context
-                    .introspect()
-                    .get_sink_info_by_name("@DEFAULT_SINK@", move |info| {
-                        if let ListResult::Item(info) = info {
-                            *result.borrow_mut() = Some(AudioState {
-                                index: info.index,
-                                channels: info.volume,
-                                muted: info.mute,
-                            });
-                        }
-                    });
-            self.wait(operation)?;
-        }
-        let state = *value.borrow();
-        state.ok_or_else(|| err("Default audio device unavailable"))
-    }
-    fn change(&mut self, mic: bool, action: &str) -> Result<AudioState> {
-        let mut state = self.read(mic)?;
-        let success = Rc::new(Cell::new(false));
-        let result = success.clone();
-        let callback: Option<Box<dyn FnMut(bool)>> = Some(Box::new(move |ok| result.set(ok)));
-        let operation = if action == "mute" {
-            if mic {
-                self.context.introspect().set_source_mute_by_index(
-                    state.index,
-                    !state.muted,
-                    callback,
-                )
-            } else {
-                self.context.introspect().set_sink_mute_by_index(
-                    state.index,
-                    !state.muted,
-                    callback,
-                )
-            }
-        } else if !mic && matches!(action, "up" | "down") {
-            let target = volume_target(state.channels.max().0, action == "up");
-            state.channels.scale(Volume(target));
-            self.context.introspect().set_sink_volume_by_index(
-                state.index,
-                &state.channels,
-                callback,
-            )
-        } else {
-            return Ok(state);
-        };
-        self.wait(operation)?;
-        if !success.get() {
-            return Err(err("Could not change audio device"));
-        }
-        self.read(mic)
-    }
-}
-
-impl Drop for Audio {
-    fn drop(&mut self) {
-        self.context.disconnect();
-    }
+    Ok(pulse.read(mic)?)
 }
 
 fn volume_target(current: u32, up: bool) -> u32 {
     let step = (f64::from(Volume::NORMAL.0) / 100.0).round() as u32;
     if up {
-        current.saturating_add(step).min(Volume::NORMAL.0)
+        if current >= Volume::NORMAL.0 {
+            current
+        } else {
+            (current + step).min(Volume::NORMAL.0)
+        }
     } else {
         current.saturating_sub(step)
     }
 }
 
-fn audio_notification(mic: bool, state: &AudioState) -> (String, Option<i32>) {
+fn audio_notification(mic: bool, state: &Device) -> (String, Option<i32>) {
     if mic {
         return (
             if state.muted {
@@ -330,7 +159,7 @@ async fn audio(mic: bool, action: &str) -> Result<()> {
     // Wait for the in-flight PulseAudio update so repeated key presses are applied in full.
     let lock = runtime::lock(name, Duration::from_secs(4))?
         .ok_or_else(|| err("Another audio change is still running"))?;
-    let state = match Audio::connect().and_then(|mut audio| audio.change(mic, action)) {
+    let state = match change_audio(mic, action) {
         Ok(state) => state,
         Err(error) => {
             eprintln!("{error}");
@@ -643,7 +472,7 @@ async fn auto_power_profile(action: &str) -> Result<()> {
         return Ok(());
     };
     let connection = bus::system().await?;
-    let dirty = Rc::new(Cell::new(true));
+    let pending = Arc::new(Mutex::new(gio::Cancellable::new()));
     let restarted = Rc::new(Cell::new(false));
     let mut subscriptions = Vec::new();
     for (service, path, interface) in [
@@ -651,7 +480,7 @@ async fn auto_power_profile(action: &str) -> Result<()> {
         (UPOWER, BATTERY, DEVICE),
         (PROFILES, PROFILES_PATH, PROFILES),
     ] {
-        let dirty = dirty.clone();
+        let pending = pending.clone();
         subscriptions.push(connection.subscribe_to_signal(
             Some(service),
             Some("org.freedesktop.DBus.Properties"),
@@ -661,13 +490,13 @@ async fn auto_power_profile(action: &str) -> Result<()> {
             gio::DBusSignalFlags::NONE,
             move |signal| {
                 if relevant_properties(signal.parameters, interface) {
-                    dirty.set(true);
+                    pending.lock().unwrap().cancel();
                 }
             },
         ));
     }
     for service in [UPOWER, PROFILES] {
-        let dirty = dirty.clone();
+        let pending = pending.clone();
         let restarted = restarted.clone();
         subscriptions.push(connection.subscribe_to_signal(
             Some("org.freedesktop.DBus"),
@@ -678,7 +507,7 @@ async fn auto_power_profile(action: &str) -> Result<()> {
             gio::DBusSignalFlags::NONE,
             move |_| {
                 restarted.set(true);
-                dirty.set(true);
+                pending.lock().unwrap().cancel();
             },
         ));
     }
@@ -693,19 +522,22 @@ async fn auto_power_profile(action: &str) -> Result<()> {
         5000,
     )
     .await?;
+    let disconnected = pending.clone();
+    let handler = connection.connect_closed(move |_, _, _| disconnected.lock().unwrap().cancel());
     let mut policy = AutoPolicy::default();
-    loop {
-        if connection.is_closed() {
-            return Err(err("System D-Bus disconnected"));
+    while !connection.is_closed() {
+        let event = gio::Cancellable::new();
+        *pending.lock().unwrap() = event.clone();
+        if restarted.replace(false) {
+            policy.last_key = None;
         }
-        if dirty.replace(false) {
-            if restarted.replace(false) {
-                policy.last_key = None;
-            }
-            policy.apply(&connection).await;
+        policy.apply(&connection).await;
+        if !connection.is_closed() {
+            event.future().await;
         }
-        glib::timeout_future(Duration::from_millis(100)).await;
     }
+    connection.disconnect(handler);
+    Err(err("System D-Bus disconnected"))
 }
 
 pub async fn run(command: &str, args: &[String]) -> Result<()> {
@@ -724,6 +556,7 @@ pub async fn run(command: &str, args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libpulse_binding::volume::ChannelVolumes;
     fn power(on_battery: bool, percentage: f64) -> PowerState {
         PowerState {
             on_battery: Some(on_battery),
@@ -771,31 +604,18 @@ mod tests {
         );
     }
     #[test]
-    fn backlight_ignores_zero_broken_and_out_of_range_devices() {
-        let root = tempfile::tempdir().unwrap();
-        for (name, maximum, current) in [
-            ("zero", "0", "0"),
-            ("broken", "x", "3"),
-            ("panel", "400", "208"),
-            ("invalid", "1000", "2000"),
-        ] {
-            let dir = root.path().join(name);
-            fs::create_dir(&dir).unwrap();
-            fs::write(dir.join("max_brightness"), maximum).unwrap();
-            fs::write(dir.join("brightness"), current).unwrap();
-        }
-        assert_eq!(backlight(root.path()).unwrap().name, "panel");
-    }
-    #[test]
     fn volume_changes_one_percent_and_preserves_mute_notifications() {
         assert_eq!(volume_target(Volume::NORMAL.0, true), Volume::NORMAL.0);
+        let boosted = Volume::NORMAL.0 * 3 / 2;
+        assert_eq!(volume_target(boosted, true), boosted);
+        assert_eq!(volume_target(Volume::NORMAL.0 - 1, true), Volume::NORMAL.0);
         assert_eq!(volume_target(0, false), 0);
         let mut channels = ChannelVolumes::default();
         channels.set(
             2,
             Volume((f64::from(Volume::NORMAL.0) * 0.65).round() as u32),
         );
-        let mut state = AudioState {
+        let mut state = Device {
             index: 1,
             channels,
             muted: false,

@@ -1,4 +1,4 @@
-//! Native Niri output configuration. Validation uses the compositor's own pinned decoder.
+//! Native Niri output configuration. Validation runs the installed compositor's `niri validate`.
 use crate::{Result, err, ipc, runtime};
 use kdl::KdlDocument;
 use serde::Deserialize;
@@ -7,6 +7,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
+    process::{Command, Stdio},
     time::Duration,
 };
 
@@ -174,11 +175,26 @@ fn upsert(text: &str, id: &str, connector: &str, settings: &[String]) -> Result<
     out.push_str("}\n");
     Ok(out)
 }
-fn validate(path: &Path, text: &str) -> Result<()> {
-    niri_config::Config::parse(path, text)
-        .config
-        .map(|_| ())
-        .map_err(|e| err(format!("Invalid Niri configuration: {e:?}")))
+fn validate(text: &str) -> Result<()> {
+    let stage = tempfile::tempdir()?;
+    let file = stage.path().join("config.kdl");
+    fs::write(&file, text)?;
+    niri_validate(&file)
+}
+fn niri_validate(file: &Path) -> Result<()> {
+    let output = Command::new("niri")
+        .args(["validate", "-c"])
+        .arg(file)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(err(format!(
+        "Invalid Niri configuration: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
 }
 fn reload() -> Result<()> {
     ipc::action(json!({"LoadConfigFile":{"path":null}}))
@@ -273,10 +289,7 @@ fn validate_replacement(root: &Path, target: &Path, replacement: &str) -> Result
         &mut HashSet::new(),
         &mut 0,
     )?;
-    niri_config::Config::load(&staged)
-        .config
-        .map(|_| ())
-        .map_err(|e| err(format!("Invalid Niri configuration: {e:?}")))
+    niri_validate(&staged)
 }
 async fn auto_scale(args: &[String]) -> Result<()> {
     let Some(_guard) = runtime::lock("hype-niri-outputs.lock", Duration::from_secs(5))? else {
@@ -315,7 +328,7 @@ async fn auto_scale(args: &[String]) -> Result<()> {
         }
     }
     if next != old {
-        validate(&path, &next)?;
+        validate(&next)?;
         fs::create_dir_all(path.parent().unwrap())?;
         runtime::atomic_write(&path, next.as_bytes())?;
         if !args.iter().any(|a| a == "--no-reload") {
@@ -428,7 +441,7 @@ async fn refresh() -> Result<()> {
             format!("scale {scale}"),
         ],
     )?;
-    validate(&path, &next)?;
+    validate(&next)?;
     ipc::request(
         json!({"Output":{"output":output.name,"action":{"Mode":{"mode":{"Specific":{"width":mode.width,"height":mode.height,"refresh":mode.refresh_rate as f64/1000.}}}}}}),
     )?;
@@ -544,7 +557,7 @@ mod tests {
             new,
             "output \"laptop\" {\n    scale 2.0\n}\noutput \"Dell Inc. DELL U2723QE ABC123\" {\n    mode \"2560x1440@165\"\n    scale 1.0\n    position x=0 y=0\n}\n"
         );
-        validate(Path::new("outputs.kdl"), &new).unwrap();
+        validate(&new).unwrap();
     }
     #[test]
     fn compact_output_rejected_and_braces_in_strings_preserved() {
@@ -553,18 +566,12 @@ mod tests {
         let text = format!("output {} {{\n    scale 1.5\n}}\n", quote(id));
         let edited = upsert(&text, id, "DP-2", &["mode \"1920x1080@60\"".into()]).unwrap();
         assert!(edited.contains("scale 1.5"));
-        validate(Path::new("outputs.kdl"), &edited).unwrap();
+        validate(&edited).unwrap();
     }
     #[test]
     fn semantic_validation_rejects_unknown_and_invalid_scale() {
-        assert!(
-            validate(
-                Path::new("outputs.kdl"),
-                "output \"DP-1\" {\n scale -1\n}\n"
-            )
-            .is_err()
-        );
-        assert!(validate(Path::new("outputs.kdl"), "made-up-option 1\n").is_err());
+        assert!(validate("output \"DP-1\" {\n scale -1\n}\n").is_err());
+        assert!(validate("made-up-option 1\n").is_err());
     }
     #[test]
     fn opacity_overlay_checks_includes_before_publishing() {

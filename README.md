@@ -93,7 +93,7 @@ Choose **Update packages and Hype Niri** to also refresh `~/hype-niri/source` fr
 
 ### Uninstalling
 
-Log out of Niri and use another session or a TTY. Restore the configurations you want to keep from the `~/.config-backup-*` directory printed by the installer. Remove any Hype Niri files that had no previous version. Review the packages and services you enabled separately. See [Dependencies and services](DEPENDENCIES.md).
+Log out of Niri and use another session or a TTY. Restore the configurations you want to keep from a `~/.config-backup-*` directory. The installer keeps the oldest backup, which holds your configurations from before the first install, and the two newest. Remove any Hype Niri files that had no previous version. Review the packages and services you enabled separately. See [Dependencies and services](DEPENDENCIES.md).
 
 ## Quick start
 
@@ -173,15 +173,15 @@ output "DP-1" {
 
 ### Files it creates
 
-| Path                                             | Contents                                                                                         |
-| :----------------------------------------------- | :----------------------------------------------------------------------------------------------- |
-| `~/.config-backup-*`                             | Copies of existing configurations and shell files that the installer backs up before replacement |
-| `~/.config/niri/outputs.kdl`                     | Saved display configuration                                                                      |
-| `~/.config/hype-niri/optional-groups`            | Selected extras                                                                                  |
-| `~/.config/scripts/`                             | Installed desktop binaries and compatibility links                                               |
-| `~/.local/state/niri/current_wallpaper`          | Symlink to the selected wallpaper by default                                                     |
-| `~/.local/state/hype-niri-clipboard/history.bin` | Private clipboard history by default                                                             |
-| `~/.cache/hype-niri/cargo-target/`               | Reusable Cargo build artifacts                                                                   |
+| Path                                             | Contents                                                                                                                                 |
+| :----------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.config-backup-*`                             | Copies of existing configurations and shell files that the installer backs up before replacement. The oldest and the two newest are kept |
+| `~/.config/niri/outputs.kdl`                     | Saved display configuration                                                                                                              |
+| `~/.config/hype-niri/optional-groups`            | Selected extras                                                                                                                          |
+| `~/.config/scripts/`                             | Installed desktop binaries and compatibility links                                                                                       |
+| `~/.local/state/niri/current_wallpaper`          | Symlink to the selected wallpaper by default                                                                                             |
+| `~/.local/state/hype-niri-clipboard/history.bin` | Private clipboard history by default                                                                                                     |
+| `~/.cache/hype-niri/cargo-target/`               | Reusable Cargo build artifacts                                                                                                           |
 
 ## Privacy and safety
 

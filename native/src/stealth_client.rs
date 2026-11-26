@@ -1,63 +1,21 @@
-use crate::{Result, bus, err, stealth};
-use gtk::{gio, glib, prelude::*};
-use std::{
-    fs,
-    path::Path,
-    time::{Duration, Instant},
-};
-const SERVICE: &str = "org.freedesktop.systemd1";
-const ROOT: &str = "/org/freedesktop/systemd1";
-const MANAGER: &str = "org.freedesktop.systemd1.Manager";
+use crate::{Result, bus, err, runtime, stealth};
+use gtk::{gio, prelude::*};
+use std::{fs, path::Path, time::Duration};
 async fn state(conn: &gio::DBusConnection) -> Result<String> {
-    let reply = bus::call(
-        conn,
-        SERVICE,
-        ROOT,
-        MANAGER,
-        "LoadUnit",
-        Some(&("stealth.service",).to_variant()),
-        5000,
-    )
-    .await?;
-    let (path,) = reply
-        .get::<(glib::variant::ObjectPath,)>()
-        .ok_or_else(|| err("Invalid Stealth unit path"))?;
-    bus::property(
-        conn,
-        SERVICE,
-        path.as_str(),
-        "org.freedesktop.systemd1.Unit",
-        "ActiveState",
-    )
-    .await
+    bus::unit_state(conn, "stealth.service").await
 }
 async fn change(conn: &gio::DBusConnection, start: bool) -> Result<()> {
-    bus::call(
-        conn,
-        SERVICE,
-        ROOT,
-        MANAGER,
-        if start { "StartUnit" } else { "StopUnit" },
-        Some(&("stealth.service", "replace").to_variant()),
-        5000,
-    )
-    .await?;
-    let deadline = Instant::now() + Duration::from_secs(if start { 240 } else { 120 });
-    loop {
-        let status = state(conn).await?;
-        if start && status == "active" || !start && status == "inactive" {
-            return Ok(());
-        }
-        if status == "failed" {
-            return Err(err(
-                "Stealth service failed; inspect its status before retrying",
-            ));
-        }
-        if Instant::now() >= deadline {
-            return Err(err("Stealth service operation timed out"));
-        }
-        glib::timeout_future(Duration::from_millis(200)).await;
+    let timeout = Duration::from_secs(if start { 240 } else { 120 });
+    let status = bus::unit_change(conn, "stealth.service", start, timeout).await?;
+    if status == if start { "active" } else { "inactive" } {
+        return Ok(());
     }
+    if status == "failed" {
+        return Err(err(
+            "Stealth service failed; inspect its status before retrying",
+        ));
+    }
+    Err(err("Stealth service operation timed out"))
 }
 pub async fn root(args: &[String]) -> Result<()> {
     if unsafe { libc::geteuid() } != 0 {
@@ -91,9 +49,9 @@ pub async fn root(args: &[String]) -> Result<()> {
             if state(&connection).await? == "failed" {
                 bus::call(
                     &connection,
-                    SERVICE,
-                    ROOT,
-                    MANAGER,
+                    bus::SYSTEMD,
+                    bus::SYSTEMD_PATH,
+                    bus::SYSTEMD_MANAGER,
                     "ResetFailedUnit",
                     Some(&("stealth.service",).to_variant()),
                     5000,
@@ -127,6 +85,9 @@ pub async fn run(args: &[String]) -> Result<()> {
         .arg(helper)
         .arg(action)
         .status()?;
+    if action != "status" {
+        let _ = runtime::signal_waybar(18);
+    }
     if status.success() {
         Ok(())
     } else {

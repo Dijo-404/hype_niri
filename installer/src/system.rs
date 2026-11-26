@@ -123,7 +123,9 @@ impl Installer {
         self.note(format_args!("System configuration"));
         self.configure_pacman()?;
 
-        if self.selected("login-manager-ly") && self.confirm("Set up ly as display manager?")? {
+        if self.selected("login-manager-ly")
+            && self.confirm_explicit("Set up ly as display manager?")?
+        {
             self.setup_ly()?;
         }
 
@@ -349,7 +351,7 @@ impl Installer {
                     .any(|group| group == "docker")
         }) {
             self.note(format_args!("User {user} is already in docker group"));
-        } else if self.confirm(&format!(
+        } else if self.confirm_explicit(&format!(
             "Add {user} to docker group? This requires logging out and back in."
         ))? {
             match self.command("sudo", &["usermod", "-aG", "docker", user]) {
@@ -462,7 +464,9 @@ impl Installer {
             self.note(format_args!("ufw is unavailable; firewall setup skipped"));
             return Ok(());
         }
-        if !self.confirm("Configure ufw with desktop defaults (deny incoming, allow outgoing)?")? {
+        if !self.confirm_explicit(
+            "Configure ufw with desktop defaults (deny incoming, allow outgoing)?",
+        )? {
             self.note(format_args!(
                 "Firewall setup skipped. You can run 'sudo ufw enable' later."
             ));
@@ -877,6 +881,7 @@ impl Installer {
         }
         for (family, package) in [
             ("JetBrains Mono", "ttf-jetbrains-mono"),
+            ("Symbols Nerd Font", "ttf-nerd-fonts-symbols"),
             ("Roboto", "ttf-roboto"),
             ("Material Design Icons", "ttf-material-design-icons-webfont"),
         ] {

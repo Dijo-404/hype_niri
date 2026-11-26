@@ -26,7 +26,6 @@ kdl = { version = "6", features = ["v1"] }
 qrcode = { version = "0.14", default-features = false }
 libloading = "0.8"
 
-niri-config = { git = "https://github.com/niri-wm/niri.git", rev = "8ed0da44d974c32c6877d2f4630c314da0717ecb" }
 awww-common = { package = "common", git = "https://codeberg.org/LGFae/awww.git", rev = "f66e12a76dbc4c669b2f1375f78bce49f5b19d66" }
 
 [[bin]]

@@ -3,28 +3,12 @@ use crate::{Result, bus, err};
 use gtk::{glib, prelude::*};
 use std::collections::HashMap;
 
+#[path = "mpris.rs"]
+mod mpris;
+
 const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 const PATH: &str = "/org/mpris/MediaPlayer2";
 type Properties = HashMap<String, glib::Variant>;
-
-fn priority(properties: &Properties, method: &str) -> Option<u8> {
-    let boolean = |key| properties.get(key).and_then(|v| v.get::<bool>()) == Some(true);
-    if !boolean("CanControl") {
-        return None;
-    }
-    let status = properties.get("PlaybackStatus").and_then(|v| v.str());
-    let capability = match method {
-        "Next" => "CanGoNext",
-        "Previous" => "CanGoPrevious",
-        _ if status == Some("Playing") => "CanPause",
-        _ => "CanPlay",
-    };
-    boolean(capability).then_some(match status {
-        Some("Playing") => 0,
-        Some("Paused") => 1,
-        _ => 2,
-    })
-}
 
 pub async fn run(args: &[String]) -> Result<()> {
     let method = match args {
@@ -69,7 +53,7 @@ pub async fn run(args: &[String]) -> Result<()> {
             continue;
         };
         if let Some((properties,)) = reply.get::<(Properties,)>()
-            && let Some(rank) = priority(&properties, method)
+            && let Some(rank) = mpris::priority(|key| properties.get(key).cloned(), method)
         {
             candidates.push((rank, name));
         }
