@@ -245,7 +245,40 @@ exit 78
         self.close_master()
         self.assertEqual(process.wait(timeout=5), 1)
 
-    def test_apply_requires_confirmation_and_restores_tty_for_package_prompt(self):
+    def privileged_calls(self):
+        return [
+            call
+            for call in self.calls.read_text().splitlines()
+            if call != "sudo -n -v"
+        ]
+
+    def test_sudo_password_popup_keeps_package_output_in_the_window(self):
+        self.tool(
+            "sudo",
+            """ticket="${HYPE_TEST_CALLS%/*}/sudo-ticket"
+case "$*" in
+    "-n -v")
+        [[ -e $ticket ]] || exit 1 ;;
+    "-S -p [hype-niri password] -v")
+        for attempt in 1 2 3; do
+            printf '[hype-niri password]' >&2
+            IFS= read -r password || exit 1
+            if [[ $password == secret ]]; then
+                /usr/bin/touch -- "$ticket"
+                exit 0
+            fi
+            printf 'Sorry, try again.\\n' >&2
+            printf 'attempt\\n' >> "${HYPE_TEST_CALLS%/*}/attempts"
+        done
+        exit 1 ;;
+    *)
+        [[ -e $ticket ]] || exit 1
+        printf 'sudo %s\\n' "$*" >> "$HYPE_TEST_CALLS"
+        printf 'pacman output line\\n'
+        exit 78 ;;
+esac
+""",
+        )
         process, slave, original = self.start()
         self.expect("Install Hype Niri")
         self.send(b"\r")
@@ -254,20 +287,26 @@ exit 78
         self.expect("Review install")
         self.assertFalse(self.calls.exists())
         self.send(b"\r")
+        self.expect("sudo needs your password.")
+        self.send(b"wrong\r")
+        self.expect("Sorry, try again.")
+        self.send(b"secret\r")
         self.expect("Refresh Arch mirrors")
-        self.expect("Yes in 5s")
         self.send(b"n")
-        self.expect("Native package confirmation")
-        self.assertEqual(termios.tcgetattr(slave), original)
-        self.send(b"terminal answer\r")
+        self.expect("pacman output line")
         self.expect("Install failed")
+        self.assertNotEqual(termios.tcgetattr(slave), original)
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 1)
         self.assertEqual(termios.tcgetattr(slave), original)
+        screen = self.output.decode(errors="ignore")
+        self.assertNotIn("secret", screen)
+        self.assertNotIn("wrong", screen)
         self.assertIn(
-            "sudo pacman -Sy --needed archlinux-keyring [terminal answer]",
+            "sudo -n pacman -Sy --needed --noconfirm archlinux-keyring",
             self.calls.read_text(),
         )
+        self.assertEqual((self.root / "attempts").read_text(), "attempt\n")
 
     def test_system_update_runs_pacman_and_yay_without_desktop_checkout(self):
         self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
@@ -283,12 +322,14 @@ exit 78
         self.assertGreaterEqual(time.monotonic() - start, 4.5)
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 0)
+        self.assertIn("sudo -n -v", self.calls.read_text().splitlines())
         self.assertEqual(
-            self.calls.read_text().splitlines(),
+            self.privileged_calls(),
             [
-                "sudo pacman -Sy --needed archlinux-keyring",
-                "sudo pacman -Syu",
-                "yay -Syu --aur --noconfirm=false --confirm",
+                "sudo -n pacman -Sy --needed --noconfirm archlinux-keyring",
+                "sudo -n pacman -Syu --noconfirm",
+                "yay -Syu --sudoflags -n --aur --noconfirm --answerclean None"
+                " --answerdiff None --answeredit None",
             ],
         )
 
@@ -332,12 +373,20 @@ printf '%s (uid %s)\\n' "$*" "$EUID" >> "$HYPE_TEST_CALLS"
         self.expect("Install failed")
         self.send(b"q")
         self.assertEqual(process.wait(timeout=5), 1)
-        calls = self.calls.read_text().splitlines()
-        self.assertEqual(calls[-5], "sudo pacman -Syu")
-        self.assertEqual(calls[-4], "sudo pacman -S --needed git base-devel")
+        calls = self.privileged_calls()
+        self.assertEqual(calls[-5], "sudo -n pacman -Syu --noconfirm")
+        self.assertEqual(
+            calls[-4], "sudo -n pacman -S --needed --noconfirm git base-devel"
+        )
         self.assertIn("https://aur.archlinux.org/yay-bin.git", calls[-3])
-        self.assertEqual(calls[-2], f"makepkg -si --needed (uid {os.geteuid()})")
-        self.assertEqual(calls[-1], "yay -Syu --aur --noconfirm=false --confirm")
+        self.assertEqual(
+            calls[-2], f"makepkg -si --needed --noconfirm (uid {os.geteuid()})"
+        )
+        self.assertEqual(
+            calls[-1],
+            "yay -Syu --sudoflags -n --aur --noconfirm --answerclean None"
+            " --answerdiff None --answeredit None",
+        )
         self.assertFalse(list(self.root.glob("hype-niri-yay-*")))
 
 

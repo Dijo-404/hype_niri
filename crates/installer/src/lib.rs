@@ -48,6 +48,9 @@ pub trait Runner {
         self.input(prompt)
     }
     fn available(&self, program: &str) -> bool;
+    fn unattended(&self) -> bool {
+        false
+    }
     fn message(&self, message: std::fmt::Arguments<'_>, warning: bool) {
         if warning {
             eprintln!("{message}");

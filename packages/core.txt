@@ -40,6 +40,7 @@ gvfs
 udisks2
 ttf-nerd-fonts-symbols
 ttf-jetbrains-mono
+ttf-jetbrains-mono-nerd
 ttf-roboto
 ttf-material-design-icons-webfont
 noto-fonts

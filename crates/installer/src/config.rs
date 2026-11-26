@@ -57,7 +57,6 @@ const LEGACY_CONTROLS: &[&str] = &[
     "start-tray-applets",
     "start-waybar",
     "stealth-indicator",
-    "warp-indicator",
 ];
 const XDG_USER_DIRS: &[(&str, &str, &str)] = &[
     ("DESKTOP", "desktop", "Desktop"),
@@ -102,7 +101,6 @@ const WAYBAR_COMPATIBILITY: &[&str] = &[
     "stealth-indicator",
     "temperature-control",
     "volume-control",
-    "warp-indicator",
 ];
 
 impl Installer {
@@ -466,9 +464,6 @@ impl Installer {
                     let path = staged.join("config.jsonc");
                     let contents = fs::read_to_string(&path)?;
                     let mut modules = vec!["\"custom/hotspot\"", "\"tray\""];
-                    if self.selected("warp") {
-                        modules.push("\"custom/warp\"");
-                    }
                     if self.selected("stealth") {
                         modules.push("\"image#stealth\"");
                     }
@@ -711,7 +706,12 @@ impl Installer {
         {
             self.note(format_args!("Zsh is already the default shell"));
         } else if self.confirm("Change default shell to zsh?")? {
-            self.command("chsh", &["-s", "/usr/bin/zsh"])?;
+            let user = self.output("id", &["-un"])?;
+            let name = user.stdout.trim();
+            if !user.success() || name.is_empty() {
+                return Err(error("Could not determine the current user for chsh"));
+            }
+            self.command("sudo", &["chsh", "-s", "/usr/bin/zsh", name])?;
             self.note(format_args!(
                 "Default shell changed to zsh. Log out and back in for this to take effect."
             ));

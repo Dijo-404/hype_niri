@@ -27,7 +27,7 @@ cd hype_niri &&
 
 Run the installer as your regular user with sudo access. Installer confirmations default to Yes after five seconds. Press Enter to accept or `n` to decline. For line prompts, submit `n` with Enter. Declining a required configuration backup stops the installation.
 
-In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Press Enter to review and start the countdown. Use Page Up and Page Down to browse activity. The terminal switches to the native prompt when tools such as `sudo`, `pacman`, or `yay` need input.
+In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Press Enter to review and start the countdown. Use Page Up and Page Down to browse activity. The installer asks for your sudo password in a popup, then `pacman`, `yay` and `makepkg` run in the window with their default answers. With `--plain`, they prompt in the terminal.
 
 Run `~/bin/hype update` from any directory to choose a package update or a package and desktop update. Add `--plain` for line prompts. Hype Niri's Zsh configuration adds `~/bin` to `PATH`, which lets you run `hype update`. Run `./install.sh` from a checkout to open the action menu.
 
@@ -35,7 +35,7 @@ Run `~/bin/hype update` from any directory to choose a package update or a packa
 > Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.
 
 > [!NOTE]
-> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and the package install can prompt for sudo.
+> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and installs the package with sudo.
 
 ---
 
@@ -311,7 +311,7 @@ warp-cli --accept-tos status
 
 Disconnect anytime with `warp-cli disconnect`. Inspect logs with `journalctl -u warp-svc`.
 
-When `warp` is selected, Waybar uses WARP's native tray icon while its desktop app is running. Without the desktop app, a lightweight globe appears beside the network and Bluetooth icons while `warp-svc.service` is running. Orange means connected; gray means the daemon is running but disconnected or its status is unavailable. Hover for the connection status. The fallback indicator updates every ten seconds and disappears when the daemon stops. It also appears in DNS-only mode; the icon does not imply that a VPN tunnel is active.
+When `warp` is selected, Waybar shows WARP's native tray icon while its desktop app is running.
 
 #### Stealth Tor routing
 
@@ -359,7 +359,7 @@ If your installed `hype` predates updater self-refresh, run `./install.sh --setu
 
 Installations made before the repository layout change must refresh the `hype` command once before a desktop update. Run `curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli`, then `hype update`. Package-only updates are not affected.
 
-Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
+Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Enter your sudo password in the popup; `pacman` and `yay` then run in the installer window with their default answers.
 
 Choose **Update packages and Hype Niri** to refresh the GitHub `main` checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations and validates staged Niri files before publishing them. A completed desktop update also refreshes the installed `hype` command. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
 

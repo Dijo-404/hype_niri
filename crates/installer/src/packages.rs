@@ -1,7 +1,34 @@
 use crate::{Installer, Result, error};
 use std::{collections::HashSet, fs, io::Write};
 
+const AUR_ANSWERS: &[&str] = &[
+    "--noconfirm",
+    "--answerclean",
+    "None",
+    "--answerdiff",
+    "None",
+    "--answeredit",
+    "None",
+];
+const AUR_CONFIRM: &[&str] = &["--noconfirm=false", "--confirm"];
+
 impl Installer {
+    pub(crate) fn noconfirm(&self) -> &'static [&'static str] {
+        if self.runner.unattended() {
+            &["--noconfirm"]
+        } else {
+            &[]
+        }
+    }
+
+    fn aur_answers(&self) -> &'static [&'static str] {
+        if self.runner.unattended() {
+            AUR_ANSWERS
+        } else {
+            AUR_CONFIRM
+        }
+    }
+
     pub(crate) fn update_aur_packages(&mut self) -> Result<()> {
         if !self.runner.available("yay") {
             self.install_yay()?;
@@ -13,7 +40,7 @@ impl Installer {
         self.runner
             .run_logged(
                 "yay",
-                &["-Syu", "--aur", "--noconfirm=false", "--confirm"],
+                &[&["-Syu", "--aur"][..], self.aur_answers()].concat(),
                 log.path(),
             )
             .map_err(|cause| self.package_failure(log, &format!("AUR upgrade failed: {cause}")))
@@ -23,7 +50,15 @@ impl Installer {
         self.note(format_args!(
             "Installing yay from the Arch User Repository (yay-bin)"
         ));
-        self.command("sudo", &["pacman", "-S", "--needed", "git", "base-devel"])?;
+        self.command(
+            "sudo",
+            &[
+                &["pacman", "-S", "--needed"][..],
+                self.noconfirm(),
+                &["git", "base-devel"],
+            ]
+            .concat(),
+        )?;
         let staging = tempfile::Builder::new()
             .prefix("hype-niri-yay-")
             .tempdir()?;
@@ -47,7 +82,11 @@ impl Installer {
             .tempfile()?;
         if let Err(cause) = self.runner.run_logged(
             "env",
-            &["--chdir", checkout, "makepkg", "-si", "--needed"],
+            &[
+                &["--chdir", checkout, "makepkg", "-si", "--needed"][..],
+                self.noconfirm(),
+            ]
+            .concat(),
             log.path(),
         ) {
             return Err(
@@ -56,7 +95,7 @@ impl Installer {
         }
         if !self.runner.available("yay") {
             return Err(error(
-                "The yay build did not put yay on PATH. Check the package install prompt and retry.",
+                "The yay build did not put yay on PATH. Check the build output and retry.",
             ));
         }
         Ok(())
@@ -192,6 +231,7 @@ impl Installer {
         let mut log = tempfile::Builder::new()
             .prefix("hype-niri-packages-")
             .suffix(".log")
+            .append(true)
             .tempfile()?;
         if !aur.is_empty() {
             if !self.runner.available("yay") {
@@ -222,7 +262,8 @@ impl Installer {
             }
         }
         if !aur.is_empty() {
-            let mut args = vec!["-S", "--aur", "--needed", "--noconfirm=false", "--confirm"];
+            let mut args = vec!["-S", "--aur", "--needed"];
+            args.extend(self.aur_answers());
             args.extend(aur.iter().map(String::as_str));
             if let Err(failure) = self.runner.run_logged("yay", &args, log.path()) {
                 return Err(self.package_failure(
@@ -250,13 +291,17 @@ impl Installer {
     ) -> Box<dyn std::error::Error> {
         match log.keep() {
             Ok((_, path)) => {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let lines = content.lines().collect::<Vec<_>>();
-                    for line in &lines[lines.len().saturating_sub(40)..] {
-                        self.warn(format_args!("{line}"));
-                    }
+                let content = fs::read_to_string(&path).unwrap_or_default();
+                let lines = content.lines().collect::<Vec<_>>();
+                for line in &lines[lines.len().saturating_sub(40)..] {
+                    self.warn(format_args!("{line}"));
                 }
-                error(format!("{message}. Full log: {}", path.display()))
+                let hint = if content.contains(" are in conflict") {
+                    ". A package conflict needs an answer: remove the conflicting package or rerun with --plain"
+                } else {
+                    ""
+                };
+                error(format!("{message}{hint}. Full log: {}", path.display()))
             }
             Err(failure) => error(format!("{message}. Could not preserve log: {failure}")),
         }

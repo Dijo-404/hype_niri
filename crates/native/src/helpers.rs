@@ -1,8 +1,7 @@
 use crate::{Result, bus, caffeine, dialog, err, ipc, launcher, runtime, session};
-use gtk::{gio, glib, prelude::*};
-use serde_json::{Value, json};
+use gtk::prelude::*;
+use serde_json::json;
 use std::{
-    collections::HashMap,
     env,
     ffi::OsString,
     fs,
@@ -23,9 +22,6 @@ use std::{
 const WAYBAR_WAIT: Duration = Duration::from_secs(3);
 const MENU_LOCK: &str = "hype-menu-toggle.lock";
 const MENU_WAIT: Duration = Duration::from_secs(1);
-const TRAY_WATCHER: &str = "org.kde.StatusNotifierWatcher";
-const TRAY_ITEM: &str = "org.kde.StatusNotifierItem";
-const TRAY_WAIT: Duration = Duration::from_secs(1);
 
 fn terminate_named(name: &str) -> bool {
     let mut signaled = false;
@@ -342,101 +338,6 @@ async fn stealth_indicator() -> Result<()> {
     Ok(())
 }
 
-fn tray_item_path(item: &str) -> Option<(&str, &str)> {
-    let (name, path) = match item.find('/') {
-        Some(index) => item.split_at(index),
-        None => (item, "/StatusNotifierItem"),
-    };
-    (gio::dbus_is_name(name) && glib::Variant::is_object_path(path)).then_some((name, path))
-}
-
-fn visible_warp_item(properties: &HashMap<String, glib::Variant>) -> bool {
-    let field = |key| properties.get(key).and_then(glib::Variant::str);
-    // The vendor generates the item ID. Its public tray title is stable.
-    field("Title") == Some("warp-taskbar")
-        && field("Id").is_some_and(|id| !id.is_empty())
-        && field("Category").is_some_and(|category| !category.is_empty())
-        && field("Status").is_some_and(|status| {
-            status.eq_ignore_ascii_case("Active") || status.eq_ignore_ascii_case("NeedsAttention")
-        })
-}
-
-async fn warp_tray_registered() -> Result<bool> {
-    let connection = bus::session().await?;
-    let deadline = Instant::now() + TRAY_WAIT;
-    let (watcher,) = bus::call(
-        &connection,
-        TRAY_WATCHER,
-        "/StatusNotifierWatcher",
-        "org.freedesktop.DBus.Properties",
-        "GetAll",
-        Some(&(TRAY_WATCHER,).to_variant()),
-        TRAY_WAIT.as_millis() as i32,
-    )
-    .await?
-    .get::<(HashMap<String, glib::Variant>,)>()
-    .ok_or_else(|| err("Invalid status notifier registration"))?;
-    if watcher
-        .get("IsStatusNotifierHostRegistered")
-        .and_then(glib::Variant::get::<bool>)
-        != Some(true)
-    {
-        return Ok(false);
-    }
-    let items = watcher
-        .get("RegisteredStatusNotifierItems")
-        .and_then(glib::Variant::get::<Vec<String>>)
-        .ok_or_else(|| err("Invalid status notifier item list"))?;
-    for (service, path) in items.iter().filter_map(|item| tray_item_path(item)) {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        let properties = bus::call(
-            &connection,
-            service,
-            path,
-            "org.freedesktop.DBus.Properties",
-            "GetAll",
-            Some(&(TRAY_ITEM,).to_variant()),
-            remaining.as_millis().clamp(1, 250) as i32,
-        )
-        .await;
-        if let Ok(properties) = properties
-            && let Some((properties,)) = properties.get::<(HashMap<String, glib::Variant>,)>()
-            && visible_warp_item(&properties)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-pub async fn warp_indicator() {
-    if !active_unit("warp-svc.service").await.unwrap_or(false)
-        || warp_tray_registered().await.unwrap_or(false)
-    {
-        println!("{}", json!({"text": ""}));
-        return;
-    }
-    let status = bounded_output("warp-cli", &["--accept-tos", "--json", "status"])
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-    let state = status
-        .as_ref()
-        .and_then(|status| status.get("status")?.as_str())
-        .filter(|state| !state.is_empty())
-        .unwrap_or("Unknown");
-    let class = if state == "Connected" {
-        "connected"
-    } else {
-        "running"
-    };
-    println!(
-        "{}",
-        json!({"text": "󰖟", "tooltip": format!("Cloudflare WARP · {state}"), "class": class})
-    );
-}
-
 pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
     match command {
         "fullscreen-toggle" if args.is_empty() => {
@@ -492,7 +393,6 @@ pub async fn run(command: &str, args: &[OsString]) -> Result<i32> {
         "start-waybar" if args.is_empty() => start_waybar(false)?,
         "start-waybar" if args == ["--restart"] => start_waybar(true)?,
         "stealth-indicator" if args.is_empty() => stealth_indicator().await?,
-        "warp-indicator" if args.is_empty() => warp_indicator().await,
         _ => return Err(err(format!("Invalid arguments for {command}"))),
     }
     Ok(0)

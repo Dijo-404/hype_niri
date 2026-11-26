@@ -83,16 +83,6 @@ window#waybar.hidden {
   color: #98c379;
 }
 
-#custom-warp {
-  margin-left: 6px;
-  font-size: 14.7px;
-  color: #aaaaaa;
-}
-
-#custom-warp.connected {
-  color: #f5a623;
-}
-
 #connectivity #image.stealth {
   padding: 0;
   margin: 0 0 0 6px;

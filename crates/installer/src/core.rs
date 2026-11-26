@@ -311,12 +311,20 @@ impl Installer {
             .runner
             .run_logged(
                 "sudo",
-                &["pacman", "-Sy", "--needed", "archlinux-keyring"],
+                &[
+                    &["pacman", "-Sy", "--needed"][..],
+                    self.noconfirm(),
+                    &["archlinux-keyring"],
+                ]
+                .concat(),
                 log.path(),
             )
             .and_then(|()| {
-                self.runner
-                    .run_logged("sudo", &["pacman", "-Syu"], log.path())
+                self.runner.run_logged(
+                    "sudo",
+                    &[&["pacman", "-Syu"][..], self.noconfirm()].concat(),
+                    log.path(),
+                )
             });
         if let Err(failure) = result {
             let (_, path) = log.keep().map_err(|e| e.error)?;

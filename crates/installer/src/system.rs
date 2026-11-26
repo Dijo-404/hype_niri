@@ -882,6 +882,7 @@ impl Installer {
         for (family, package) in [
             ("JetBrains Mono", "ttf-jetbrains-mono"),
             ("Symbols Nerd Font", "ttf-nerd-fonts-symbols"),
+            ("JetBrainsMono Nerd Font", "ttf-jetbrains-mono-nerd"),
             ("Roboto", "ttf-roboto"),
             ("Material Design Icons", "ttf-material-design-icons-webfont"),
         ] {

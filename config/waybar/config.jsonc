@@ -121,12 +121,6 @@
     "on-click": "~/.config/scripts/hype-control hotspot toggle",
     "on-click-right": "~/.config/scripts/hype-control hotspot menu"
   },
-  "custom/warp": {
-    "exec": "~/.config/scripts/hype-status warp-indicator",
-    "return-type": "json",
-    "interval": 10,
-    "format": "{}"
-  },
   "image#stealth": {
     "exec": "~/.config/scripts/hype-control stealth-indicator",
     "interval": 30,

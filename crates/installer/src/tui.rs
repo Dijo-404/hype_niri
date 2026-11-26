@@ -13,10 +13,10 @@ use std::{
     cell::RefCell,
     collections::VecDeque,
     fmt,
-    fs::File,
-    io::{self, IsTerminal, Read, Write},
+    fs::{File, OpenOptions},
+    io::{self, IsTerminal, Read, Seek, SeekFrom, Write},
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     rc::Rc,
     sync::{
         Arc,
@@ -28,6 +28,9 @@ use std::{
 mod view;
 
 const POLL: Duration = Duration::from_millis(100);
+const SUDO_REFRESH: Duration = Duration::from_secs(60);
+const PROMPT: &str = "[hype-niri password]";
+const MAX_PASSWORD: usize = 256;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Action {
@@ -167,22 +170,31 @@ pub fn run(
 
     let lock = runtime_directory().and_then(|directory| InstallLock::acquire(&directory));
     let result = match &lock {
-        Ok(_) => installer
-            .run_phases(action.phases(), |index, name| {
-                let mut ui = ui.borrow_mut();
-                ui.phase = Some(index);
-                ui.working(action.label(), name)
-            })
-            .and_then(|()| {
-                if action == Action::Update {
-                    ui.borrow_mut()
-                        .working(action.label(), "Refreshing the Hype CLI")?;
-                    installer.refresh_cli()?;
-                }
-                Ok(())
-            }),
+        Ok(_) => {
+            let ready = ui
+                .borrow_mut()
+                .working(action.label(), "Checking sudo access");
+            ready
+                .and_then(|()| TuiRunner(ui.clone()).authorize())
+                .and_then(|()| {
+                    installer.run_phases(action.phases(), |index, name| {
+                        let mut ui = ui.borrow_mut();
+                        ui.phase = Some(index);
+                        ui.working(action.label(), name)
+                    })
+                })
+                .and_then(|()| {
+                    if action == Action::Update {
+                        ui.borrow_mut()
+                            .working(action.label(), "Refreshing the Hype CLI")?;
+                        installer.refresh_cli()?;
+                    }
+                    Ok(())
+                })
+        }
         Err(cause) => Err(error(cause.to_string())),
     };
+    ui.borrow_mut().keep_alive = None;
     if let Err(cause) = result {
         let mut ui = ui.borrow_mut();
         if let Some(backup) = &installer.backup {
@@ -338,6 +350,10 @@ impl Screen {
     }
 
     fn key(&self, wait: bool) -> Result<Option<KeyCode>> {
+        Ok(self.press(wait)?.map(|(code, _)| code))
+    }
+
+    fn press(&self, wait: bool) -> Result<Option<(KeyCode, KeyModifiers)>> {
         let event = loop {
             self.check_interrupt()?;
             if event::poll(POLL)? {
@@ -364,7 +380,7 @@ impl Screen {
                 {
                     return Ok(None);
                 }
-                Ok(Some(code))
+                Ok(Some((code, modifiers)))
             }
             _ => Ok(None),
         }
@@ -390,6 +406,11 @@ struct Ui {
     title: String,
     message: String,
     color: bool,
+    started: Instant,
+    step_started: Instant,
+    activity: String,
+    replace_last: bool,
+    keep_alive: Option<KeepAlive>,
 }
 
 impl Ui {
@@ -404,33 +425,91 @@ impl Ui {
             title: String::new(),
             message: String::new(),
             color: std::env::var_os("NO_COLOR").is_none(),
+            started: Instant::now(),
+            step_started: Instant::now(),
+            activity: String::new(),
+            replace_last: false,
+            keep_alive: None,
         })
     }
 
-    fn log(&mut self, message: &str, warning: bool) {
-        for line in message.lines() {
-            if self.logs.len() == 512 {
-                self.logs.pop_front();
-            }
-            let text = line
-                .chars()
-                .map(|c| if c == '\t' { ' ' } else { c })
-                .filter(|c| !c.is_control())
-                .collect();
-            self.logs.push_back((text, warning));
-            if self.scroll > 0 {
-                self.scroll = (self.scroll + 1).min(self.logs.len() - 1);
-            }
+    fn push(&mut self, text: String, warning: bool) {
+        if self.logs.len() == 512 {
+            self.logs.pop_front();
         }
+        self.logs.push_back((text, warning));
+        if self.scroll > 0 {
+            self.scroll = (self.scroll + 1).min(self.logs.len() - 1);
+        }
+    }
+
+    fn log(&mut self, message: &str, warning: bool) {
+        self.replace_last = false;
+        for line in message.lines() {
+            self.push(clean(line), warning);
+        }
+    }
+
+    fn output(&mut self, line: &[u8], carriage: bool) {
+        let text = clean(&String::from_utf8_lossy(line));
+        if text.trim().is_empty() {
+            return;
+        }
+        if std::mem::replace(&mut self.replace_last, carriage) && self.logs.pop_back().is_some() {
+            self.logs.push_back((text, false));
+        } else {
+            self.push(text, false);
+        }
+    }
+
+    fn keep_sudo_alive(&mut self) {
+        self.keep_alive.get_or_insert_with(KeepAlive::start);
     }
 
     fn working(&mut self, title: &str, message: &str) -> Result<()> {
         self.screen.check_interrupt()?;
         self.title = title.to_owned();
         self.message = message.to_owned();
+        self.step_started = Instant::now();
         self.log(message, false);
         self.scroll = 0;
         self.draw(view::Page::Progress(view::Prompt::Working))
+    }
+
+    fn password(&mut self, problem: Option<&str>) -> Result<String> {
+        let mut answer = String::with_capacity(MAX_PASSWORD);
+        self.scroll = 0;
+        let result = loop {
+            let page =
+                view::Page::Progress(view::Prompt::Password(problem, answer.chars().count()));
+            if let Err(cause) = self.draw(page) {
+                break Err(cause);
+            }
+            match self.screen.press(true) {
+                Ok(Some((KeyCode::Enter, _))) if !answer.is_empty() => return Ok(answer),
+                Ok(Some((KeyCode::Esc, _))) => {
+                    break Err(error("Installation stopped without a sudo password"));
+                }
+                Ok(Some((KeyCode::Backspace, _))) => {
+                    answer.pop();
+                }
+                Ok(Some((KeyCode::Char('u'), modifiers)))
+                    if modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    answer.clear();
+                }
+                Ok(Some((KeyCode::Char(c), modifiers)))
+                    if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && answer.len() + c.len_utf8() <= MAX_PASSWORD =>
+                {
+                    answer.push(c);
+                }
+                Ok(_) => {}
+                Err(cause) => break Err(cause),
+            }
+        };
+        wipe(&mut answer);
+        result
     }
 
     fn choose_action(&mut self, action: Action, choices: &[Action]) -> Result<Option<Action>> {
@@ -586,65 +665,279 @@ impl Ui {
     }
 }
 
+struct KeepAlive {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl KeepAlive {
+    fn start() -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut waited = Duration::ZERO;
+            while !flag.load(Ordering::Relaxed) {
+                std::thread::sleep(POLL);
+                waited += POLL;
+                if waited >= SUDO_REFRESH {
+                    waited = Duration::ZERO;
+                    let _ = Command::new("sudo")
+                        .args(["-n", "-v"])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            }
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for KeepAlive {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn wipe(text: &mut String) {
+    let bytes = unsafe { text.as_mut_vec() };
+    bytes.clear();
+    bytes.resize(bytes.capacity(), 0);
+    std::hint::black_box(bytes);
+}
+
+fn command(program: &str, args: &[&str]) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::piped())
+        .env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
+
+fn start(command: &mut Command) -> io::Result<Child> {
+    let mut child = command.spawn()?;
+    drop(child.stdin.take());
+    Ok(child)
+}
+
+fn last_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .unwrap_or("sudo did not accept the password")
+        .to_owned()
+}
+
 struct TuiRunner(Rc<RefCell<Ui>>);
 
 impl TuiRunner {
-    fn terminal_command<T>(&self, program: &str, run: impl FnOnce() -> Result<T>) -> Result<T> {
-        {
-            let mut ui = self.0.borrow_mut();
-            ui.screen.check_interrupt()?;
-            ui.log(&format!("Terminal: {program}"), false);
-            ui.screen.leave()?;
+    fn authorize(&self) -> Result<()> {
+        if self.captured("sudo", &["-n", "-v"])?.success() {
+            self.0.borrow_mut().keep_sudo_alive();
+            return Ok(());
         }
-        let result = run();
+        let errors = tempfile::NamedTempFile::new()?;
+        let mut reader = errors.reopen()?;
+        let mut child = command("sudo", &["-S", "-p", PROMPT, "-v"])
+            .stdout(Stdio::null())
+            .stderr(errors.as_file().try_clone()?)
+            .spawn()?;
+        self.0.borrow_mut().activity = "Checking the password".into();
+        let result = self.answer(&mut child, &mut reader);
+        self.0.borrow_mut().activity.clear();
+        if result.is_err() && child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        result?;
+        if !self
+            .captured("/bin/sh", &["-c", "sudo -n -v; exit $?"])?
+            .success()
+        {
+            return Err(error(
+                "sudo keeps no reusable login (timestamp_timeout=0 or timestamp_type=ppid); run hype install --plain",
+            ));
+        }
         let mut ui = self.0.borrow_mut();
-        ui.screen.check_interrupt()?;
-        ui.screen.enter()?;
-        ui.draw(view::Page::Progress(view::Prompt::Working))?;
-        result
+        ui.log("Password accepted", false);
+        ui.keep_sudo_alive();
+        Ok(())
     }
 
-    fn streamed(&self, program: &str, args: &[&str]) -> Result<()> {
-        let file = tempfile::NamedTempFile::new()?;
-        let mut reader = file.reopen()?;
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(file.as_file().try_clone()?)
-            .stderr(file.as_file().try_clone()?)
-            .spawn()?;
-        let mut pending = Vec::new();
+    fn answer(&self, child: &mut Child, reader: &mut File) -> Result<()> {
+        let mut input = child.stdin.take();
+        let mut bytes = Vec::new();
+        let mut asked = 0;
+        loop {
+            reader.read_to_end(&mut bytes)?;
+            let text = String::from_utf8_lossy(&bytes);
+            let prompts = text.matches(PROMPT).count();
+            if prompts > asked {
+                asked = prompts;
+                let before = text[..text.rfind(PROMPT).unwrap_or(0)].replace(PROMPT, "");
+                let problem = (asked > 1).then(|| last_line(&before));
+                let mut password = self.0.borrow_mut().password(problem.as_deref())?;
+                if let Some(pipe) = input.as_mut() {
+                    let _ = pipe
+                        .write_all(password.as_bytes())
+                        .and(pipe.write_all(b"\n"));
+                }
+                wipe(&mut password);
+                continue;
+            }
+            if let Some(status) = child.try_wait()? {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(error(format!(
+                        "sudo did not accept the password: {}",
+                        last_line(&text.replace(PROMPT, ""))
+                    )))
+                };
+            }
+            self.0
+                .borrow_mut()
+                .draw(view::Page::Progress(view::Prompt::Working))?;
+            self.0.borrow().screen.key(false)?;
+        }
+    }
+
+    fn privileged<'a>(&self, program: &str, args: &[&'a str]) -> Result<Vec<&'a str>> {
+        let mut args = args.to_vec();
+        match program {
+            "sudo" => {
+                self.authorize()?;
+                args.insert(0, "-n");
+            }
+            "yay" => {
+                self.authorize()?;
+                args.splice(1.min(args.len())..1.min(args.len()), ["--sudoflags", "-n"]);
+            }
+            "env" => self.authorize()?,
+            _ => {}
+        }
+        Ok(args)
+    }
+
+    fn wait(
+        &self,
+        child: &mut Child,
+        mut read: impl FnMut(&mut Ui, bool) -> io::Result<()>,
+    ) -> Result<ExitStatus> {
+        let mut stopping = false;
         let result = (|| {
             loop {
                 let status = child.try_wait()?;
-                drain_log(
-                    &mut reader,
-                    &mut pending,
-                    status.is_some(),
-                    &mut self.0.borrow_mut(),
-                )?;
-                self.0
-                    .borrow_mut()
-                    .draw(view::Page::Progress(view::Prompt::Working))?;
+                {
+                    let mut ui = self.0.borrow_mut();
+                    read(&mut ui, status.is_some())?;
+                    ui.draw(view::Page::Progress(view::Prompt::Working))?;
+                }
                 if let Some(status) = status {
-                    return if status.success() {
-                        Ok(())
+                    return if stopping {
+                        Err(error("Installation interrupted"))
                     } else {
-                        Err(error(format!("{program} failed ({status})")))
+                        Ok(status)
                     };
                 }
-                let mut ui = self.0.borrow_mut();
-                if let Some(key) = ui.screen.key(false)? {
-                    ui.navigate_log(key);
+                if stopping {
+                    std::thread::sleep(POLL);
+                    continue;
+                }
+                let key = self.0.borrow().screen.key(false);
+                match key {
+                    Ok(Some(key)) => self.0.borrow_mut().navigate_log(key),
+                    Ok(None) => {}
+                    Err(_) => {
+                        unsafe { libc::kill(0, libc::SIGINT) };
+                        self.0
+                            .borrow_mut()
+                            .log("Stopping after the current command exits", true);
+                        stopping = true;
+                    }
                 }
             }
         })();
-        if result.is_err() && child.try_wait()?.is_none() {
-            let _ = child.kill();
-            child.wait()?;
+        if result.is_err() && child.try_wait().ok().flatten().is_none() {
+            if !stopping {
+                unsafe { libc::kill(0, libc::SIGINT) };
+            }
+            let _ = child.wait();
         }
         result
     }
+
+    fn captured(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+        let mut stdout = tempfile::tempfile()?;
+        let mut stderr = tempfile::tempfile()?;
+        let mut child = start(
+            command(program, args)
+                .stdout(stdout.try_clone()?)
+                .stderr(stderr.try_clone()?),
+        )?;
+        self.0.borrow_mut().activity = command_line(program, args);
+        let status = self.wait(&mut child, |_, _| Ok(()));
+        self.0.borrow_mut().activity.clear();
+        let status = status?;
+        let text = |file: &mut File| -> io::Result<String> {
+            let mut bytes = Vec::new();
+            file.seek(SeekFrom::Start(0))?;
+            file.read_to_end(&mut bytes)?;
+            Ok(String::from_utf8_lossy(&bytes).into_owned())
+        };
+        Ok(CommandOutput {
+            code: status.code().unwrap_or(1),
+            stdout: text(&mut stdout)?,
+            stderr: text(&mut stderr)?,
+        })
+    }
+
+    fn streamed(&self, program: &str, args: &[&str], log: Option<&Path>) -> Result<()> {
+        let (sink, mut reader) = match log {
+            Some(path) => {
+                let sink = OpenOptions::new().create(true).append(true).open(path)?;
+                let mut reader = File::open(path)?;
+                reader.seek(SeekFrom::End(0))?;
+                (sink, reader)
+            }
+            None => {
+                let file = tempfile::NamedTempFile::new()?;
+                (file.as_file().try_clone()?, file.reopen()?)
+            }
+        };
+        let mut child = start(
+            command(program, args)
+                .stdout(sink.try_clone()?)
+                .stderr(sink),
+        )?;
+        self.0.borrow_mut().activity = command_line(program, args);
+        let mut pending = Vec::new();
+        let status = self.wait(&mut child, |ui, finished| {
+            drain_log(&mut reader, &mut pending, finished, ui)
+        });
+        self.0.borrow_mut().activity.clear();
+        let status = status?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(error(format!("{program} failed ({status})")))
+        }
+    }
+}
+
+fn command_line(program: &str, args: &[&str]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn drain_log(
@@ -654,71 +947,94 @@ fn drain_log(
     ui: &mut Ui,
 ) -> io::Result<()> {
     reader.read_to_end(pending)?;
-    let end = if finished || pending.len() >= 16 * 1024 {
-        pending.len()
-    } else {
-        pending
-            .iter()
-            .rposition(|byte| matches!(byte, b'\n' | b'\r'))
-            .map_or(0, |offset| offset + 1)
-    };
-    let lines = String::from_utf8_lossy(&pending[..end]);
-    for line in lines
-        .split(['\n', '\r'])
-        .filter(|line| !line.trim().is_empty())
-    {
-        ui.log(line, false);
+    let mut start = 0;
+    let mut index = 0;
+    while index < pending.len() {
+        match pending[index] {
+            b'\n' => {
+                ui.output(&pending[start..index], false);
+                start = index + 1;
+            }
+            b'\r' => match pending.get(index + 1) {
+                Some(b'\n') => {
+                    ui.output(&pending[start..index], false);
+                    index += 1;
+                    start = index + 1;
+                }
+                Some(_) => {
+                    ui.output(&pending[start..index], true);
+                    start = index + 1;
+                }
+                None if !finished => break,
+                None => {
+                    ui.output(&pending[start..index], false);
+                    start = index + 1;
+                }
+            },
+            _ => {}
+        }
+        index += 1;
     }
-    pending.drain(..end);
+    if finished || pending.len() - start >= 16 * 1024 {
+        ui.output(&pending[start..], false);
+        start = pending.len();
+    }
+    pending.drain(..start);
     Ok(())
+}
+
+fn clean(line: &str) -> String {
+    let mut text = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            '\t' => text.push(' '),
+            c if !c.is_control() => text.push(c),
+            _ => {}
+        }
+    }
+    text
 }
 
 impl Runner for TuiRunner {
     fn output(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
         self.0.borrow().screen.check_interrupt()?;
         if program == "sudo" {
-            self.terminal_command(program, || ProcessRunner.output(program, args))
+            self.captured(program, &self.privileged(program, args)?)
         } else {
-            ProcessRunner.output(program, args)
+            self.captured(program, args)
         }
     }
 
     fn run(&self, program: &str, args: &[&str]) -> Result<()> {
         self.0.borrow().screen.check_interrupt()?;
-        match program {
-            "sudo" | "yay" | "chsh" | "env" => {
-                self.terminal_command(program, || ProcessRunner.run(program, args))
-            }
-            "cargo" | "git" => self.streamed(program, args),
-            _ => {
-                let output = ProcessRunner.output(program, args)?;
-                self.0.borrow_mut().log(&output.stdout, false);
-                self.0.borrow_mut().log(&output.stderr, !output.success());
-                if output.success() {
-                    Ok(())
-                } else {
-                    Err(error(format!(
-                        "{program} failed (exit status: {})",
-                        output.code
-                    )))
-                }
-            }
-        }
+        self.streamed(program, &self.privileged(program, args)?, None)
     }
 
     fn run_logged(&self, program: &str, args: &[&str], log: &Path) -> Result<()> {
-        let ui = self.0.borrow();
-        let phase = ui
-            .phase
-            .and_then(|index| ui.action.phases().get(index))
-            .map(|entry| entry.0);
-        drop(ui);
-        self.terminal_command(program, || {
-            if let Some(phase) = phase {
-                eprintln!("\nHype Niri  /  {phase}");
-            }
-            ProcessRunner.run_logged(program, args, log)
-        })
+        self.0.borrow().screen.check_interrupt()?;
+        self.streamed(program, &self.privileged(program, args)?, Some(log))
     }
 
     fn confirm(&self, prompt: &str) -> Result<bool> {
@@ -735,6 +1051,10 @@ impl Runner for TuiRunner {
 
     fn available(&self, program: &str) -> bool {
         ProcessRunner.available(program)
+    }
+
+    fn unattended(&self) -> bool {
+        true
     }
 
     fn message(&self, message: fmt::Arguments<'_>, warning: bool) {

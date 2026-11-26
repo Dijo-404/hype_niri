@@ -4,9 +4,9 @@ use ratatui::{
     layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap},
 };
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 pub(super) enum Page<'a> {
     Actions {
@@ -30,6 +30,7 @@ pub(super) enum Prompt<'a> {
     Working,
     Confirm(&'a str, bool, Option<u64>),
     Input(&'a str, &'a str),
+    Password(Option<&'a str>, usize),
     Finished(bool),
 }
 
@@ -44,6 +45,35 @@ const WARN: Color = Color::Rgb(224, 164, 88);
 pub(super) const MIN_WIDTH: u16 = 44;
 pub(super) const MIN_HEIGHT: u16 = 16;
 const WIDE: u16 = 74;
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const GLINT: usize = 10;
+
+fn spinner(tick: u64) -> &'static str {
+    SPINNER[(tick / 80) as usize % SPINNER.len()]
+}
+
+fn clock(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds >= 3600 {
+        format!(
+            "{}:{:02}:{:02}",
+            seconds / 3600,
+            seconds / 60 % 60,
+            seconds % 60
+        )
+    } else {
+        format!("{}:{:02}", seconds / 60, seconds % 60)
+    }
+}
+
+fn clip(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let mut clipped: String = text.chars().take(width.saturating_sub(1)).collect();
+    clipped.push('…');
+    clipped
+}
 
 #[derive(Clone, Copy)]
 struct Theme(bool);
@@ -79,6 +109,9 @@ pub(super) struct View<'a> {
     pub title: &'a str,
     pub message: &'a str,
     pub color: bool,
+    pub tick: u64,
+    pub elapsed: Duration,
+    pub activity: &'a str,
 }
 
 impl Ui {
@@ -92,6 +125,9 @@ impl Ui {
             title: &self.title,
             message: &self.message,
             color: self.color,
+            tick: self.started.elapsed().as_millis() as u64,
+            elapsed: self.step_started.elapsed(),
+            activity: &self.activity,
         };
         self.screen
             .terminal
@@ -139,7 +175,13 @@ impl View<'_> {
             }
             _ => (self.action.title().to_owned(), None),
         };
-        header(frame, top, rail, theme, &section, progress);
+        let motion =
+            (self.color && matches!(page, Page::Progress(Prompt::Working))).then_some(self.tick);
+        header(frame, top, rail, theme, &section, progress, motion);
+        let password = match page {
+            Page::Progress(Prompt::Password(problem, length)) => Some((problem, length)),
+            _ => None,
+        };
 
         let keys: Vec<(&str, String)> = match page {
             Page::Actions { choices, selected } => {
@@ -186,9 +228,14 @@ impl View<'_> {
                             ("Esc", "Stop install".into()),
                         ]
                     }
-                    Prompt::Working => {
-                        vec![("PgUp/PgDn", "Scroll log".into()), ("End", "Newest".into())]
+                    Prompt::Password(..) => {
+                        vec![("Enter", "Continue".into()), ("Esc", "Stop install".into())]
                     }
+                    Prompt::Working => vec![
+                        ("PgUp/PgDn", "Scroll log".into()),
+                        ("End", "Newest".into()),
+                        ("Ctrl+C", "Stop".into()),
+                    ],
                     Prompt::Finished(true) => {
                         vec![
                             ("Enter", "Close".into()),
@@ -218,10 +265,18 @@ impl View<'_> {
             Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }),
             footer,
         );
+        if let Some((problem, length)) = password {
+            let above = Rect {
+                height: footer.y.saturating_sub(area.y),
+                ..area
+            };
+            password_popup(frame, above, theme, problem, length);
+        }
     }
 
     fn progress(&self, frame: &mut Frame<'_>, area: Rect, theme: Theme, prompt: Prompt<'_>) {
         let failed = matches!(prompt, Prompt::Finished(true));
+        let working = matches!(prompt, Prompt::Working);
         let steps = self.action.phases();
         let detail = if area.width >= WIDE {
             let [list, detail] = Layout::horizontal([Constraint::Length(28), Constraint::Min(0)])
@@ -238,6 +293,8 @@ impl View<'_> {
                             ("✓", theme.fg(DIM))
                         } else if index == current && failed {
                             ("!", theme.strong(WARN))
+                        } else if index == current && working {
+                            (spinner(self.tick), theme.strong(BRIGHT))
                         } else if index == current {
                             ("›", theme.strong(BRIGHT))
                         } else {
@@ -254,7 +311,9 @@ impl View<'_> {
         };
 
         let (heading, message, action) = match prompt {
-            Prompt::Working | Prompt::Finished(_) => (self.title, self.message, None),
+            Prompt::Working | Prompt::Finished(_) | Prompt::Password(..) => {
+                (self.title, self.message, None)
+            }
             Prompt::Confirm(question, yes, seconds) => {
                 let option = |text: String, active| {
                     Span::styled(
@@ -285,23 +344,36 @@ impl View<'_> {
                 Some(Line::styled(format!("› {answer}▏"), theme.strong(BRIGHT))),
             ),
         };
-        let mut lines = vec![
+        let width = detail.width.max(1) as usize;
+        let mut lines = vec![if working {
+            Line::from(vec![
+                Span::styled(spinner(self.tick), theme.strong(BRIGHT)),
+                Span::raw(" "),
+                Span::styled(heading.trim(), theme.strong(BRIGHT)),
+                Span::styled(format!("   {}", clock(self.elapsed)), theme.fg(DIM)),
+            ])
+        } else {
             Line::styled(
                 heading.trim(),
                 theme.strong(if failed { WARN } else { BRIGHT }),
-            ),
-            Line::raw(""),
-        ];
+            )
+        }];
+        lines.push(Line::raw(""));
         lines.extend(
             message
                 .lines()
                 .map(|line| Line::styled(line, theme.fg(TEXT))),
         );
+        if working && !self.activity.is_empty() {
+            lines.push(Line::styled(
+                clip(&format!("$ {}", self.activity), width),
+                theme.fg(QUIET),
+            ));
+        }
         if let Some(action) = action {
             lines.push(Line::raw(""));
             lines.push(action);
         }
-        let width = detail.width.max(1) as usize;
         let height = lines
             .iter()
             .map(|line| line.width().div_ceil(width).max(1))
@@ -345,6 +417,7 @@ fn header(
     theme: Theme,
     section: &str,
     progress: Option<(f64, bool)>,
+    motion: Option<u64>,
 ) {
     let [brand, context] =
         Layout::horizontal([Constraint::Length(12), Constraint::Min(0)]).areas(top);
@@ -363,12 +436,72 @@ fn header(
             if failed { WARN } else { BRIGHT },
         )
     });
+    let rest = width - filled;
+    let (from, to) = match motion {
+        Some(tick) if rest > 0 => {
+            let head = (tick / 40) as usize % (rest + GLINT);
+            (head.saturating_sub(GLINT), head.min(rest))
+        }
+        _ => (0, 0),
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("━".repeat(filled), theme.fg(color)),
-            Span::styled("─".repeat(width - filled), theme.fg(FAINT)),
+            Span::styled("─".repeat(from), theme.fg(FAINT)),
+            Span::styled("━".repeat(to - from), theme.fg(DIM)),
+            Span::styled("─".repeat(rest - to), theme.fg(FAINT)),
         ])),
         rail,
+    );
+}
+
+fn password_popup(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: Theme,
+    problem: Option<&str>,
+    length: usize,
+) {
+    let width = area.width.saturating_sub(4).min(58);
+    let inner = width.saturating_sub(6).max(1) as usize;
+    let mut lines = vec![
+        Line::styled("sudo needs your password.", theme.strong(BRIGHT)),
+        Line::styled(
+            "Asked here once. The install then runs without stopping.",
+            theme.fg(DIM),
+        ),
+        Line::raw(""),
+        Line::styled(
+            format!("› {}▏", "•".repeat(length.min(inner.saturating_sub(3)))),
+            theme.strong(BRIGHT),
+        ),
+    ];
+    if let Some(problem) = problem {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(problem, theme.fg(WARN)));
+    }
+    let height = lines
+        .iter()
+        .map(|line| {
+            let rows = line.width().div_ceil(inner);
+            (rows.max(1) + usize::from(rows > 1)) as u16
+        })
+        .sum::<u16>()
+        + 4;
+    let popup = area.centered(
+        Constraint::Length(width),
+        Constraint::Length(height.min(area.height)),
+    );
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(theme.fg(DIM))
+                .title(Span::styled(" Password ", theme.strong(BRIGHT)))
+                .padding(Padding::new(2, 2, 1, 1)),
+        ),
+        popup,
     );
 }
 
@@ -537,7 +670,7 @@ fn review(
         Line::styled(title, theme.strong(BRIGHT)),
         Line::raw(""),
         row("Updates", "Arch packages, then AUR packages".into()),
-        row("Password", "sudo asks for it when needed".into()),
+        row("Password", "Asked once in a popup".into()),
     ];
     if let Some(extras) = extras {
         lines.push(row("Backup", "Your current configs are saved first".into()));
@@ -557,7 +690,7 @@ fn review(
     }
     lines.push(Line::raw(""));
     lines.push(Line::styled(
-        "Some steps ask questions. Answer them in this window.",
+        "Everything runs in this window. Package output appears in the log.",
         theme.fg(DIM),
     ));
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
@@ -665,7 +798,6 @@ mod preview {
         let mut logs = VecDeque::new();
         for line in [
             "Refresh Arch mirrors",
-            "Terminal: sudo",
             ":: Synchronizing package databases...",
             " core is up to date",
             " extra is up to date",
@@ -744,6 +876,16 @@ mod preview {
                 )),
             ),
             (
+                "password",
+                Some(2),
+                "Install Hype Niri",
+                "Checking sudo access",
+                Page::Progress(Prompt::Password(
+                    Some("sudo: 1 incorrect password attempt"),
+                    8,
+                )),
+            ),
+            (
                 "failed",
                 Some(7),
                 "Install failed",
@@ -761,6 +903,9 @@ mod preview {
                 title,
                 message,
                 color: true,
+                tick: 1200,
+                elapsed: Duration::from_secs(83),
+                activity: "sudo -n pacman -Syu --noconfirm",
             };
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| view.render(frame, page)).unwrap();
