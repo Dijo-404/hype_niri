@@ -582,10 +582,9 @@ impl Installer {
             }
             self.note(format_args!("Device registered with Cloudflare"));
         }
-        self.note(format_args!(
-            "Choose WARP mode:\n  1) DNS-over-HTTPS only [default]\n  2) Full WARP VPN (encrypted tunnel)\n  3) Preserve the current mode and connection"
-        ));
-        let selection = self.runner.input("Mode [1/2/3]: ")?;
+        let selection = self.runner.input(
+            "Choose WARP mode:\n  1) DNS-over-HTTPS only [default]\n  2) Full WARP VPN (encrypted tunnel)\n  3) Preserve the current mode and connection\nMode [1/2/3]: ",
+        )?;
         let (mode, description) = match selection.trim() {
             "1" | "" => ("doh", "DoH"),
             "2" => ("warp", "WARP (VPN)"),

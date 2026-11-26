@@ -178,10 +178,6 @@ impl View<'_> {
         let motion =
             (self.color && matches!(page, Page::Progress(Prompt::Working))).then_some(self.tick);
         header(frame, top, rail, theme, &section, progress, motion);
-        let password = match page {
-            Page::Progress(Prompt::Password(problem, length)) => Some((problem, length)),
-            _ => None,
-        };
 
         let keys: Vec<(&str, String)> = match page {
             Page::Actions { choices, selected } => {
@@ -265,12 +261,18 @@ impl View<'_> {
             Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }),
             footer,
         );
-        if let Some((problem, length)) = password {
-            let above = Rect {
-                height: footer.y.saturating_sub(area.y),
-                ..area
-            };
-            password_popup(frame, above, theme, problem, length);
+        let above = Rect {
+            height: footer.y.saturating_sub(area.y),
+            ..area
+        };
+        match page {
+            Page::Progress(Prompt::Password(problem, length)) => {
+                password_popup(frame, above, theme, problem, length);
+            }
+            Page::Progress(Prompt::Input(question, answer)) => {
+                input_popup(frame, above, theme, question, answer);
+            }
+            _ => {}
         }
     }
 
@@ -311,7 +313,7 @@ impl View<'_> {
         };
 
         let (heading, message, action) = match prompt {
-            Prompt::Working | Prompt::Finished(_) | Prompt::Password(..) => {
+            Prompt::Working | Prompt::Finished(_) | Prompt::Password(..) | Prompt::Input(..) => {
                 (self.title, self.message, None)
             }
             Prompt::Confirm(question, yes, seconds) => {
@@ -338,11 +340,6 @@ impl View<'_> {
                     ])),
                 )
             }
-            Prompt::Input(question, answer) => (
-                "Answer needed",
-                question,
-                Some(Line::styled(format!("› {answer}▏"), theme.strong(BRIGHT))),
-            ),
         };
         let width = detail.width.max(1) as usize;
         let mut lines = vec![if working {
@@ -462,8 +459,7 @@ fn password_popup(
     problem: Option<&str>,
     length: usize,
 ) {
-    let width = area.width.saturating_sub(4).min(58);
-    let inner = width.saturating_sub(6).max(1) as usize;
+    let inner = dialog_width(area).saturating_sub(6).max(1) as usize;
     let mut lines = vec![
         Line::styled("sudo needs your password.", theme.strong(BRIGHT)),
         Line::styled(
@@ -480,6 +476,37 @@ fn password_popup(
         lines.push(Line::raw(""));
         lines.push(Line::styled(problem, theme.fg(WARN)));
     }
+    dialog(frame, area, theme, " Password ", lines);
+}
+
+fn input_popup(frame: &mut Frame<'_>, area: Rect, theme: Theme, question: &str, answer: &str) {
+    let mut lines = question
+        .trim_end()
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            Line::styled(
+                line,
+                if index == 0 {
+                    theme.strong(BRIGHT)
+                } else {
+                    theme.fg(TEXT)
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(format!("› {answer}▏"), theme.strong(BRIGHT)));
+    dialog(frame, area, theme, " Answer needed ", lines);
+}
+
+fn dialog_width(area: Rect) -> u16 {
+    area.width.saturating_sub(4).min(58)
+}
+
+fn dialog(frame: &mut Frame<'_>, area: Rect, theme: Theme, title: &str, lines: Vec<Line<'_>>) {
+    let width = dialog_width(area);
+    let inner = width.saturating_sub(6).max(1) as usize;
     let height = lines
         .iter()
         .map(|line| {
@@ -494,11 +521,11 @@ fn password_popup(
     );
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered()
                 .border_type(BorderType::Rounded)
                 .border_style(theme.fg(DIM))
-                .title(Span::styled(" Password ", theme.strong(BRIGHT)))
+                .title(Span::styled(title, theme.strong(BRIGHT)))
                 .padding(Padding::new(2, 2, 1, 1)),
         ),
         popup,
@@ -883,6 +910,16 @@ mod preview {
                 Page::Progress(Prompt::Password(
                     Some("sudo: 1 incorrect password attempt"),
                     8,
+                )),
+            ),
+            (
+                "input",
+                Some(8),
+                "Install Hype Niri",
+                "Configuring Cloudflare WARP",
+                Page::Progress(Prompt::Input(
+                    "Choose WARP mode:\n  1) DNS-over-HTTPS only [default]\n  2) Full WARP VPN (encrypted tunnel)\n  3) Preserve the current mode and connection\nMode [1/2/3]: ",
+                    "2",
                 )),
             ),
             (
