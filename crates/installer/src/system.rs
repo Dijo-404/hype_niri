@@ -512,7 +512,29 @@ impl Installer {
             }
         }
         self.checked_output("sudo", &["ufw", "logging", "low"])?;
-        self.checked_output("sudo", &["ufw", "--force", "enable"])?;
+        if let Err(cause) = self.checked_output("sudo", &["ufw", "--force", "enable"]) {
+            let stale_kernel = self.checked_output("uname", &["-r"]).is_ok_and(|output| {
+                let release = output.stdout.trim();
+                !release.is_empty() && !self.system(&format!("/usr/lib/modules/{release}")).is_dir()
+            });
+            if !stale_kernel {
+                return Err(cause);
+            }
+            self.checked_output(
+                "sudo",
+                &[
+                    "sed",
+                    "-i",
+                    "s/^ENABLED=.*/ENABLED=yes/",
+                    "/etc/ufw/ufw.conf",
+                ],
+            )?;
+            self.command("sudo", &["systemctl", "enable", "ufw.service"])?;
+            self.warn(format_args!(
+                "The kernel was updated, so ufw cannot start until you reboot. The firewall will turn on at the next boot."
+            ));
+            return Ok(());
+        }
         self.command("sudo", &["systemctl", "enable", "ufw.service"])?;
         self.note(format_args!(
             "ufw enabled with desktop defaults. Current rules:"

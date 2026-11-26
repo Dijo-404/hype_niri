@@ -470,6 +470,25 @@ fn firewall_preserves_rules_and_adds_hotspot_ports_only_to_ap_capable_wifi() {
 }
 
 #[test]
+fn firewall_defers_to_boot_when_running_kernel_modules_were_replaced() {
+    let mut f = Fixture::new();
+    f.override_call("sudo ufw --force enable", &[(1, "")]);
+    f.override_call("uname -r", &[(0, "6.18.1-arch1-1\n")]);
+    f.installer.setup_firewall().unwrap();
+    let log = f.log();
+    assert!(log.contains(&"sudo sed -i s/^ENABLED=.*/ENABLED=yes/ /etc/ufw/ufw.conf".into()));
+    assert!(log.contains(&"sudo systemctl enable ufw.service".into()));
+    assert!(!log.contains(&"sudo ufw status verbose".into()));
+
+    let f = Fixture::new();
+    fs::create_dir_all(f.installer.system("/usr/lib/modules/6.18.1-arch1-1")).unwrap();
+    f.override_call("sudo ufw --force enable", &[(1, "")]);
+    f.override_call("uname -r", &[(0, "6.18.1-arch1-1\n")]);
+    let mut installer = f.installer;
+    assert!(installer.setup_firewall().is_err());
+}
+
+#[test]
 fn warp_fails_open_without_changing_connection_after_registration_or_mode_failure() {
     for (service, register, mode, expected) in [
         (1, 0, 0, [false, false]),
