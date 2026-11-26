@@ -126,13 +126,10 @@ window#waybar.hidden {
 #custom-power {
   /* The power glyph extends beyond its font's advance width. */
   min-width: 33px;
-  padding-right: 3px;
+  padding-left: 2px;
+  padding-right: 1px;
   font-family: "Symbols Nerd Font", "Material Design Icons", sans-serif;
   font-size: 14.7px;
-  font-weight: 700;
-  text-shadow:
-    0.35px 0 currentColor,
-    -0.35px 0 currentColor;
 }
 
 #clock {
