@@ -200,10 +200,8 @@ fn app_with_theme(name: &str) -> Command {
     command
 }
 
-fn blueman_manager(args: &[OsString]) -> Result<()> {
+fn load_blueman_module(command: &mut Command) -> Result<()> {
     let module = env::current_exe()?.with_file_name("libhype_blueman_keys.so");
-    let mut command = Command::new("/usr/bin/blueman-manager");
-    command.args(args);
     if module.is_file() {
         let mut modules = env::var_os("GTK3_MODULES").unwrap_or_default();
         if !modules.is_empty() {
@@ -212,6 +210,13 @@ fn blueman_manager(args: &[OsString]) -> Result<()> {
         modules.push(module);
         command.env("GTK3_MODULES", modules);
     }
+    Ok(())
+}
+
+fn blueman_manager(args: &[OsString]) -> Result<()> {
+    let mut command = Command::new("/usr/bin/blueman-manager");
+    command.args(args);
+    load_blueman_module(&mut command)?;
     Err(command.exec().into())
 }
 
@@ -239,6 +244,9 @@ fn start_tray_applets() -> Result<()> {
             continue;
         };
         let mut command = app_with_theme(name);
+        if name == "blueman-applet" {
+            load_blueman_module(&mut command)?;
+        }
         command
             .args(args)
             .stdin(Stdio::null())
