@@ -212,7 +212,6 @@ spawn-at-startup "~/.config/scripts/hype-notch"
 spawn-at-startup "~/.config/scripts/hype-control" "start-tray-applets"
 spawn-at-startup "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"
 spawn-at-startup "mako"
-spawn-at-startup "alacritty"
 
 spawn-at-startup "~/.config/scripts/hype-control" "wallpaper" "init"
 spawn-at-startup "~/.config/scripts/hype-control" "display-scale"

@@ -160,7 +160,7 @@ dconf write /org/gnome/desktop/interface/document-font-name  "'JetBrains Mono 10
 mkdir -p ~/.config/fontconfig/conf.d
 cp config/fontconfig/60-hype-niri-fonts.conf ~/.config/fontconfig/conf.d/
 
-papirus-folders -C grey --theme Papirus-Dark
+papirus-folders -C grey --theme /usr/share/icons/Papirus-Dark
 
 # Apply matching Wi-Fi and Bluetooth outline icons in the user theme.
 ./target/release/hype-install --source "$PWD" --phase tray-icons

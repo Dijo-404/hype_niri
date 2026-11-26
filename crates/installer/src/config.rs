@@ -750,6 +750,7 @@ impl Installer {
             true,
         )?;
         if theme_extras {
+            let papirus = self.system("/usr/share/icons/Papirus-Dark");
             if !self.runner.available("papirus-folders") {
                 self.warn(format_args!(
                     "papirus-folders not found. Install papirus-folders-catppuccin-git to recolor folders."
@@ -757,7 +758,7 @@ impl Installer {
             } else if self
                 .command(
                     "papirus-folders",
-                    &["-C", "grey", "--theme", "Papirus-Dark"],
+                    &["-C", "grey", "--theme", &papirus.to_string_lossy()],
                 )
                 .is_err()
             {
