@@ -356,7 +356,7 @@ hype update
 
 If your installed `hype` predates updater self-refresh, run `./install.sh --setup-cli` from an up-to-date checkout once before using it for a desktop update.
 
-Choose **Update system packages** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
+Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
 
 Choose **Update packages and Hype Niri** to refresh the GitHub `main` checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations and validates staged Niri files before publishing them. A completed desktop update also refreshes the installed `hype` command. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
 

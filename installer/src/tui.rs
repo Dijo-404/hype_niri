@@ -51,9 +51,9 @@ impl Action {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Install => "Install desktop",
+            Self::Install => "Install Hype Niri",
             Self::Update => "Update packages and Hype Niri",
-            Self::Packages => "Update system packages",
+            Self::Packages => "Update packages only",
         }
     }
 
@@ -128,7 +128,7 @@ pub fn run(
             continue;
         }
         if action.uses_managed_source(local_source, fetched) {
-            ui.borrow_mut().source = "~/hype-niri/source (GitHub main)";
+            ui.borrow_mut().source = "GitHub, saved to ~/hype-niri/source";
             if managed_source.is_none() {
                 ui.borrow_mut()
                     .working("Preparing desktop source", "Checking ~/hype-niri/source")?;
@@ -145,7 +145,7 @@ pub fn run(
                 .source
                 .clone_from(&managed_source.as_ref().unwrap().0);
         } else {
-            ui.borrow_mut().source = "Local checkout";
+            ui.borrow_mut().source = "This folder";
             installer.source.clone_from(&original);
         }
 
@@ -397,7 +397,7 @@ impl Ui {
         Ok(Self {
             screen: Screen::new()?,
             action: Action::Install,
-            source: "Local checkout",
+            source: "This folder",
             phase: None,
             logs: VecDeque::new(),
             scroll: 0,

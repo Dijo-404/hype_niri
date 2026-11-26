@@ -15,31 +15,28 @@ pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub type Phase = fn(&mut Installer) -> Result<()>;
 pub const PACKAGE_PHASES: &[(&str, Phase)] = &[
-    ("Upgrade Arch packages", Installer::update_system_packages),
-    ("Upgrade AUR packages", Installer::update_aur_packages),
+    ("Update Arch packages", Installer::update_system_packages),
+    ("Update AUR packages", Installer::update_aur_packages),
 ];
 pub const PHASES: &[(&str, Phase)] = &[
-    ("Preflight checks", Installer::preflight),
-    (
-        "Optional package selection",
-        Installer::select_optional_groups,
-    ),
-    ("Mirror refresh", Installer::refresh_mirrors),
+    ("Check setup files", Installer::preflight),
+    ("Choose extras", Installer::select_optional_groups),
+    ("Find fast mirrors", Installer::refresh_mirrors),
     PACKAGE_PHASES[0],
     PACKAGE_PHASES[1],
-    ("Package installation", Installer::install_packages),
-    ("Configuration backups", Installer::backup_configs),
-    ("Configuration publication", Installer::copy_configs),
-    ("LazyVim", Installer::setup_lazyvim),
-    ("Zsh", Installer::setup_shell),
-    ("GTK theme", Installer::setup_gtk),
-    ("Desktop integration", Installer::setup_desktop_integrations),
-    ("System services", Installer::setup_system),
-    ("Lid behavior", Installer::setup_logind),
-    ("Firewall", Installer::setup_firewall),
-    ("Cloudflare WARP", Installer::setup_cloudflare),
-    ("Stealth routing", Installer::setup_stealth),
-    ("Validation", Installer::validate),
+    ("Install packages", Installer::install_packages),
+    ("Back up your configs", Installer::backup_configs),
+    ("Copy desktop configs", Installer::copy_configs),
+    ("Set up LazyVim", Installer::setup_lazyvim),
+    ("Set up Zsh", Installer::setup_shell),
+    ("Apply GTK theme", Installer::setup_gtk),
+    ("Set up shortcuts", Installer::setup_desktop_integrations),
+    ("Enable system services", Installer::setup_system),
+    ("Set lid close action", Installer::setup_logind),
+    ("Set up firewall", Installer::setup_firewall),
+    ("Set up Cloudflare WARP", Installer::setup_cloudflare),
+    ("Set up Stealth routing", Installer::setup_stealth),
+    ("Check the install", Installer::validate),
 ];
 
 fn heading(title: &str, phase: Option<(usize, usize)>) {
@@ -392,7 +389,7 @@ impl Installer {
     }
 
     pub fn run_plain_package_update(&mut self) -> Result<()> {
-        heading("Update system packages", None);
+        heading("Update packages only", None);
         println!("  Upgrade Arch and AUR packages. Install yay from the AUR if it is missing.");
         if !self.confirm("Start the system package update?")? {
             println!("Package update cancelled");
@@ -560,7 +557,12 @@ mod tests {
     #[test]
     fn failed_phase_stops_before_package_or_reboot_commands() {
         let (_root, mut i, calls) = fixture(true);
-        assert!(i.run_all().unwrap_err().to_string().contains("Preflight"));
+        assert!(
+            i.run_all()
+                .unwrap_err()
+                .to_string()
+                .contains("Check setup files")
+        );
         assert!(calls.borrow().is_empty());
     }
 }

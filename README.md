@@ -87,7 +87,7 @@ Run the updater from any directory.
 hype update
 ```
 
-Choose **Update system packages** and press Enter to review. Hype runs `sudo pacman -Syu` for Arch packages and `yay -Syu --aur` for AUR packages. Follow their prompts in the terminal.
+Choose **Update packages only** and press Enter to review. Hype runs `sudo pacman -Syu` for Arch packages and `yay -Syu --aur` for AUR packages. Follow their prompts in the terminal.
 
 Choose **Update packages and Hype Niri** to also refresh `~/hype-niri/source` from GitHub `main` and review your saved extras. Use `--plain` for line prompts.
 

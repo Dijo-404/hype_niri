@@ -1,12 +1,12 @@
 use super::{Action, Ui};
-use hype_install::core::Phase;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Gauge, List, ListItem, ListState, Padding, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
+use std::collections::VecDeque;
 
 pub(super) enum Page<'a> {
     Actions {
@@ -33,17 +33,17 @@ pub(super) enum Prompt<'a> {
     Finished(bool),
 }
 
-const INK: Color = Color::Rgb(222, 230, 242);
-const MUTED: Color = Color::Rgb(160, 177, 198);
-const GRAPHITE: Color = Color::Rgb(20, 25, 34);
-const SLATE: Color = Color::Rgb(29, 37, 51);
-const BORDER: Color = Color::Rgb(82, 101, 128);
-const LILAC: Color = Color::Rgb(192, 177, 249);
-const MINT: Color = Color::Rgb(139, 219, 200);
-const AMBER: Color = Color::Rgb(244, 196, 130);
+const TEXT: Color = Color::Rgb(212, 212, 212);
+const BRIGHT: Color = Color::Rgb(255, 255, 255);
+const DIM: Color = Color::Rgb(154, 154, 154);
+const QUIET: Color = Color::Rgb(122, 122, 122);
+const FAINT: Color = Color::Rgb(77, 77, 77);
+const RAISED: Color = Color::Rgb(48, 48, 48);
+const WARN: Color = Color::Rgb(224, 164, 88);
 
 pub(super) const MIN_WIDTH: u16 = 44;
 pub(super) const MIN_HEIGHT: u16 = 16;
+const WIDE: u16 = 74;
 
 #[derive(Clone, Copy)]
 struct Theme(bool);
@@ -57,210 +57,464 @@ impl Theme {
         }
     }
 
-    fn surface(self, color: Color) -> Style {
-        if self.0 {
-            self.fg(INK).bg(color)
-        } else {
-            Style::default()
-        }
+    fn strong(self, color: Color) -> Style {
+        self.fg(color).add_modifier(Modifier::BOLD)
     }
 
     fn selection(self) -> Style {
         if self.0 {
-            Style::new().fg(GRAPHITE).bg(LILAC).bold()
+            Style::new().fg(BRIGHT).bg(RAISED).bold()
         } else {
             Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
         }
     }
+}
 
-    fn panel(self, title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
-        Block::bordered()
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(self.fg(if focused { LILAC } else { BORDER }))
-            .title(title.into().style(self.fg(INK).bold()))
-            .padding(Padding::horizontal(1))
-            .style(self.surface(SLATE))
-    }
+pub(super) struct View<'a> {
+    pub action: Action,
+    pub source: &'a str,
+    pub phase: Option<usize>,
+    pub logs: &'a VecDeque<(String, bool)>,
+    pub scroll: usize,
+    pub title: &'a str,
+    pub message: &'a str,
+    pub color: bool,
 }
 
 impl Ui {
     pub(super) fn draw(&mut self, page: Page<'_>) -> hype_install::Result<()> {
-        let Self {
-            screen,
-            action,
-            source,
-            phase,
-            logs,
-            scroll,
-            title,
-            message,
-            color,
-        } = self;
-        let theme = Theme(*color);
-        screen.terminal.draw(|frame| {
-            let area = frame.area();
-            frame.render_widget(Block::new().style(theme.surface(GRAPHITE)), area);
-            if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-                frame.render_widget(
-                    Paragraph::new("Resize to 44 × 16 or press Esc.").wrap(Wrap { trim: true }),
-                    area,
-                );
-                return;
-            }
-            let [top, body, footer] = Layout::vertical([
-                Constraint::Length(3),
-                Constraint::Min(0),
-                Constraint::Length(2),
-            ])
-            .areas(area.inner(Margin::new(1, 0)));
-            let section = match &page {
-                Page::Actions { choices, .. } if !choices.contains(&Action::Install) => "Update",
-                Page::Actions { .. } => "Desktop setup",
-                _ => action.title(),
-            };
-            header(frame, top, theme, section);
-            let review_keys;
-            let keys = match page {
-                Page::Actions { choices, selected } => {
-                    actions(frame, body, theme, choices, selected);
-                    "↑↓  Choose     Enter  Continue     Esc  Quit"
-                }
-                Page::Extras {
-                    groups,
-                    checked,
-                    cursor,
-                } => {
-                    let [instruction, body] =
-                        Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(body);
-                    frame.render_widget(
-                        Paragraph::new(Line::from(vec![
-                            Span::styled(" Enter ", theme.selection()),
-                            Span::raw("  Continue to review"),
-                        ])),
-                        instruction,
-                    );
-                    Extras {
-                        groups,
-                        checked,
-                        cursor,
-                    }
-                    .draw(frame, body, theme);
-                    "↑↓  Move     Space  Toggle     a/n  All/none     Esc  Back"
-                }
-                Page::Review { extras, seconds } => {
-                    draw_review(frame, body, theme, *action, source, extras);
-                    review_keys = format!("Enter  Start     n / Esc  Back     Yes in {seconds}s");
-                    &review_keys
-                }
-                Page::Progress(prompt) => {
-                    let progress = Progress {
-                        phase: *phase,
-                        steps: action.phases(),
-                        logs,
-                        scroll: *scroll,
-                        title,
-                        message,
-                        prompt,
-                    };
-                    progress.draw(frame, body, theme);
-                    match prompt {
-                        Prompt::Confirm(..) => {
-                            "←→ / Tab  Choose     Enter  Confirm     y/n  Answer"
-                        }
-                        Prompt::Input(..) => "Enter  Submit     Esc  Stop",
-                        Prompt::Working => "PgUp/PgDn  Logs     End  Latest",
-                        Prompt::Finished(true) => "Enter / q  Close     PgUp/PgDn  Logs",
-                        Prompt::Finished(false) => {
-                            "Enter / q  Close    r  Reboot    PgUp/PgDn  Logs"
-                        }
-                    }
-                }
-            };
-            frame.render_widget(
-                Paragraph::new(format!(" {keys}"))
-                    .style(theme.fg(MUTED))
-                    .wrap(Wrap { trim: true }),
-                footer,
-            );
-        })?;
+        let view = View {
+            action: self.action,
+            source: self.source,
+            phase: self.phase,
+            logs: &self.logs,
+            scroll: self.scroll,
+            title: &self.title,
+            message: &self.message,
+            color: self.color,
+        };
+        self.screen
+            .terminal
+            .draw(|frame| view.render(frame, page))?;
         Ok(())
     }
 }
 
-fn header(frame: &mut Frame<'_>, area: Rect, theme: Theme, section: &str) {
-    let [bar, _] = Layout::vertical([Constraint::Length(2), Constraint::Length(1)]).areas(area);
-    frame.render_widget(Block::new().style(theme.surface(SLATE)), bar);
-    let [brand, context] =
-        Layout::horizontal([Constraint::Length(15), Constraint::Min(0)]).areas(bar);
-    frame.render_widget(
-        Paragraph::new("  Hype Niri").style(theme.fg(LILAC).bold()),
-        brand,
-    );
-    frame.render_widget(
-        Paragraph::new(format!("Arch Linux / {section}  "))
-            .style(theme.fg(MUTED))
-            .right_aligned(),
-        context,
-    );
-}
+impl View<'_> {
+    pub(super) fn render(&self, frame: &mut Frame<'_>, page: Page<'_>) {
+        let theme = Theme(self.color);
+        let area = frame.area();
+        if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+            frame.render_widget(
+                Paragraph::new("Resize to 44 × 16 or press Esc.")
+                    .style(theme.fg(TEXT))
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+            return;
+        }
+        let [top, rail, _, body, _, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(if area.width < WIDE { 2 } else { 1 }),
+        ])
+        .areas(area.inner(Margin::new(2, 1)));
 
-fn columns(area: Rect, stacked: u16, sidebar: u16) -> [Rect; 2] {
-    if area.width >= 74 {
-        Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)])
-            .spacing(1)
-            .areas(area)
-    } else {
-        Layout::vertical([Constraint::Length(stacked), Constraint::Min(0)]).areas(area)
+        let steps = self.action.phases().len();
+        let (section, progress) = match &page {
+            Page::Actions { choices, .. } if !choices.contains(&Action::Install) => {
+                ("Update".to_owned(), None)
+            }
+            Page::Actions { .. } => ("Desktop setup".to_owned(), None),
+            Page::Progress(prompt) => {
+                let done = self.phase.unwrap_or(0).min(steps);
+                let failed = matches!(prompt, Prompt::Finished(true));
+                (
+                    format!("Step {} of {steps}", (done + 1).min(steps)),
+                    Some((done as f64 / steps as f64, failed)),
+                )
+            }
+            _ => (self.action.title().to_owned(), None),
+        };
+        header(frame, top, rail, theme, &section, progress);
+
+        let keys: Vec<(&str, String)> = match page {
+            Page::Actions { choices, selected } => {
+                actions(frame, body, theme, choices, selected);
+                vec![
+                    ("↑↓", "Move".into()),
+                    ("Enter", "Choose".into()),
+                    ("Esc", "Quit".into()),
+                ]
+            }
+            Page::Extras {
+                groups,
+                checked,
+                cursor,
+            } => {
+                extras(frame, body, theme, groups, checked, cursor);
+                vec![
+                    ("Space", "Select".into()),
+                    ("a", "All".into()),
+                    ("n", "None".into()),
+                    ("Enter", "Continue to review".into()),
+                    ("Esc", "Back".into()),
+                ]
+            }
+            Page::Review { extras, seconds } => {
+                review(frame, body, theme, self.action, self.source, extras);
+                vec![
+                    ("Enter", start_label(self.action).into()),
+                    ("Esc", "Back".into()),
+                    ("", format!("Starts by itself in {seconds}s")),
+                ]
+            }
+            Page::Progress(prompt) => {
+                self.progress(frame, body, theme, prompt);
+                match prompt {
+                    Prompt::Confirm(..) => vec![
+                        ("y", "Yes".into()),
+                        ("n", "No".into()),
+                        ("←→ Enter", "Pick and confirm".into()),
+                    ],
+                    Prompt::Input(..) => {
+                        vec![
+                            ("Enter", "Send answer".into()),
+                            ("Esc", "Stop install".into()),
+                        ]
+                    }
+                    Prompt::Working => {
+                        vec![("PgUp/PgDn", "Scroll log".into()), ("End", "Newest".into())]
+                    }
+                    Prompt::Finished(true) => {
+                        vec![
+                            ("Enter", "Close".into()),
+                            ("PgUp/PgDn", "Scroll log".into()),
+                        ]
+                    }
+                    Prompt::Finished(false) => vec![
+                        ("Enter", "Close".into()),
+                        ("r", "Reboot now".into()),
+                        ("PgUp/PgDn", "Scroll log".into()),
+                    ],
+                }
+            }
+        };
+        let mut spans = Vec::new();
+        for (key, label) in &keys {
+            if !spans.is_empty() {
+                spans.push(Span::raw("    "));
+            }
+            if !key.is_empty() {
+                spans.push(Span::styled(*key, theme.strong(TEXT)));
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(label.as_str(), theme.fg(DIM)));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }),
+            footer,
+        );
+    }
+
+    fn progress(&self, frame: &mut Frame<'_>, area: Rect, theme: Theme, prompt: Prompt<'_>) {
+        let failed = matches!(prompt, Prompt::Finished(true));
+        let steps = self.action.phases();
+        let detail = if area.width >= WIDE {
+            let [list, detail] = Layout::horizontal([Constraint::Length(28), Constraint::Min(0)])
+                .spacing(3)
+                .areas(area);
+            if let Some(current) = self.phase {
+                let start = current.saturating_sub(list.height.saturating_sub(1) as usize);
+                let lines = steps
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .map(|(index, (name, _))| {
+                        let (mark, style) = if index < current {
+                            ("✓", theme.fg(DIM))
+                        } else if index == current && failed {
+                            ("!", theme.strong(WARN))
+                        } else if index == current {
+                            ("›", theme.strong(BRIGHT))
+                        } else {
+                            (" ", theme.fg(QUIET))
+                        };
+                        Line::styled(format!("{mark} {name}"), style)
+                    })
+                    .collect::<Vec<_>>();
+                frame.render_widget(Paragraph::new(lines), list);
+            }
+            detail
+        } else {
+            area
+        };
+
+        let (heading, message, action) = match prompt {
+            Prompt::Working | Prompt::Finished(_) => (self.title, self.message, None),
+            Prompt::Confirm(question, yes, seconds) => {
+                let option = |text: String, active| {
+                    Span::styled(
+                        text,
+                        if active {
+                            theme.selection()
+                        } else {
+                            theme.fg(DIM)
+                        },
+                    )
+                };
+                (
+                    "Question",
+                    question,
+                    Some(Line::from(vec![
+                        option(" No ".into(), !yes),
+                        Span::raw("  "),
+                        option(
+                            seconds.map_or_else(|| " Yes ".into(), |s| format!(" Yes in {s}s ")),
+                            yes,
+                        ),
+                    ])),
+                )
+            }
+            Prompt::Input(question, answer) => (
+                "Answer needed",
+                question,
+                Some(Line::styled(format!("› {answer}▏"), theme.strong(BRIGHT))),
+            ),
+        };
+        let mut lines = vec![
+            Line::styled(
+                heading.trim(),
+                theme.strong(if failed { WARN } else { BRIGHT }),
+            ),
+            Line::raw(""),
+        ];
+        lines.extend(
+            message
+                .lines()
+                .map(|line| Line::styled(line, theme.fg(TEXT))),
+        );
+        if let Some(action) = action {
+            lines.push(Line::raw(""));
+            lines.push(action);
+        }
+        let width = detail.width.max(1) as usize;
+        let height = lines
+            .iter()
+            .map(|line| line.width().div_ceil(width).max(1))
+            .sum::<usize>()
+            .min(detail.height as usize) as u16;
+        let [status, _, log] = Layout::vertical([
+            Constraint::Length(height),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .areas(detail);
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), status);
+
+        let [label, log] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(log);
+        frame.render_widget(
+            Paragraph::new(if self.scroll > 0 {
+                "Log, scrolled back. End shows the newest lines."
+            } else {
+                "Log"
+            })
+            .style(theme.fg(DIM)),
+            label,
+        );
+        let end = self.logs.len().saturating_sub(self.scroll);
+        let start = end.saturating_sub(log.height as usize);
+        let rows = self
+            .logs
+            .range(start..end)
+            .map(|(line, warning)| {
+                Line::styled(line.as_str(), theme.fg(if *warning { WARN } else { QUIET }))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(rows), log);
     }
 }
 
-fn actions(frame: &mut Frame<'_>, area: Rect, theme: Theme, choices: &[Action], selected: usize) {
-    let area = Rect {
-        height: area.height.min(12),
-        ..area
-    };
-    let [menu, detail] = columns(area, choices.len() as u16 + 2, 37);
-    let mut state = ListState::default().with_selected(Some(selected));
-    let items = choices.iter().map(|choice| ListItem::new(choice.label()));
-    frame.render_stateful_widget(
-        List::new(items)
-            .block(theme.panel(" Actions ", true))
-            .highlight_style(theme.selection())
-            .highlight_symbol("› "),
-        menu,
-        &mut state,
+fn header(
+    frame: &mut Frame<'_>,
+    top: Rect,
+    rail: Rect,
+    theme: Theme,
+    section: &str,
+    progress: Option<(f64, bool)>,
+) {
+    let [brand, context] =
+        Layout::horizontal([Constraint::Length(12), Constraint::Min(0)]).areas(top);
+    frame.render_widget(
+        Paragraph::new("Hype Niri").style(theme.strong(BRIGHT)),
+        brand,
     );
-    let (title, explanation, extra) = match choices[selected] {
+    frame.render_widget(
+        Paragraph::new(section).style(theme.fg(DIM)).right_aligned(),
+        context,
+    );
+    let width = rail.width as usize;
+    let (filled, color) = progress.map_or((0, BRIGHT), |(ratio, failed)| {
+        (
+            (ratio * width as f64).round() as usize,
+            if failed { WARN } else { BRIGHT },
+        )
+    });
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("━".repeat(filled), theme.fg(color)),
+            Span::styled("─".repeat(width - filled), theme.fg(FAINT)),
+        ])),
+        rail,
+    );
+}
+
+fn columns(area: Rect, sidebar: u16) -> [Rect; 2] {
+    if area.width >= WIDE {
+        Layout::horizontal([Constraint::Length(sidebar), Constraint::Min(0)])
+            .spacing(3)
+            .areas(area)
+    } else {
+        let half = (area.height / 2).max(4);
+        Layout::vertical([Constraint::Length(half), Constraint::Min(0)])
+            .spacing(1)
+            .areas(area)
+    }
+}
+
+fn menu<'a>(
+    theme: Theme,
+    rows: impl Iterator<Item = Line<'a>>,
+    cursor: usize,
+    height: u16,
+) -> Paragraph<'a> {
+    let start = cursor.saturating_sub(height.saturating_sub(1) as usize);
+    let lines = rows
+        .enumerate()
+        .skip(start)
+        .map(|(index, line)| {
+            if index == cursor {
+                line.style(theme.selection())
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>();
+    Paragraph::new(lines)
+}
+
+fn actions(frame: &mut Frame<'_>, area: Rect, theme: Theme, choices: &[Action], selected: usize) {
+    let [list, detail] = columns(area, 34);
+    let rows = choices
+        .iter()
+        .map(|choice| Line::styled(format!(" {:<32}", choice.label()), theme.fg(TEXT)));
+    frame.render_widget(menu(theme, rows, selected, list.height), list);
+    let (summary, first, second) = match choices[selected] {
         Action::Install => (
-            "Set up your desktop",
-            "Install Niri, Waybar, and the notch.",
-            "Review extras before installing.",
+            "Set up the full desktop on this computer.",
+            "Installs Niri, Waybar, the notch and the tools they use.",
+            "You pick extras and review everything before it starts.",
         ),
         Action::Update => (
-            "System and desktop update",
-            "Upgrade Arch and AUR packages.",
-            "Refresh Hype Niri and your extras.",
+            "Update packages and refresh the desktop.",
+            "Updates Arch and AUR packages, then copies the latest Hype Niri configs.",
+            "Your current configs are backed up first.",
         ),
         Action::Packages => (
-            "System package update",
-            "Upgrade installed Arch packages.",
-            "Upgrade installed AUR packages.",
+            "Update installed software.",
+            "Updates Arch and AUR packages.",
+            "Your desktop configs are not changed.",
         ),
     };
-    let lines = vec![
-        Line::from(title).style(theme.fg(INK).bold()),
-        Line::from(explanation),
-        Line::from(extra),
-    ];
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(theme.panel(" What changes ", false))
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(vec![
+            Line::styled(summary, theme.strong(BRIGHT)),
+            Line::raw(""),
+            Line::styled(first, theme.fg(TEXT)),
+            Line::styled(second, theme.fg(DIM)),
+        ])
+        .wrap(Wrap { trim: true }),
         detail,
     );
 }
 
-fn draw_review(
+fn extras(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: Theme,
+    groups: &[(String, Vec<String>)],
+    checked: &[bool],
+    cursor: usize,
+) {
+    let count = checked.iter().filter(|&&check| check).count();
+    let [heading, _, body] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Extras", theme.strong(BRIGHT)),
+            Span::styled(
+                format!("   {count} of {} selected", groups.len()),
+                theme.fg(DIM),
+            ),
+        ])),
+        heading,
+    );
+    let [list, detail] = columns(body, 30);
+    let rows = groups.iter().zip(checked).map(|((name, _), &check)| {
+        let (mark, style) = if check {
+            ("●", theme.fg(BRIGHT))
+        } else {
+            ("○", theme.fg(DIM))
+        };
+        Line::styled(format!(" {mark} {:<26}", group_label(name)), style)
+    });
+    frame.render_widget(menu(theme, rows, cursor, list.height), list);
+
+    let (name, packages) = &groups[cursor];
+    let mut lines = vec![
+        Line::styled(group_label(name), theme.strong(BRIGHT)),
+        Line::styled(
+            if checked[cursor] {
+                "Will be installed"
+            } else {
+                "Will be skipped"
+            },
+            theme.fg(DIM),
+        ),
+        Line::raw(""),
+        Line::styled(group_note(name), theme.fg(TEXT)),
+        Line::raw(""),
+        Line::styled("Packages", theme.fg(DIM)),
+    ];
+    lines.extend(
+        packages
+            .iter()
+            .map(|package| Line::styled(package.as_str(), theme.fg(TEXT))),
+    );
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "The core desktop is always installed.",
+        theme.fg(DIM),
+    ));
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), detail);
+}
+
+fn start_label(action: Action) -> &'static str {
+    match action {
+        Action::Install => "Start installation",
+        Action::Update => "Start update",
+        Action::Packages => "Start package update",
+    }
+}
+
+fn review(
     frame: &mut Frame<'_>,
     area: Rect,
     theme: Theme,
@@ -268,49 +522,71 @@ fn draw_review(
     source: &str,
     extras: Option<&[String]>,
 ) {
-    let (title, start) = match action {
-        Action::Install => ("Review install", "Start installation"),
-        Action::Update => ("Review update", "Update packages and Hype Niri"),
-        Action::Packages => ("Review package update", "Update system packages"),
+    let title = match action {
+        Action::Install => "Review install",
+        Action::Update => "Review update",
+        Action::Packages => "Review package update",
+    };
+    let row = |label: &'static str, value: String| {
+        Line::from(vec![
+            Span::styled(format!("{label:<13}"), theme.fg(DIM)),
+            Span::styled(value, theme.fg(TEXT)),
+        ])
     };
     let mut lines = vec![
-        Line::from(vec![
-            Span::styled(" Enter ", theme.selection()),
-            Span::styled(format!("  {start}"), theme.fg(LILAC).bold()),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Arch packages  ", theme.fg(INK).bold()),
-            Span::raw("sudo pacman -Syu"),
-        ]),
-        Line::from(vec![
-            Span::styled("AUR packages   ", theme.fg(INK).bold()),
-            Span::raw("yay -Syu --aur"),
-        ]),
-        Line::from("Install yay from the AUR if missing."),
+        Line::styled(title, theme.strong(BRIGHT)),
+        Line::raw(""),
+        row("Updates", "Arch packages, then AUR packages".into()),
+        row("Password", "sudo asks for it when needed".into()),
     ];
     if let Some(extras) = extras {
-        lines.push(Line::from("Back up configs before replacement."));
-        lines.push(
-            Line::from(format!("{source} / {} extras selected", extras.len()))
-                .style(theme.fg(MUTED)),
-        );
-        if !extras.is_empty() {
-            let names = extras
-                .iter()
-                .map(|name| group_label(name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(Line::from(names).style(theme.fg(MUTED)));
-        }
+        lines.push(row("Backup", "Your current configs are saved first".into()));
+        lines.push(row("Files from", source.into()));
+        lines.push(row(
+            "Extras",
+            if extras.is_empty() {
+                "None".into()
+            } else {
+                extras
+                    .iter()
+                    .map(|name| group_label(name))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ));
     }
-    lines.push(Line::from("Follow the package prompts as they appear.").style(theme.fg(MUTED)));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(theme.panel(format!(" {title} "), true))
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "Some steps ask questions. Answer them in this window.",
+        theme.fg(DIM),
+    ));
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+fn group_note(name: &str) -> &'static str {
+    match name {
+        "browser-firefox" | "browser-brave" => "Web browser.",
+        "editor-neovim" => "Terminal code editor, set up with LazyVim.",
+        "editor-gnome" | "editor-kate" => "Text editor.",
+        "editor-code" => "Visual Studio Code editor.",
+        "chat" => "Discord chat app.",
+        "notes" => "Obsidian notes app.",
+        "hype-flow" => "Offline voice typing. Press Alt+Space to dictate.",
+        "desktop-tools" => "Color picker, task monitor and volume mixer.",
+        "media" => "Video player, screen recorder and video thumbnails.",
+        "login-manager-ly" => "Simple login screen that starts Niri.",
+        "firewall" => "Blocks incoming connections.",
+        "docker" => "Run apps in containers.",
+        "bluetooth" => "Bluetooth support and a device manager.",
+        "warp" => "Cloudflare's private DNS and optional VPN.",
+        "stealth" => "Send all traffic through Tor when you turn it on.",
+        "proton-vpn" => "Proton VPN app.",
+        "shell-extras" => "Faster terminal tools and a nicer Zsh prompt.",
+        "compatibility" => "Support for X11 apps, archives, phones and extra drives.",
+        "hardware-intel" => "Graphics and video drivers for Intel GPUs.",
+        "theme-extras" => "Grey folder icons and the Bibata cursor.",
+        _ => "Optional packages.",
+    }
 }
 
 fn group_label(name: &str) -> String {
@@ -321,8 +597,14 @@ fn group_label(name: &str) -> String {
         "editor-gnome" => "GNOME Text Editor".to_owned(),
         "editor-kate" => "Kate".to_owned(),
         "editor-code" => "VS Code".to_owned(),
-        "hype-flow" => "Hype Flow".to_owned(),
-        "login-manager-ly" => "Ly display manager".to_owned(),
+        "hype-flow" => "Hype Flow dictation".to_owned(),
+        "login-manager-ly" => "Ly login screen".to_owned(),
+        "desktop-tools" => "Desktop tools".to_owned(),
+        "shell-extras" => "Terminal extras".to_owned(),
+        "theme-extras" => "Theme extras".to_owned(),
+        "chat" => "Discord".to_owned(),
+        "notes" => "Obsidian".to_owned(),
+        "stealth" => "Stealth routing".to_owned(),
         "warp" => "Cloudflare WARP".to_owned(),
         "proton-vpn" => "Proton VPN".to_owned(),
         "hardware-intel" => "Intel graphics".to_owned(),
@@ -338,201 +620,155 @@ fn group_label(name: &str) -> String {
     }
 }
 
-struct Extras<'a> {
-    groups: &'a [(String, Vec<String>)],
-    checked: &'a [bool],
-    cursor: usize,
-}
+#[cfg(test)]
+mod preview {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+    use std::fmt::Write;
 
-impl Extras<'_> {
-    fn draw(self, frame: &mut Frame<'_>, area: Rect, theme: Theme) {
-        let Self {
-            groups,
-            checked,
-            cursor,
-        } = self;
-        let list_height = (area.height / 2).max(4);
-        let [list, details] = columns(area, list_height, 34);
-        let count = checked.iter().filter(|&&check| check).count();
-        let items = groups.iter().zip(checked).map(|((name, _), &check)| {
-            let check = if check { "[x]" } else { "[ ]" };
-            ListItem::new(format!("{check} {}", group_label(name)))
-        });
-        let mut state = ListState::default().with_selected(Some(cursor));
-        frame.render_stateful_widget(
-            List::new(items)
-                .block(theme.panel(format!(" Extras {count}/{} ", groups.len()), true))
-                .highlight_style(theme.selection())
-                .highlight_symbol("› "),
-            list,
-            &mut state,
-        );
-
-        let (name, packages) = &groups[cursor];
-        let state = if checked[cursor] {
-            "Selected"
-        } else {
-            "Available"
-        };
-        let package_label = if packages.len() == 1 {
-            "package"
-        } else {
-            "packages"
-        };
-        let mut lines = vec![
-            Line::from(format!("{state}  /  {} {package_label}", packages.len()))
-                .style(theme.fg(LILAC).bold()),
-            Line::from(""),
-        ];
-        lines.extend(
-            packages
-                .chunks(if details.width >= 55 { 3 } else { 2 })
-                .map(|row| Line::from(row.join("  "))),
-        );
-        lines.push(Line::from(""));
-        lines.push(Line::from("Core desktop packages are always included.").style(theme.fg(MUTED)));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(theme.panel(format!(" {} ", group_label(name)), false))
-                .wrap(Wrap { trim: true }),
-            details,
-        );
-    }
-}
-
-struct Progress<'a> {
-    phase: Option<usize>,
-    steps: &'static [(&'static str, Phase)],
-    logs: &'a std::collections::VecDeque<(String, bool)>,
-    scroll: usize,
-    title: &'a str,
-    message: &'a str,
-    prompt: Prompt<'a>,
-}
-
-impl Progress<'_> {
-    fn draw(self, frame: &mut Frame<'_>, area: Rect, theme: Theme) {
-        let failed = matches!(self.prompt, Prompt::Finished(true));
-        let [sidebar, detail] = columns(area, 3, 32);
-        let panel = theme.panel(" Progress ", false);
-        let inner = panel.inner(sidebar);
-        frame.render_widget(panel, sidebar);
-        let completed = self.phase.unwrap_or(0);
-        let [meter, phases] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
-        frame.render_widget(
-            Gauge::default()
-                .ratio(completed as f64 / self.steps.len() as f64)
-                .label(format!(" {completed:02} / {} ", self.steps.len()))
-                .gauge_style(theme.fg(if failed { AMBER } else { MINT }).bold()),
-            meter,
-        );
-        if phases.height > 0
-            && let Some(current) = self.phase
-        {
-            let start = current.saturating_sub(phases.height.saturating_sub(1) as usize);
-            let items = self
-                .steps
-                .iter()
-                .enumerate()
-                .skip(start)
-                .map(|(index, (name, _))| {
-                    let (mark, color) = if index < current {
-                        ("✓", MINT)
-                    } else if index == current {
-                        (
-                            if failed { "!" } else { "›" },
-                            if failed { AMBER } else { LILAC },
-                        )
-                    } else {
-                        ("·", MUTED)
-                    };
-                    ListItem::new(Line::styled(format!("{mark} {name}"), theme.fg(color)))
-                });
-            frame.render_widget(List::new(items), phases);
-        }
-        let placeholder = self.message;
-        let (title, status, action) = match self.prompt {
-            Prompt::Working => (self.title, placeholder, None),
-            Prompt::Finished(_) => (self.title, placeholder, None),
-            Prompt::Confirm(question, yes, seconds) => {
-                let select = |text, active| {
-                    Span::styled(
-                        text,
-                        if active {
-                            theme.selection()
-                        } else {
-                            theme.fg(MUTED)
-                        },
-                    )
+    fn ansi(buffer: &Buffer) -> String {
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                let fg = match cell.fg {
+                    Color::Rgb(r, g, b) => format!("38;2;{r};{g};{b}"),
+                    _ => "39".into(),
                 };
-                (
-                    " Confirm ",
-                    question,
-                    Some(Line::from(vec![
-                        select(" No ".to_owned(), !yes),
-                        Span::raw("  "),
-                        select(
-                            seconds.map_or_else(
-                                || " Yes ".to_owned(),
-                                |seconds| format!(" Yes in {seconds}s "),
-                            ),
-                            yes,
-                        ),
-                    ])),
-                )
+                let bg = match cell.bg {
+                    Color::Rgb(r, g, b) => format!("48;2;{r};{g};{b}"),
+                    _ => "49".into(),
+                };
+                let bold = if cell.modifier.contains(Modifier::BOLD) {
+                    "1"
+                } else {
+                    "22"
+                };
+                write!(out, "\x1b[{bold};{fg};{bg}m{}", cell.symbol()).unwrap();
             }
-            Prompt::Input(question, answer) => (
-                " Input ",
-                question,
-                Some(Line::styled(format!("› {answer}▏"), theme.fg(LILAC))),
-            ),
-        };
-        let width = detail.width.saturating_sub(8).max(1) as usize;
-        let status_lines: usize = status
-            .lines()
-            .map(|line| Line::from(line).width().div_ceil(width).max(1))
-            .sum();
-        let status_height =
-            (status_lines + 2 + usize::from(action.is_some())).min(detail.height as usize) as u16;
-        let [status_area, log_area] =
-            Layout::vertical([Constraint::Length(status_height), Constraint::Min(0)]).areas(detail);
-        let mut lines = status
-            .lines()
-            .map(|line| Line::styled(line, theme.fg(if failed { AMBER } else { INK })))
-            .collect::<Vec<_>>();
-        if let Some(action) = action {
-            lines.push(action);
+            out.push_str("\x1b[0m\n");
         }
-        let interactive = matches!(self.prompt, Prompt::Confirm(..) | Prompt::Input(..));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(theme.panel(format!(" {} ", title.trim()), interactive))
-                .wrap(Wrap { trim: true }),
-            status_area,
-        );
+        out
+    }
 
-        let panel = theme.panel(
-            if self.scroll > 0 {
-                " Activity / scroll "
-            } else {
-                " Activity "
-            },
-            false,
-        );
-        let rows = panel.inner(log_area).height as usize;
-        let end = self.logs.len().saturating_sub(self.scroll);
-        let start = end.saturating_sub(rows);
-        let log_lines = self
-            .logs
-            .range(start..end)
-            .map(|(line, warning)| {
-                Line::styled(
-                    line.as_str(),
-                    theme.fg(if *warning { AMBER } else { MUTED }),
-                )
+    #[test]
+    #[ignore = "writes ANSI previews to HYPE_TUI_PREVIEW"]
+    fn render_pages() {
+        let dir = std::env::var("HYPE_TUI_PREVIEW").unwrap();
+        let (width, height) = std::env::var("HYPE_TUI_SIZE")
+            .ok()
+            .and_then(|size| {
+                let (w, h) = size.split_once('x')?;
+                Some((w.parse().ok()?, h.parse().ok()?))
             })
-            .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(log_lines).block(panel), log_area);
+            .unwrap_or((100, 30));
+        let mut logs = VecDeque::new();
+        for line in [
+            "Refresh Arch mirrors",
+            "Terminal: sudo",
+            ":: Synchronizing package databases...",
+            " core is up to date",
+            " extra is up to date",
+            "Installing yay-bin",
+        ] {
+            logs.push_back((line.to_owned(), false));
+        }
+        logs.push_back(("warning: ttf-nerd-fonts-symbols is up to date".into(), true));
+        let groups = vec![
+            ("browser-firefox".to_owned(), vec!["firefox".to_owned()]),
+            (
+                "editor-neovim".to_owned(),
+                vec!["neovim".into(), "lazygit".into(), "ripgrep".into()],
+            ),
+            (
+                "docker".to_owned(),
+                vec!["docker".into(), "docker-compose".into()],
+            ),
+            ("hype-flow".to_owned(), vec!["hype-flow".into()]),
+            ("warp".to_owned(), vec!["cloudflare-warp-bin".into()]),
+        ];
+        let checked = [true, true, false, true, false];
+        let names = [
+            "browser-firefox".to_owned(),
+            "editor-neovim".into(),
+            "hype-flow".into(),
+        ];
+        let pages: Vec<(&str, Option<usize>, &str, &str, Page)> = vec![
+            (
+                "actions",
+                None,
+                "",
+                "",
+                Page::Actions {
+                    choices: &[Action::Install, Action::Packages, Action::Update],
+                    selected: 0,
+                },
+            ),
+            (
+                "extras",
+                None,
+                "",
+                "",
+                Page::Extras {
+                    groups: &groups,
+                    checked: &checked,
+                    cursor: 1,
+                },
+            ),
+            (
+                "review",
+                None,
+                "",
+                "",
+                Page::Review {
+                    extras: Some(&names),
+                    seconds: 4,
+                },
+            ),
+            (
+                "working",
+                Some(5),
+                "Install Hype Niri",
+                "Installing core packages",
+                Page::Progress(Prompt::Working),
+            ),
+            (
+                "confirm",
+                Some(9),
+                "Install Hype Niri",
+                "",
+                Page::Progress(Prompt::Confirm(
+                    "Set up ly as display manager?",
+                    false,
+                    None,
+                )),
+            ),
+            (
+                "failed",
+                Some(7),
+                "Install failed",
+                "pacman failed (exit status: 1)",
+                Page::Progress(Prompt::Finished(true)),
+            ),
+        ];
+        for (name, phase, title, message, page) in pages {
+            let view = View {
+                action: Action::Install,
+                source: "This folder",
+                phase,
+                logs: &logs,
+                scroll: 0,
+                title,
+                message,
+                color: true,
+            };
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| view.render(frame, page)).unwrap();
+            std::fs::write(
+                format!("{dir}/{name}.ans"),
+                ansi(terminal.backend().buffer()),
+            )
+            .unwrap();
+        }
     }
 }
