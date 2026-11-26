@@ -175,7 +175,8 @@ impl View<'_> {
             }
             _ => (self.action.title().to_owned(), None),
         };
-        let motion = matches!(page, Page::Progress(Prompt::Working)).then_some(self.tick);
+        let motion =
+            (self.color && matches!(page, Page::Progress(Prompt::Working))).then_some(self.tick);
         header(frame, top, rail, theme, &section, progress, motion);
         let password = match page {
             Page::Progress(Prompt::Password(problem, length)) => Some((problem, length)),
@@ -265,7 +266,11 @@ impl View<'_> {
             footer,
         );
         if let Some((problem, length)) = password {
-            password_popup(frame, area, theme, problem, length);
+            let above = Rect {
+                height: footer.y.saturating_sub(area.y),
+                ..area
+            };
+            password_popup(frame, above, theme, problem, length);
         }
     }
 
@@ -477,7 +482,10 @@ fn password_popup(
     }
     let height = lines
         .iter()
-        .map(|line| line.width().div_ceil(inner).max(1) as u16)
+        .map(|line| {
+            let rows = line.width().div_ceil(inner);
+            (rows.max(1) + usize::from(rows > 1)) as u16
+        })
         .sum::<u16>()
         + 4;
     let popup = area.centered(

@@ -27,7 +27,7 @@ cd hype_niri &&
 
 Run the installer as your regular user with sudo access. Installer confirmations default to Yes after five seconds. Press Enter to accept or `n` to decline. For line prompts, submit `n` with Enter. Declining a required configuration backup stops the installation.
 
-In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Press Enter to review and start the countdown. Use Page Up and Page Down to browse activity. The terminal switches to the native prompt when tools such as `sudo`, `pacman`, or `yay` need input.
+In the extras checklist, Space toggles a group, `a` selects all, and `n` selects none. Press Enter to review and start the countdown. Use Page Up and Page Down to browse activity. The installer asks for your sudo password in a popup, then `pacman`, `yay` and `makepkg` run in the window with their default answers. With `--plain`, they prompt in the terminal.
 
 Run `~/bin/hype update` from any directory to choose a package update or a package and desktop update. Add `--plain` for line prompts. Hype Niri's Zsh configuration adds `~/bin` to `PATH`, which lets you run `hype update`. Run `./install.sh` from a checkout to open the action menu.
 
@@ -35,7 +35,7 @@ Run `~/bin/hype update` from any directory to choose a package update or a packa
 > Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.
 
 > [!NOTE]
-> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and installs the package with the sudo password you entered in the installer popup.
+> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and installs the package with sudo.
 
 ---
 

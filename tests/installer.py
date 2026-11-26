@@ -258,14 +258,19 @@ exit 78
             """ticket="${HYPE_TEST_CALLS%/*}/sudo-ticket"
 case "$*" in
     "-n -v")
-        [[ -e $ticket ]] || { printf 'sudo: a password is required\\n' >&2; exit 1; } ;;
-    "-S -p  -v")
-        IFS= read -r password
-        [[ $password == secret ]] || {
-            printf 'Sorry, try again.\\nsudo: 1 incorrect password attempt\\n' >&2
-            exit 1
-        }
-        /usr/bin/touch -- "$ticket" ;;
+        [[ -e $ticket ]] || exit 1 ;;
+    "-S -p [hype-niri password] -v")
+        for attempt in 1 2 3; do
+            printf '[hype-niri password]' >&2
+            IFS= read -r password || exit 1
+            if [[ $password == secret ]]; then
+                /usr/bin/touch -- "$ticket"
+                exit 0
+            fi
+            printf 'Sorry, try again.\\n' >&2
+            printf 'attempt\\n' >> "${HYPE_TEST_CALLS%/*}/attempts"
+        done
+        exit 1 ;;
     *)
         [[ -e $ticket ]] || exit 1
         printf 'sudo %s\\n' "$*" >> "$HYPE_TEST_CALLS"
@@ -284,7 +289,7 @@ esac
         self.send(b"\r")
         self.expect("sudo needs your password.")
         self.send(b"wrong\r")
-        self.expect("sudo: 1 incorrect password attempt")
+        self.expect("Sorry, try again.")
         self.send(b"secret\r")
         self.expect("Refresh Arch mirrors")
         self.send(b"n")
@@ -301,6 +306,7 @@ esac
             "sudo -n pacman -Sy --needed --noconfirm archlinux-keyring",
             self.calls.read_text(),
         )
+        self.assertEqual((self.root / "attempts").read_text(), "attempt\n")
 
     def test_system_update_runs_pacman_and_yay_without_desktop_checkout(self):
         self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
