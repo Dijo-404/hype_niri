@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-const OOM_SOURCE: &str = "systemd/user@.service.d/60-hype-niri-oomd.conf";
+const OOM_SOURCE: &str = "system/systemd/user@.service.d/60-hype-niri-oomd.conf";
 const OOM_DEST: &str = "/etc/systemd/system/user@.service.d/60-hype-niri-oomd.conf";
 const OOM_POLICY: &str = "MemoryAccounting=yes\nManagedOOMMemoryPressure=kill\nManagedOOMSwap=kill\nManagedOOMMemoryPressureLimit=1717986918\nManagedOOMMemoryPressureDurationUSec=10s\n";
 
@@ -205,7 +205,7 @@ impl Fixture {
     fn prepare_system(&self) {
         self.prepare_oom();
         put(
-            &self.installer.source.join("polkit/60-hype.rules"),
+            &self.installer.source.join("system/polkit/60-hype.rules"),
             "// polkit fixture\n",
         );
         self.override_call(
@@ -236,7 +236,7 @@ impl Fixture {
         ] {
             put(&self.installer.system(path), content);
         }
-        let payload = self.installer.source.join("stealth");
+        let payload = self.installer.source.join("system/stealth");
         for name in [
             "stealth.service",
             "stealth.nft",
@@ -244,7 +244,7 @@ impl Fixture {
             "torrc.conf",
         ] {
             let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../stealth")
+                .join("../../system/stealth")
                 .join(name);
             put(&payload.join(name), fs::read(source).unwrap());
         }
@@ -786,7 +786,7 @@ fn stealth_publishes_only_rust_payload_after_elevated_install_succeeds() {
     let mut f = Fixture::new();
     let payload = f.prepare_stealth();
     put(
-        &f.installer.source.join("zsh/stealth.zsh"),
+        &f.installer.source.join("config/zsh/stealth.zsh"),
         "alias stealth-start='hype-control stealth start'\n",
     );
     let binary = f

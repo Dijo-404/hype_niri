@@ -6,7 +6,7 @@ import threading
 import time
 import unittest
 
-from runtime_fixture import Gio, GLib, RuntimeFixture
+from fixture import Gio, GLib, RuntimeFixture
 
 WATCHER = "org.kde.StatusNotifierWatcher"
 ITEM = "org.kde.StatusNotifierItem"

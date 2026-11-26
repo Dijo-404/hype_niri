@@ -98,4 +98,4 @@ Aliases to speed up your terminal workflow in Hype Niri.
 - `stealth-status`: Show service, firewall, MAC, and live Tor verification
 - `stealth-stop`: Restore the original Wi-Fi MAC and connection when needed, then remove the Stealth firewall
 
-These are Zsh functions loaded from `~/.local/share/stealth/stealth.zsh`. See [installation and traffic limits](INSTALL.md#stealth-tor-routing).
+These are Zsh functions loaded from `~/.local/share/stealth/stealth.zsh`. See [installation and traffic limits](install.md#stealth-tor-routing).

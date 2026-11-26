@@ -64,7 +64,7 @@ impl Installer {
 
     pub fn optional_package_groups(&self) -> Result<Vec<(String, Vec<String>)>> {
         optional_groups(&fs::read_to_string(
-            self.source.join("optional-packages.txt"),
+            self.source.join("packages/extras.txt"),
         )?)
     }
 
@@ -136,7 +136,8 @@ impl Installer {
         if self.optional_groups.is_none() {
             self.select_optional_groups()?;
         }
-        let mut packages = package_lines(&fs::read_to_string(self.source.join("pkglist.txt"))?)?;
+        let mut packages =
+            package_lines(&fs::read_to_string(self.source.join("packages/core.txt"))?)?;
         let groups = self.optional_package_groups()?;
         for selected in self.optional_groups.as_ref().unwrap() {
             let (_, requirements) = groups
@@ -410,13 +411,14 @@ mod tests {
     ) -> (tempfile::TempDir, Installer, Rc<RefCell<Vec<String>>>) {
         let root = tempfile::tempdir().unwrap();
         let calls = Rc::new(RefCell::new(Vec::new()));
+        std::fs::create_dir(root.path().join("packages")).unwrap();
         std::fs::write(
-            root.path().join("pkglist.txt"),
+            root.path().join("packages/core.txt"),
             " # ignore\nofficial # desktop\nforeign\nprovider\nmissing\nofficial\n",
         )
         .unwrap();
         std::fs::write(
-            root.path().join("optional-packages.txt"),
+            root.path().join("packages/extras.txt"),
             "[docker]\ndocker\n",
         )
         .unwrap();
@@ -456,7 +458,11 @@ mod tests {
     #[test]
     fn core_install_does_not_require_yay_or_install_unselected_groups() {
         let (root, mut installer, calls) = fixture(false, false, false);
-        fs::write(root.path().join("pkglist.txt"), "official\nprovider\n").unwrap();
+        fs::write(
+            root.path().join("packages/core.txt"),
+            "official\nprovider\n",
+        )
+        .unwrap();
         installer.optional_groups = None;
         installer.runner = Box::new(Fake {
             calls: calls.clone(),
@@ -481,9 +487,9 @@ mod tests {
     #[test]
     fn accepted_extras_install_and_save_the_selected_groups() {
         let (root, mut installer, calls) = fixture(false, false, false);
-        fs::write(root.path().join("pkglist.txt"), "official\n").unwrap();
+        fs::write(root.path().join("packages/core.txt"), "official\n").unwrap();
         fs::write(
-            root.path().join("optional-packages.txt"),
+            root.path().join("packages/extras.txt"),
             "[hype-flow]\nmissing\n[bluetooth]\nbluez\n",
         )
         .unwrap();
@@ -516,9 +522,9 @@ mod tests {
     #[test]
     fn enter_installs_and_saves_all_extras_including_hype_flow() {
         let (root, mut installer, calls) = fixture(false, false, false);
-        fs::write(root.path().join("pkglist.txt"), "official\n").unwrap();
+        fs::write(root.path().join("packages/core.txt"), "official\n").unwrap();
         fs::write(
-            root.path().join("optional-packages.txt"),
+            root.path().join("packages/extras.txt"),
             "[browser-firefox]\nfirefox\n[browser-brave]\nbrave-bin\n[hype-flow]\nmissing\n",
         )
         .unwrap();
@@ -547,9 +553,9 @@ mod tests {
     #[test]
     fn selected_aur_group_requires_yay_before_repository_installation() {
         let (root, mut installer, calls) = fixture(false, false, false);
-        fs::write(root.path().join("pkglist.txt"), "official\n").unwrap();
+        fs::write(root.path().join("packages/core.txt"), "official\n").unwrap();
         fs::write(
-            root.path().join("optional-packages.txt"),
+            root.path().join("packages/extras.txt"),
             "[docker]\nmissing\n",
         )
         .unwrap();
@@ -573,10 +579,8 @@ mod tests {
     }
     #[test]
     fn repository_core_excludes_optional_apps_and_replaced_helpers() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap();
-        let core = fs::read_to_string(root.join("pkglist.txt")).unwrap();
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let core = fs::read_to_string(root.join("packages/core.txt")).unwrap();
         let packages: Vec<_> = core
             .lines()
             .map(|line| line.split('#').next().unwrap().trim())
@@ -603,7 +607,7 @@ mod tests {
                 "unexpected default: {optional}"
             );
         }
-        assert!(root.join("optional-packages.txt").is_file());
+        assert!(root.join("packages/extras.txt").is_file());
     }
     #[test]
     fn installs_only_packages_without_an_installed_provider() {
@@ -638,7 +642,7 @@ mod tests {
     #[test]
     fn official_package_satisfied_by_a_provider_is_not_installed() {
         let (root, mut installer, calls) = fixture(false, false, false);
-        fs::write(root.path().join("pkglist.txt"), "official\nrust\n").unwrap();
+        fs::write(root.path().join("packages/core.txt"), "official\nrust\n").unwrap();
         installer.install_packages().unwrap();
         let calls = calls.borrow();
         assert!(

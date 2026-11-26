@@ -45,7 +45,7 @@ If you prefer to selectively apply configurations, follow these manual steps. Ba
 
 ### 1. Install Required Packages
 
-`pkglist.txt` contains core desktop and build requirements. Press Enter or answer `y` at the extras prompt to install all groups in `optional-packages.txt`. Answer `n` for core only or `custom` to select groups by number or name. For example, enter `browser-firefox editor-neovim bluetooth`. Existing packages are retained when you change the selection. See [Dependencies and Services](DEPENDENCIES.md).
+`packages/core.txt` contains core desktop and build requirements. Press Enter or answer `y` at the extras prompt to install all groups in `packages/extras.txt`. Answer `n` for core only or `custom` to select groups by number or name. For example, enter `browser-firefox editor-neovim bluetooth`. Existing packages are retained when you change the selection. See [Dependencies and Services](dependencies.md).
 
 The default extras include `hype-flow` and the English Parakeet model. The `desktop-integrations` phase sets up the Niri shortcuts and background startup. When run inside Niri, it also requests an immediate background launch. New Hype Flow configurations use `Alt+Space` for dictation.
 
@@ -106,18 +106,19 @@ mkdir -p ~/.config
 ./target/release/hype-install --source "$PWD" --phase user-dirs
 mkdir -p ~/pictures/screenshots ~/pictures/wallpapers
 
-cp -r niri waybar scripts alacritty mako fastfetch hypr ~/.config/
+cp -r config/niri config/waybar config/alacritty config/mako config/fastfetch config/hypr ~/.config/
+mkdir -p ~/.config/scripts
 install -m 755 target/release/hype-control target/release/hype-notch target/release/hype-status ~/.config/scripts/
 install -m 644 target/release/libhype_blueman_keys.so ~/.config/scripts/
 mkdir -p ~/.config/systemd/user
-cp systemd/user/hype-*.service ~/.config/systemd/user/
+cp system/systemd/user/hype-*.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 touch ~/.config/niri/outputs.kdl
 
 [ -d wallpapers ] && cp -an wallpapers/. ~/pictures/wallpapers/
 
-cp zsh/.zshrc ~/
-cp zsh/.p10k.zsh ~/
+cp config/zsh/.zshrc ~/
+cp config/zsh/.p10k.zsh ~/
 
 ./target/release/hype-install --source "$PWD" --phase desktop-integrations
 # Optional: explicitly install/configure the LazyVim starter
@@ -157,7 +158,7 @@ dconf write /org/gnome/desktop/interface/monospace-font-name "'JetBrains Mono 10
 dconf write /org/gnome/desktop/interface/document-font-name  "'JetBrains Mono 10'"
 
 mkdir -p ~/.config/fontconfig/conf.d
-cp fontconfig/60-hype-niri-fonts.conf ~/.config/fontconfig/conf.d/
+cp config/fontconfig/60-hype-niri-fonts.conf ~/.config/fontconfig/conf.d/
 
 papirus-folders -C grey --theme Papirus-Dark
 
@@ -173,7 +174,7 @@ These steps require elevated privileges (`sudo`).
 sudo sed -i 's/^#Color$/Color/' /etc/pacman.conf
 sudo sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 6/' /etc/pacman.conf
 
-sudo cp polkit/*.rules /etc/polkit-1/rules.d/
+sudo cp system/polkit/*.rules /etc/polkit-1/rules.d/
 
 sudo systemctl enable --now NetworkManager power-profiles-daemon
 # Optional, after selecting/installing bluetooth:
@@ -237,7 +238,7 @@ The automated installer enables this by default. To apply only OOM protection on
 ./target/release/hype-install --setup-oomd "$PWD"
 ```
 
-The script installs `systemd/user@.service.d/60-hype-niri-oomd.conf` into `/etc/systemd/system/user@.service.d/`, reloads systemd, and runs `sudo systemctl enable --now systemd-oomd.service`. Arch includes the daemon in its `systemd` package; this policy requires systemd 257 or newer, cgroup v2, and PSI. It applies to running user managers without restarting the desktop.
+The script installs `system/systemd/user@.service.d/60-hype-niri-oomd.conf` into `/etc/systemd/system/user@.service.d/`, reloads systemd, and runs `sudo systemctl enable --now systemd-oomd.service`. Arch includes the daemon in its `systemd` package; this policy requires systemd 257 or newer, cgroup v2, and PSI. It applies to running user managers without restarting the desktop.
 
 User applications are monitored for memory pressure above **40% for 10 seconds**, plus the default swap exhaustion threshold. The pressure percentage measures time stalled waiting for memory, rather than RAM usage. This reduces the chance that runaway agent tests freeze the desktop; it does not guarantee a kill within ten seconds of allocation starting. Keep swap enabled so the daemon has time to react.
 
@@ -260,7 +261,7 @@ journalctl -u systemd-oomd.service --no-pager -n 30
 
 ### 6. Shell Setup
 
-`fzf-tab` is installed from `pkglist.txt`; no manual plugin clone is needed.
+`fzf-tab` is installed from `packages/core.txt`; no manual plugin clone is needed.
 
 ```bash
 chsh -s /usr/bin/zsh
@@ -320,9 +321,9 @@ Select the `stealth` group to install its packages. The installer then asks befo
 mkdir -p ~/.local/share/stealth
 sudo pacman -S --needed tor nftables polkit
 cargo build --release --locked -p hype-desktop --bin stealth -p hype-install --bin hype-install
-cp zsh/stealth.zsh \
-    stealth/stealth.service stealth/stealth.nft stealth/stealth.sudoers \
-    stealth/torrc.conf ~/.local/share/stealth/
+cp config/zsh/stealth.zsh \
+    system/stealth/stealth.service system/stealth/stealth.nft system/stealth/stealth.sudoers \
+    system/stealth/torrc.conf ~/.local/share/stealth/
 install -m 755 target/release/stealth ~/.local/share/stealth/stealth
 sudo ./target/release/hype-install --install-stealth "$HOME/.local/share/stealth"
 ```
@@ -356,6 +357,8 @@ hype update
 
 If your installed `hype` predates updater self-refresh, run `./install.sh --setup-cli` from an up-to-date checkout once before using it for a desktop update.
 
+Installations made before the repository layout change must refresh the `hype` command once before a desktop update. Run `curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli`, then `hype update`. Package-only updates are not affected.
+
 Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
 
 Choose **Update packages and Hype Niri** to refresh the GitHub `main` checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations and validates staged Niri files before publishing them. A completed desktop update also refreshes the installed `hype` command. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
@@ -372,7 +375,7 @@ yay -Syu --aur
 ## Post-Install Steps
 
 - **Powerlevel10k Prompt**: The `shell-extras` group installs Powerlevel10k. Run `p10k configure` in your terminal to customize the supplied theme.
-- **Learn the Controls**: Check out `keybindings.md` to learn how to navigate the Niri compositor.
+- **Learn the Controls**: Check out [keys.md](keys.md) to learn how to navigate the Niri compositor.
 - **User Directories**: The installer sets the XDG user directories to lowercase names (`~/desktop`, `~/documents`, `~/downloads`, `~/music`, `~/pictures`, `~/projects`, `~/public`, `~/templates`, `~/videos`). Existing capitalised folders are renamed when the lowercase folder does not exist yet.
 - **Wallpapers**: The native wallpaper controller looks inside `~/pictures/wallpapers/`. Use `Super+Shift+W` to select one; the selected wallpaper is saved in `~/.local/state/niri/current_wallpaper` and restored after lock, sleep, reboot, and shutdown.
 - **Lock Screen**: `Super+L` locks via hyprlock and uses the saved wallpaper pointer from `~/.local/state/niri/current_wallpaper`.
@@ -448,5 +451,5 @@ UUID=XXXXXXXX-XXXX  /mnt/windows  ntfs3  defaults,nofail,uid=1000,gid=1000,umask
 
 ## Documentation Links
 
-- [Keybindings Reference](keybindings.md)
-- [Zsh Aliases](alias.md)
+- [Keybindings Reference](keys.md)
+- [Zsh Aliases](aliases.md)

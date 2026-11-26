@@ -1,12 +1,12 @@
-#[path = "../native/src/backlight.rs"]
+#[path = "../../native/src/backlight.rs"]
 mod backlight;
 mod controller;
 mod model;
 mod morph;
-#[path = "../native/src/mpris.rs"]
+#[path = "../../native/src/mpris.rs"]
 mod mpris;
 #[allow(dead_code)]
-#[path = "../native/src/pulse.rs"]
+#[path = "../../native/src/pulse.rs"]
 mod pulse;
 mod services;
 mod shelf;
@@ -23,7 +23,7 @@ fn load_style() -> Result<(), String> {
     provider.connect_parsing_error(move |_, _, error| {
         found.borrow_mut().push(error.to_string());
     });
-    provider.load_from_string(include_str!("../scripts/notch.css"));
+    provider.load_from_string(include_str!("../style.css"));
     if !errors.borrow().is_empty() {
         return Err(errors.borrow().join("\n"));
     }

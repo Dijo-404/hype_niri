@@ -1170,7 +1170,7 @@ mod protocol_tests {
         let binary = std::env::var_os("HYPE_CONTROL_TEST_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/hype-control")
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/hype-control")
             });
         let private_state =
             std::env::var_os("XDG_STATE_HOME").expect("Isolated state directory required");

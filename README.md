@@ -45,7 +45,7 @@ Hype Niri is a set of dotfiles and an interactive installer for a Niri desktop o
 | **Desktop**  | Niri, GTK4 4.24 or newer, `gtk4-layer-shell`, and `libpulse`                                                |
 | **Optional** | Hype Flow's Parakeet worker requires x86-64.                                                                |
 
-See the [core package list](pkglist.txt) for the complete package set.
+See the [core package list](packages/core.txt) for the complete package set.
 
 ## Installation
 
@@ -62,7 +62,7 @@ The bootstrap keeps the downloaded checkout in `~/hype-niri/source` and register
 
 Installer confirmations default to Yes after five seconds. Press Enter to accept immediately or `n` to decline. For line prompts, submit `n` with Enter. Package tools such as `sudo`, `pacman`, and `yay` use their own prompts.
 
-Use the arrow keys to browse extras, Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, where the countdown begins. Hype installs `yay` from the AUR if it is missing. The default extras include Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri. [Extras list](optional-packages.txt)
+Use the arrow keys to browse extras, Space to toggle a group, and `a` or `n` to select all or none. Press Enter to review, where the countdown begins. Hype installs `yay` from the AUR if it is missing. The default extras include Hype Flow and the English Parakeet model. Press `Alt+Space` to dictate after logging into Niri. [Extras list](packages/extras.txt)
 
 <details>
 <summary><b>Install from a local checkout</b></summary>
@@ -75,7 +75,7 @@ cd hype_niri &&
 ./install.sh install
 ```
 
-The [installation guide](INSTALL.md#manual-install) also covers applying individual components.
+The [installation guide](docs/install.md#manual-install) also covers applying individual components.
 
 </details>
 
@@ -91,9 +91,11 @@ Choose **Update packages only** and press Enter to review. Hype runs `sudo pacma
 
 Choose **Update packages and Hype Niri** to also refresh `~/hype-niri/source` from GitHub `main` and review your saved extras. Use `--plain` for line prompts.
 
+Installations made before the repository layout change must refresh the `hype` command once before a desktop update. Run `curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli`, then `hype update`.
+
 ### Uninstalling
 
-Log out of Niri and use another session or a TTY. Restore the configurations you want to keep from a `~/.config-backup-*` directory. The installer keeps the oldest backup, which holds your configurations from before the first install, and the two newest. Remove any Hype Niri files that had no previous version. Review the packages and services you enabled separately. See [Dependencies and services](DEPENDENCIES.md).
+Log out of Niri and use another session or a TTY. Restore the configurations you want to keep from a `~/.config-backup-*` directory. The installer keeps the oldest backup, which holds your configurations from before the first install, and the two newest. Remove any Hype Niri files that had no previous version. Review the packages and services you enabled separately. See [Dependencies and services](docs/dependencies.md).
 
 ## Quick start
 
@@ -136,7 +138,7 @@ Desktop commands use the installed binaries. Run `hype --help` for installer opt
 | `Alt+Space`                 | Start or finish dictation with Hype Flow |
 | `Super+Ctrl+Esc`            | Cancel dictation with Hype Flow          |
 
-See the [full keybinding reference](keybindings.md).
+See the [full keybinding reference](docs/keys.md).
 
 ### Examples
 
@@ -152,7 +154,7 @@ See the [full keybinding reference](keybindings.md).
 
 ## Configuration
 
-Edit `~/.config/niri/config.kdl` for keybindings and window rules, `~/.config/niri/outputs.kdl` for display settings, and `~/.config/waybar/config.jsonc` or `~/.config/waybar/style.css` for the bar. The installer preserves saved monitor settings. See the [manual configuration steps](INSTALL.md#3-copy-configurations).
+Edit `~/.config/niri/config.kdl` for keybindings and window rules, `~/.config/niri/outputs.kdl` for display settings, and `~/.config/waybar/config.jsonc` or `~/.config/waybar/style.css` for the bar. The installer preserves saved monitor settings. See the [manual configuration steps](docs/install.md#3-copy-configurations).
 
 A typical output block looks like this. Replace `DP-1` with the name shown by `niri msg outputs`.
 
@@ -217,18 +219,14 @@ flowchart LR
 
 ```text
 .
-├── install.sh             # Source-build bootstrap
-├── installer/             # Rust installer and integration tests
-├── native/                # Rust desktop controls, status streams, and Stealth backend
-├── notch/                 # GTK4 notch and UI tests
-├── niri/                  # Compositor settings and keybindings
-├── waybar/                # Bar configuration, styles, and icons
-├── hypr/                  # Hypridle and Hyprlock configurations
-├── scripts/notch.css      # Styles embedded in the notch
-├── systemd/               # Power profile and memory pressure configuration
-├── tests/                 # Bootstrap and desktop regression suites
-├── pkglist.txt            # Core packages
-└── optional-packages.txt  # Extras enabled by default
+├── install.sh     # Source-build bootstrap
+├── config/        # Desktop configs copied to ~/.config (Niri, Waybar, Hypr, Zsh, ...)
+├── system/        # Polkit rules, Stealth payload, and systemd units
+├── crates/        # Rust workspace: installer, native controls, notch, Blueman keys
+├── packages/      # core.txt packages and extras.txt groups enabled by default
+├── docs/          # Installation, dependencies, keybindings, and aliases
+├── tests/         # Bootstrap and desktop regression suites
+└── wallpapers/    # Bundled wallpapers
 ```
 
 ## Development
@@ -244,14 +242,14 @@ cargo build --workspace --bins --locked
 Run the regression suites against the debug binaries. The runtime tests use private Bubblewrap and D-Bus fixtures and need `python-gobject`, `bubblewrap`, and `dbus`. The GUI suite creates a private headless Sway session and requires Sway and `wtype`.
 
 ```bash
-/usr/bin/python3 tests/test-bootstrap.py
-/usr/bin/python3 tests/test-installer-tui.py
-/usr/bin/python3 tests/test-runtime.py
-/usr/bin/python3 tests/test-native-runtime.py
-/usr/bin/python3 tests/test-warp-indicator.py
-/usr/bin/python3 tests/test-native-media.py
-/usr/bin/python3 tests/test-native-session.py
-/usr/bin/python3 tests/test-native-gui.py
+/usr/bin/python3 tests/bootstrap.py
+/usr/bin/python3 tests/installer.py
+/usr/bin/python3 tests/runtime.py
+/usr/bin/python3 tests/native.py
+/usr/bin/python3 tests/warp.py
+/usr/bin/python3 tests/media.py
+/usr/bin/python3 tests/session.py
+/usr/bin/python3 tests/gui.py
 ./target/debug/hype-control --check
 ./target/debug/hype-notch --check
 ./target/debug/hype-status --check
@@ -280,8 +278,8 @@ ruff format --check tests
 The installer creates `outputs.kdl`. To validate a fresh checkout without installing, run this from the repository root.
 
 ```bash
-touch niri/outputs.kdl
-niri validate -c niri/config.kdl
+touch config/niri/outputs.kdl
+niri validate -c config/niri/config.kdl
 ```
 
 </details>
@@ -304,12 +302,12 @@ For a user-local library install, add its `lib/pkgconfig` directory to `PKG_CONF
 
 ## Documentation
 
-| Guide                                        | What's in it                                                   |
-| :------------------------------------------- | :------------------------------------------------------------- |
-| [Installation](INSTALL.md)                   | Manual setup, service configuration, and troubleshooting       |
-| [Keybindings](keybindings.md)                | Window management, workspace navigation, and desktop shortcuts |
-| [Dependencies and services](DEPENDENCIES.md) | Core packages, optional groups, and native replacements        |
-| [Zsh aliases](alias.md)                      | Shell shortcuts and optional tools                             |
+| Guide                                             | What's in it                                                   |
+| :------------------------------------------------ | :------------------------------------------------------------- |
+| [Installation](docs/install.md)                   | Manual setup, service configuration, and troubleshooting       |
+| [Keybindings](docs/keys.md)                       | Window management, workspace navigation, and desktop shortcuts |
+| [Dependencies and services](docs/dependencies.md) | Core packages, optional groups, and native replacements        |
+| [Zsh aliases](docs/aliases.md)                    | Shell shortcuts and optional tools                             |
 
 ## Contributing
 
@@ -317,7 +315,7 @@ Open an issue for bugs or feature requests. Include your Niri version, the relev
 
 ## License
 
-Released under the [MIT License](LICENSE). See the [Waybar icon credits](waybar/icons/README.md) for bundled icons.
+Released under the [MIT License](LICENSE). See the [Waybar icon credits](config/waybar/icons/README.md) for bundled icons.
 
 <br/>
 

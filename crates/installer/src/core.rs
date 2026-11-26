@@ -126,16 +126,15 @@ impl Installer {
             return Err(error("This installer requires Arch Linux (pacman)"));
         }
         for dir in [
-            "niri",
-            "waybar",
-            "scripts",
-            "alacritty",
-            "mako",
-            "fastfetch",
-            "hypr",
-            "native",
-            "notch",
-            "installer",
+            "config/niri",
+            "config/waybar",
+            "config/alacritty",
+            "config/mako",
+            "config/fastfetch",
+            "config/hypr",
+            "crates/native",
+            "crates/notch",
+            "crates/installer",
         ] {
             if !self.source.join(dir).is_dir() {
                 return Err(error(format!("Required source directory missing: {dir}")));
@@ -144,28 +143,29 @@ impl Installer {
         for file in [
             "Cargo.toml",
             "Cargo.lock",
-            "blueman/Cargo.toml",
-            "blueman/src/lib.rs",
-            "pkglist.txt",
-            "optional-packages.txt",
-            "zsh/.zshrc",
-            "zsh/.p10k.zsh",
-            "niri/config.kdl",
-            "niri/opacity.kdl",
-            "waybar/config.jsonc",
-            "waybar/style.css",
-            "scripts/notch.css",
-            "gtk/gtk.css",
-            "fontconfig/60-hype-niri-fonts.conf",
-            "systemd/user/hype-auto-power-profile.service",
-            "systemd/user/hype-sleep-watch.service",
-            "systemd/user/hype-clipboard-watch.service",
-            "systemd/user@.service.d/60-hype-niri-oomd.conf",
-            "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
-            "polkit/49-udisks2.rules",
-            "polkit/50-network-manager.rules",
-            "native/Cargo.toml",
-            "installer/Cargo.toml",
+            "crates/blueman/Cargo.toml",
+            "crates/blueman/src/lib.rs",
+            "packages/core.txt",
+            "packages/extras.txt",
+            "config/zsh/.zshrc",
+            "config/zsh/.p10k.zsh",
+            "config/niri/config.kdl",
+            "config/niri/opacity.kdl",
+            "config/waybar/config.jsonc",
+            "config/waybar/style.css",
+            "config/gtk/gtk.css",
+            "config/fontconfig/60-hype-niri-fonts.conf",
+            "system/systemd/user/hype-auto-power-profile.service",
+            "system/systemd/user/hype-sleep-watch.service",
+            "system/systemd/user/hype-clipboard-watch.service",
+            "system/systemd/user@.service.d/60-hype-niri-oomd.conf",
+            "config/wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
+            "system/polkit/49-udisks2.rules",
+            "system/polkit/50-network-manager.rules",
+            "crates/native/Cargo.toml",
+            "crates/notch/Cargo.toml",
+            "crates/notch/style.css",
+            "crates/installer/Cargo.toml",
         ] {
             fs::File::open(self.source.join(file))
                 .map_err(|e| error(format!("Required source file {file}: {e}")))?;
@@ -181,7 +181,7 @@ impl Installer {
             "nm-signal-100",
             "nm-no-connection",
         ] {
-            let asset = format!("waybar/icons/16x16/panel/{icon}.svg");
+            let asset = format!("config/waybar/icons/16x16/panel/{icon}.svg");
             fs::File::open(self.source.join(&asset))
                 .map_err(|cause| error(format!("Required source asset {asset}: {cause}")))?;
         }
@@ -520,21 +520,28 @@ mod tests {
     fn missing_tray_asset_stops_before_network_or_package_mutation() {
         let (_root, mut installer, calls) = fixture(true);
         fs::create_dir_all(&installer.source).unwrap();
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        for entry in fs::read_dir(repo).unwrap() {
-            let entry = entry.unwrap();
-            let name = entry.file_name();
-            if name == "waybar" || name == "target" || name == ".git" {
-                continue;
+        let repo = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        for (from, to, skip) in [
+            (repo.to_path_buf(), "", "config"),
+            (repo.join("config"), "config", "waybar"),
+        ] {
+            let to = installer.source.join(to);
+            fs::create_dir_all(&to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let name = entry.file_name();
+                if name == skip || name == "target" || name == ".git" {
+                    continue;
+                }
+                std::os::unix::fs::symlink(entry.path(), to.join(name)).unwrap();
             }
-            std::os::unix::fs::symlink(entry.path(), installer.source.join(name)).unwrap();
         }
-        let panel = installer.source.join("waybar/icons/16x16/panel");
+        let panel = installer.source.join("config/waybar/icons/16x16/panel");
         fs::create_dir_all(&panel).unwrap();
         for name in ["config.jsonc", "style.css"] {
             fs::copy(
-                repo.join("waybar").join(name),
-                installer.source.join("waybar").join(name),
+                repo.join("config/waybar").join(name),
+                installer.source.join("config/waybar").join(name),
             )
             .unwrap();
         }

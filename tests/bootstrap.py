@@ -23,10 +23,10 @@ class BootstrapTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.source = self.root / "source with spaces"
-        (self.source / "installer").mkdir(parents=True)
+        (self.source / "crates/installer").mkdir(parents=True)
         shutil.copy(REPO / "install.sh", self.source / "install.sh")
         (self.source / "Cargo.toml").write_text("fixture")
-        (self.source / "installer/Cargo.toml").write_text("fixture")
+        (self.source / "crates/installer/Cargo.toml").write_text("fixture")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.home = self.root / "home with spaces"

@@ -42,7 +42,7 @@ The installer enables essential network, audio, power and OOM services. Desktop 
 
 ## Optional packages
 
-The exact group list is [optional-packages.txt](optional-packages.txt). At the custom prompt, enter group names separated by spaces, for example:
+The exact group list is [packages/extras.txt](../packages/extras.txt). At the custom prompt, enter group names separated by spaces, for example:
 
 ```text
 browser-firefox editor-neovim bluetooth

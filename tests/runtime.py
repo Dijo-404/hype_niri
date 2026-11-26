@@ -7,7 +7,7 @@ import shutil
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from runtime_fixture import RuntimeFixture
+from fixture import RuntimeFixture
 
 
 class RuntimeTests(RuntimeFixture):
@@ -19,7 +19,7 @@ class RuntimeTests(RuntimeFixture):
 
     def test_hypridle_leaves_resume_to_sleep_watcher(self):
         hooks = {"after_sleep_cmd": [], "on-resume": []}
-        for line in (self.repo / "hypr/hypridle.conf").read_text().splitlines():
+        for line in (self.repo / "config/hypr/hypridle.conf").read_text().splitlines():
             key, separator, value = line.partition("=")
             if separator and key.strip() in hooks:
                 hooks[key.strip()].append(value.strip())

@@ -424,8 +424,10 @@ impl Installer {
         for dir in DESKTOP_DIRS {
             let staged = stage.path().join(dir);
             fs::create_dir(&staged)?;
-            copy_contents(&self.source.join(dir), &staged, false)
-                .map_err(|err| error(format!("Could not stage {dir}: {err}")))?;
+            if *dir != "scripts" {
+                copy_contents(&self.source.join("config").join(dir), &staged, false)
+                    .map_err(|err| error(format!("Could not stage {dir}: {err}")))?;
+            }
 
             match *dir {
                 "scripts" => {
@@ -690,13 +692,13 @@ impl Installer {
             && !self.user(&format!(".zsh/{plugin}")).is_file()
         {
             self.warn(format_args!(
-                "fzf-tab not found. Check the shell-extras group in optional-packages.txt."
+                "fzf-tab not found. Check the shell-extras group in packages/extras.txt."
             ));
         }
 
         for dotfile in [".zshrc", ".p10k.zsh"] {
             copy_regular(
-                &self.source.join("zsh").join(dotfile),
+                &self.source.join("config/zsh").join(dotfile),
                 &self.user(dotfile),
                 None,
                 true,
@@ -731,7 +733,7 @@ impl Installer {
             write_file(&settings, settings_contents.as_bytes(), 0o644)?;
         }
         copy_regular(
-            &self.source.join("gtk/gtk.css"),
+            &self.source.join("config/gtk/gtk.css"),
             &self.user(".config/gtk-3.0/gtk.css"),
             Some(0o644),
             true,
@@ -740,7 +742,9 @@ impl Installer {
             .prepare_user_directory(".config/fontconfig/conf.d")?
             .join("60-hype-niri-fonts.conf");
         copy_regular(
-            &self.source.join("fontconfig/60-hype-niri-fonts.conf"),
+            &self
+                .source
+                .join("config/fontconfig/60-hype-niri-fonts.conf"),
             &fonts,
             Some(0o644),
             true,
@@ -848,7 +852,10 @@ impl Installer {
                 "nm-no-connection",
             ] {
                 let icon = format!("{icon}.svg");
-                let source = self.source.join("waybar/icons/16x16/panel").join(&icon);
+                let source = self
+                    .source
+                    .join("config/waybar/icons/16x16/panel")
+                    .join(&icon);
                 copy_regular(&source, &panel.join(&icon), Some(0o644), true)?;
             }
         }
@@ -866,15 +873,18 @@ impl Installer {
         let wants =
             self.prepare_user_directory(".config/systemd/user/graphical-session.target.wants")?;
         self.prepare_user_directory(".config/wireplumber/wireplumber.conf.d")?;
-        for file in [
-            "systemd/user/hype-auto-power-profile.service",
-            "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
+        for (repo, file) in [
+            ("system", "systemd/user/hype-auto-power-profile.service"),
+            (
+                "config",
+                "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
+            ),
         ]
         .into_iter()
-        .chain(WATCHER_UNITS.iter().copied())
+        .chain(WATCHER_UNITS.iter().map(|unit| ("system", *unit)))
         {
             copy_regular(
-                &self.source.join(file),
+                &self.source.join(repo).join(file),
                 &self.user(".config").join(file),
                 Some(0o644),
                 true,

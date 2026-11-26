@@ -46,7 +46,7 @@ hype_bootstrap() (
     fi
     if [[ -n $here && -f $here ]]; then
         here="$(cd -- "$(dirname -- "$here")" && pwd -P)"
-        if [[ -f $here/Cargo.toml && -f $here/installer/Cargo.toml ]]; then
+        if [[ -f $here/Cargo.toml && -f $here/crates/installer/Cargo.toml ]]; then
             source_dir=$here
         fi
     fi

@@ -1,4 +1,4 @@
-# Desktop infrastructure and native build requirements. Extra apps: optional-packages.txt.
+# Desktop infrastructure and native build requirements. Extra apps: packages/extras.txt.
 niri
 xdg-desktop-portal-gnome
 xdg-utils

@@ -10,7 +10,7 @@
 .codex/
 plans/
 
-niri/outputs.kdl
+config/niri/outputs.kdl
 __pycache__/
 
 target/

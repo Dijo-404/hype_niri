@@ -69,7 +69,8 @@ class InstallerTuiTests(unittest.TestCase):
 [[ $1 != -C ]] || exit 0
 destination=${@: -1}
 /usr/bin/mkdir -p -- "$destination/.git"
-/usr/bin/ln -s -- "$HYPE_TEST_SOURCE/optional-packages.txt" "$destination/optional-packages.txt"
+/usr/bin/mkdir -p -- "$destination/packages"
+/usr/bin/ln -s -- "$HYPE_TEST_SOURCE/packages/extras.txt" "$destination/packages/extras.txt"
 """,
         )
         self.tool(
@@ -198,7 +199,8 @@ exit 78
         self.assertEqual(result.returncode, 0, result.stderr)
         checkout = self.home / "hype-niri/source"
         (checkout / ".git").mkdir(parents=True)
-        (checkout / "optional-packages.txt").symlink_to(REPO / "optional-packages.txt")
+        (checkout / "packages").mkdir()
+        (checkout / "packages/extras.txt").symlink_to(REPO / "packages/extras.txt")
         process, _, _ = self.start("install", executable=launcher, source=None)
         self.expect("● Firefox")
         self.send(b"\r")

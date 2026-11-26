@@ -21,7 +21,7 @@ const AUDIO_UNITS: &[&str] = &[
 ];
 const AUTO_POWER: &str = "hype-auto-power-profile.service";
 const OOMD: &str = "systemd-oomd.service";
-const OOM_SOURCE: &str = "systemd/user@.service.d/60-hype-niri-oomd.conf";
+const OOM_SOURCE: &str = "system/systemd/user@.service.d/60-hype-niri-oomd.conf";
 const OOM_DEST: &str = "/etc/systemd/system/user@.service.d/60-hype-niri-oomd.conf";
 const OOM_PROPERTIES: &[(&str, &str)] = &[
     ("MemoryAccounting", "yes"),
@@ -129,7 +129,7 @@ impl Installer {
             self.setup_ly()?;
         }
 
-        let mut rules = fs::read_dir(self.source.join("polkit"))
+        let mut rules = fs::read_dir(self.source.join("system/polkit"))
             .map_err(|cause| error(format!("Polkit rules are missing or unreadable: {cause}")))?
             .collect::<io::Result<Vec<_>>>()?;
         rules.retain(|entry| entry.path().extension().is_some_and(|ext| ext == "rules"));
@@ -948,8 +948,8 @@ impl Installer {
             self.note(format_args!("Stealth installation skipped"));
             return Ok(());
         }
-        let aliases = self.source.join("zsh/stealth.zsh");
-        let assets = self.source.join("stealth");
+        let aliases = self.source.join("config/zsh/stealth.zsh");
+        let assets = self.source.join("system/stealth");
         if !aliases.is_file()
             || STEALTH_CONFIG
                 .iter()

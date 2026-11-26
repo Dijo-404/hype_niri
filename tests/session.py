@@ -7,7 +7,7 @@ import select
 import socket
 import unittest
 
-from runtime_fixture import RuntimeFixture
+from fixture import RuntimeFixture
 
 
 class MonitorTests(RuntimeFixture):

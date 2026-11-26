@@ -180,46 +180,52 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
         ),
     };
     for dir in [
-        "scripts",
-        "niri",
-        "waybar",
-        "alacritty",
-        "mako",
-        "fastfetch",
-        "hypr",
+        "config/niri",
+        "config/waybar",
+        "config/alacritty",
+        "config/mako",
+        "config/fastfetch",
+        "config/hypr",
         "wallpapers",
-        "systemd/user",
-        "wireplumber/wireplumber.conf.d",
-        "zsh",
-        "fontconfig",
-        "gtk",
-        "waybar/icons/16x16/panel",
+        "system/systemd/user",
+        "config/wireplumber/wireplumber.conf.d",
+        "config/zsh",
+        "config/fontconfig",
+        "config/gtk",
+        "config/waybar/icons/16x16/panel",
     ] {
         fs::create_dir_all(installer.source.join(dir)).unwrap();
     }
     for (file, contents) in [
-        ("niri/config.kdl", "new Niri configuration"),
+        ("config/niri/config.kdl", "new Niri configuration"),
         (
-            "waybar/config.jsonc",
+            "config/waybar/config.jsonc",
             "{\"modules\": [\"custom/hotspot\", \"tray\"]}",
         ),
         (
-            "systemd/user/hype-auto-power-profile.service",
+            "system/systemd/user/hype-auto-power-profile.service",
             "new service",
         ),
         (
-            "wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
+            "config/wireplumber/wireplumber.conf.d/60-hype-niri-audio.conf",
             "new audio configuration",
         ),
-        ("zsh/.zshrc", "new zshrc"),
-        ("zsh/.p10k.zsh", "new p10k"),
-        ("gtk/gtk.css", "dialog {}"),
-        ("fontconfig/60-hype-niri-fonts.conf", "font configuration"),
+        ("config/zsh/.zshrc", "new zshrc"),
+        ("config/zsh/.p10k.zsh", "new p10k"),
+        ("config/gtk/gtk.css", "dialog {}"),
+        (
+            "config/fontconfig/60-hype-niri-fonts.conf",
+            "font configuration",
+        ),
     ] {
         fs::write(installer.source.join(file), contents).unwrap();
     }
     for unit in WATCHER_UNITS {
-        fs::write(installer.source.join(unit), "watcher service").unwrap();
+        fs::write(
+            installer.source.join("system").join(unit),
+            "watcher service",
+        )
+        .unwrap();
     }
     for icon in [
         "blueman-tray",
@@ -235,7 +241,7 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
         fs::write(
             installer
                 .source
-                .join(format!("waybar/icons/16x16/panel/{icon}.svg")),
+                .join(format!("config/waybar/icons/16x16/panel/{icon}.svg")),
             icon,
         )
         .unwrap();
@@ -384,7 +390,7 @@ fn only_the_stealth_build_requests_its_binary_and_uses_the_desktop_cache() {
 #[test]
 fn failed_niri_stage_keeps_existing_scripts_and_configuration() {
     let (_temp, mut installer, _) = fixture(Fake::default());
-    fs::remove_dir_all(installer.source.join("niri")).unwrap();
+    fs::remove_dir_all(installer.source.join("config/niri")).unwrap();
     let old = installer.user(".config/niri/config.kdl");
     write(old.clone(), "previous config");
     let legacy = installer.user(".config/scripts/start-waybar.sh");
@@ -434,8 +440,8 @@ fn failed_publication_restores_all_earlier_directories() {
 fn binaries_are_executable_and_legacy_links_retire_after_publish() {
     let (_temp, mut installer, fake) = fixture(Fake::default());
     write(
-        installer.source.join("scripts/fullscreen-toggle.sh"),
-        "legacy source",
+        installer.user(".config/scripts/fullscreen-toggle.sh"),
+        "legacy script",
     );
     installer.copy_configs().unwrap();
     let scripts = installer.user(".config/scripts");
@@ -529,7 +535,10 @@ fn reinstall_preserves_monitor_settings_and_moves_existing_drive_links() {
 #[test]
 fn republish_keeps_live_opacity_or_the_repository_default() {
     let (_temp, mut installer, _) = fixture(Fake::default());
-    write(installer.source.join("niri/opacity.kdl"), "default opacity");
+    write(
+        installer.source.join("config/niri/opacity.kdl"),
+        "default opacity",
+    );
     let live = installer.user(".config/niri/opacity.kdl");
     installer.copy_configs().unwrap();
     assert_eq!(fs::read_to_string(&live).unwrap(), "default opacity");
@@ -1132,7 +1141,7 @@ fn package_phase_selection_can_be_saved_for_later_manual_phases() {
 fn optional_cursor_theme_is_applied_only_when_selected() {
     let (_temp, mut installer, _) = fixture(Fake::default());
     fs::write(
-        installer.source.join("niri/config.kdl"),
+        installer.source.join("config/niri/config.kdl"),
         "cursor {\n    xcursor-theme \"Adwaita\"\n}\n",
     )
     .unwrap();

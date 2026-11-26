@@ -7,9 +7,29 @@ dialog label {
   font-size: 9pt;
 }
 
+dialog image {
+  -gtk-icon-style: symbolic;
+  color: #d4d4d4;
+}
+
 dialog box.dialog-vbox > box.horizontal > image {
   opacity: 0;
   margin-right: -60px;
+}
+
+dialog check {
+  background-image: none;
+  background-color: #1e1e1e;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  box-shadow: none;
+  -gtk-icon-shadow: none;
+  color: #141414;
+}
+
+dialog check:checked {
+  background-color: #d4d4d4;
+  border-color: #d4d4d4;
 }
 
 dialog entry {
