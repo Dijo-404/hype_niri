@@ -1,0 +1,66 @@
+dialog {
+  background-color: #141414;
+  color: #d4d4d4;
+}
+
+dialog label {
+  font-size: 9pt;
+}
+
+dialog box.dialog-vbox > box.horizontal > image {
+  opacity: 0;
+  margin-right: -60px;
+}
+
+dialog entry {
+  min-height: 32px;
+  background-color: #1e1e1e;
+  color: #fff;
+  caret-color: #fff;
+  border: 1px solid #404040;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+dialog entry:focus {
+  border-color: #d4d4d4;
+  box-shadow: none;
+}
+
+dialog entry selection {
+  background-color: #404040;
+  color: #fff;
+}
+
+dialog button {
+  background-image: none;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #404040;
+  border-radius: 4px;
+  box-shadow: none;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+  transition:
+    background-color 180ms ease-out,
+    color 180ms ease-out;
+}
+
+dialog button:hover {
+  background-color: #303030;
+  color: #fff;
+}
+
+dialog button:active,
+dialog button:checked {
+  background-color: #404040;
+  color: #fff;
+}
+
+dialog *:focus {
+  outline-color: rgba(255, 255, 255, 0.4);
+}
+
+dialog expander title > arrow {
+  color: #aaa;
+}

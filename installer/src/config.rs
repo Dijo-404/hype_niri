@@ -730,6 +730,12 @@ impl Installer {
             let settings = self.prepare_user_directory(dir)?.join("settings.ini");
             write_file(&settings, settings_contents.as_bytes(), 0o644)?;
         }
+        copy_regular(
+            &self.source.join("gtk/gtk.css"),
+            &self.user(".config/gtk-3.0/gtk.css"),
+            Some(0o644),
+            true,
+        )?;
         let fonts = self
             .prepare_user_directory(".config/fontconfig/conf.d")?
             .join("60-hype-niri-fonts.conf");

@@ -158,6 +158,7 @@ impl Installer {
             "waybar/config.jsonc",
             "waybar/style.css",
             "scripts/notch.css",
+            "gtk/gtk.css",
             "fontconfig/60-hype-niri-fonts.conf",
             "systemd/user/hype-auto-power-profile.service",
             "systemd/user/hype-sleep-watch.service",

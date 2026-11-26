@@ -192,6 +192,7 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
         "wireplumber/wireplumber.conf.d",
         "zsh",
         "fontconfig",
+        "gtk",
         "waybar/icons/16x16/panel",
     ] {
         fs::create_dir_all(installer.source.join(dir)).unwrap();
@@ -212,6 +213,7 @@ fn fixture(fake: Fake) -> (TempDir, Installer, Rc<Fake>) {
         ),
         ("zsh/.zshrc", "new zshrc"),
         ("zsh/.p10k.zsh", "new p10k"),
+        ("gtk/gtk.css", "dialog {}"),
         ("fontconfig/60-hype-niri-fonts.conf", "font configuration"),
     ] {
         fs::write(installer.source.join(file), contents).unwrap();
@@ -1071,6 +1073,10 @@ fn core_selection_skips_optional_app_setup_and_persists_empty_tray_policy() {
         fs::read_to_string(installer.user(".config/gtk-4.0/settings.ini"))
             .unwrap()
             .contains("gtk-cursor-theme-name=Adwaita\n")
+    );
+    assert_eq!(
+        fs::read_to_string(installer.user(".config/gtk-3.0/gtk.css")).unwrap(),
+        "dialog {}"
     );
 }
 
