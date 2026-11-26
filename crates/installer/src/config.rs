@@ -711,7 +711,12 @@ impl Installer {
         {
             self.note(format_args!("Zsh is already the default shell"));
         } else if self.confirm("Change default shell to zsh?")? {
-            self.command("chsh", &["-s", "/usr/bin/zsh"])?;
+            let user = self.output("id", &["-un"])?;
+            let name = user.stdout.trim();
+            if !user.success() || name.is_empty() {
+                return Err(error("Could not determine the current user for chsh"));
+            }
+            self.command("sudo", &["chsh", "-s", "/usr/bin/zsh", name])?;
             self.note(format_args!(
                 "Default shell changed to zsh. Log out and back in for this to take effect."
             ));

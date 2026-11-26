@@ -1,6 +1,16 @@
 use crate::{Installer, Result, error};
 use std::{collections::HashSet, fs, io::Write};
 
+const AUR_ANSWERS: [&str; 7] = [
+    "--noconfirm",
+    "--answerclean",
+    "None",
+    "--answerdiff",
+    "None",
+    "--answeredit",
+    "None",
+];
+
 impl Installer {
     pub(crate) fn update_aur_packages(&mut self) -> Result<()> {
         if !self.runner.available("yay") {
@@ -13,7 +23,7 @@ impl Installer {
         self.runner
             .run_logged(
                 "yay",
-                &["-Syu", "--aur", "--noconfirm=false", "--confirm"],
+                &[&["-Syu", "--aur"][..], &AUR_ANSWERS].concat(),
                 log.path(),
             )
             .map_err(|cause| self.package_failure(log, &format!("AUR upgrade failed: {cause}")))
@@ -23,7 +33,17 @@ impl Installer {
         self.note(format_args!(
             "Installing yay from the Arch User Repository (yay-bin)"
         ));
-        self.command("sudo", &["pacman", "-S", "--needed", "git", "base-devel"])?;
+        self.command(
+            "sudo",
+            &[
+                "pacman",
+                "-S",
+                "--needed",
+                "--noconfirm",
+                "git",
+                "base-devel",
+            ],
+        )?;
         let staging = tempfile::Builder::new()
             .prefix("hype-niri-yay-")
             .tempdir()?;
@@ -47,7 +67,14 @@ impl Installer {
             .tempfile()?;
         if let Err(cause) = self.runner.run_logged(
             "env",
-            &["--chdir", checkout, "makepkg", "-si", "--needed"],
+            &[
+                "--chdir",
+                checkout,
+                "makepkg",
+                "-si",
+                "--needed",
+                "--noconfirm",
+            ],
             log.path(),
         ) {
             return Err(
@@ -222,7 +249,8 @@ impl Installer {
             }
         }
         if !aur.is_empty() {
-            let mut args = vec!["-S", "--aur", "--needed", "--noconfirm=false", "--confirm"];
+            let mut args = vec!["-S", "--aur", "--needed"];
+            args.extend(AUR_ANSWERS);
             args.extend(aur.iter().map(String::as_str));
             if let Err(failure) = self.runner.run_logged("yay", &args, log.path()) {
                 return Err(self.package_failure(
@@ -627,7 +655,8 @@ mod tests {
         assert!(
             calls
                 .iter()
-                .any(|c| c == "yay -S --aur --needed --noconfirm=false --confirm aur/missing")
+                .any(|c| c
+                    == "yay -S --aur --needed --noconfirm --answerclean None --answerdiff None --answeredit None aur/missing")
         );
         assert!(
             !calls

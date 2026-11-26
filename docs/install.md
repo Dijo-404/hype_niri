@@ -35,7 +35,7 @@ Run `~/bin/hype update` from any directory to choose a package update or a packa
 > Powerlevel10k is pre-configured when `shell-extras` is selected. Run `p10k configure` if you want to customize it.
 
 > [!NOTE]
-> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and the package install can prompt for sudo.
+> If `yay` is missing, Hype installs `yay-bin` from the Arch User Repository. `makepkg` runs as your regular user and installs the package with the sudo password you entered in the installer popup.
 
 ---
 
@@ -359,7 +359,7 @@ If your installed `hype` predates updater self-refresh, run `./install.sh --setu
 
 Installations made before the repository layout change must refresh the `hype` command once before a desktop update. Run `curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli`, then `hype update`. Package-only updates are not affected.
 
-Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Follow the `sudo`, `pacman`, and `yay` prompts as they appear.
+Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to review and Enter to start. Enter your sudo password in the popup; `pacman` and `yay` then run in the installer window with their default answers.
 
 Choose **Update packages and Hype Niri** to refresh the GitHub `main` checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations and validates staged Niri files before publishing them. A completed desktop update also refreshes the installed `hype` command. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
 
