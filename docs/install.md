@@ -363,6 +363,8 @@ Choose **Update packages only** for a full Arch and AUR upgrade. Press Enter to 
 
 Choose **Update packages and Hype Niri** to refresh the GitHub `main` checkout, review your saved extras, and apply the desktop files. The installer requires a backup before replacing existing user configurations and validates staged Niri files before publishing them. A completed desktop update also refreshes the installed `hype` command. Package installation uses `--needed` to avoid reinstalling current versions. Existing wallpapers are preserved.
 
+Choose **Update Hype Flow only** to build the latest Hype Flow from its GitHub `main` branch and run its setup again. Hype Flow must already be installed. This option does not ask for a password and does not change packages or desktop configs. If Hype Flow was running, log out and back in to start the new version. The TUI menu offers this option; `--plain` does not.
+
 To run the package managers directly:
 
 ```bash

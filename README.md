@@ -91,6 +91,8 @@ Choose **Update packages only** and press Enter to review. Hype runs `sudo pacma
 
 Choose **Update packages and Hype Niri** to also refresh `~/hype-niri/source` from GitHub `main` and review your saved extras. Use `--plain` for line prompts.
 
+Choose **Update Hype Flow only** to rebuild Hype Flow from its GitHub `main` branch. It needs no password and leaves packages and desktop configs unchanged.
+
 Installations made before the repository layout change must refresh the `hype` command once before a desktop update. Run `curl -fsSL https://raw.githubusercontent.com/Dijo-404/hype_niri/main/install.sh | bash -s -- --setup-cli`, then `hype update`.
 
 ### Uninstalling

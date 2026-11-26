@@ -18,6 +18,7 @@ pub const PACKAGE_PHASES: &[(&str, Phase)] = &[
     ("Update Arch packages", Installer::update_system_packages),
     ("Update AUR packages", Installer::update_aur_packages),
 ];
+pub const FLOW_PHASES: &[(&str, Phase)] = &[("Update Hype Flow", Installer::update_hype_flow)];
 pub const PHASES: &[(&str, Phase)] = &[
     ("Check setup files", Installer::preflight),
     ("Choose extras", Installer::select_optional_groups),

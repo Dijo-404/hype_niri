@@ -333,6 +333,17 @@ esac
             ],
         )
 
+    def test_flow_update_skips_sudo_and_requires_installed_hype_flow(self):
+        process, _, _ = self.start("update", source=None)
+        self.expect("Update Hype Flow only")
+        self.send(b"\x1b[A\r")
+        self.expect("Review Hype Flow update")
+        self.send(b"\r")
+        self.expect("Hype Flow is not installed")
+        self.send(b"q")
+        self.assertEqual(process.wait(timeout=5), 1)
+        self.assertFalse(self.calls.exists())
+
     def test_plain_package_update_defaults_to_yes(self):
         self.tool("sudo", 'printf "sudo %s\\n" "$*" >> "$HYPE_TEST_CALLS"')
         self.tool("yay", 'printf "yay %s\\n" "$*" >> "$HYPE_TEST_CALLS"')

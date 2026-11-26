@@ -9,11 +9,21 @@ impl Installer {
         if !self.selected("hype-flow") {
             return Ok(());
         }
-        self.install_hype_flow()
+        self.install_hype_flow(REVISION)
             .map_err(|cause| error(format!("Hype Flow installation failed: {cause}")))
     }
 
-    fn install_hype_flow(&self) -> Result<()> {
+    pub(crate) fn update_hype_flow(&mut self) -> Result<()> {
+        if !self.user(".local/bin/hype-flow").is_file() {
+            return Err(error(
+                "Hype Flow is not installed. Choose Install Hype Niri and select Hype Flow dictation.",
+            ));
+        }
+        self.install_hype_flow("main")
+            .map_err(|cause| error(format!("Hype Flow update failed: {cause}")))
+    }
+
+    fn install_hype_flow(&self, revision: &str) -> Result<()> {
         self.note(format_args!(
             "Building Hype Flow and setting up offline dictation"
         ));
@@ -33,10 +43,10 @@ impl Installer {
                 "--depth=1",
                 "--",
                 REPOSITORY,
-                REVISION,
+                revision,
             ],
         )?;
-        self.command("git", &["-C", repo, "checkout", "--detach", REVISION])?;
+        self.command("git", &["-C", repo, "checkout", "--detach", "FETCH_HEAD"])?;
         self.command(
             "cargo",
             &[

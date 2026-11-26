@@ -5,7 +5,9 @@ use crossterm::{
 };
 use hype_install::{
     CommandOutput, Installer, ProcessRunner, Result, Runner,
-    core::{CONFIRM_TIMEOUT, InstallLock, PACKAGE_PHASES, PHASES, Phase, runtime_directory},
+    core::{
+        CONFIRM_TIMEOUT, FLOW_PHASES, InstallLock, PACKAGE_PHASES, PHASES, Phase, runtime_directory,
+    },
     error,
 };
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
@@ -37,18 +39,20 @@ pub enum Action {
     Install,
     Update,
     Packages,
+    Flow,
 }
 
 impl Action {
     pub fn uses_managed_source(self, local_source: bool, fetched: bool) -> bool {
-        self != Self::Packages && (fetched || !local_source || self == Self::Update)
+        matches!(self, Self::Install | Self::Update)
+            && (fetched || !local_source || self == Self::Update)
     }
 
     fn phases(self) -> &'static [(&'static str, Phase)] {
-        if self == Self::Packages {
-            PACKAGE_PHASES
-        } else {
-            PHASES
+        match self {
+            Self::Packages => PACKAGE_PHASES,
+            Self::Flow => FLOW_PHASES,
+            Self::Install | Self::Update => PHASES,
         }
     }
 
@@ -57,6 +61,7 @@ impl Action {
             Self::Install => "Install Hype Niri",
             Self::Update => "Update packages and Hype Niri",
             Self::Packages => "Update packages only",
+            Self::Flow => "Update Hype Flow only",
         }
     }
 
@@ -65,6 +70,7 @@ impl Action {
             Self::Install => "Install",
             Self::Update => "Update",
             Self::Packages => "Package update",
+            Self::Flow => "Hype Flow update",
         }
     }
 }
@@ -99,9 +105,14 @@ pub fn run(
     let installed = installer.user(".config/scripts/hype-control").is_file()
         || installer.user(".config/scripts/hype-control.sh").is_file();
     let choices: &[Action] = if direct == Some(Action::Update) {
-        &[Action::Packages, Action::Update]
+        &[Action::Packages, Action::Update, Action::Flow]
     } else {
-        &[Action::Install, Action::Packages, Action::Update]
+        &[
+            Action::Install,
+            Action::Packages,
+            Action::Update,
+            Action::Flow,
+        ]
     };
     let mut action = if direct == Some(Action::Install) {
         Action::Install
@@ -124,7 +135,7 @@ pub fn run(
         }
         direct = false;
         ui.borrow_mut().action = action;
-        if action == Action::Packages {
+        if matches!(action, Action::Packages | Action::Flow) {
             if ui.borrow_mut().review(None)? {
                 break;
             }
@@ -175,7 +186,13 @@ pub fn run(
                 .borrow_mut()
                 .working(action.label(), "Checking sudo access");
             ready
-                .and_then(|()| TuiRunner(ui.clone()).authorize())
+                .and_then(|()| {
+                    if action == Action::Flow {
+                        Ok(())
+                    } else {
+                        TuiRunner(ui.clone()).authorize()
+                    }
+                })
                 .and_then(|()| {
                     installer.run_phases(action.phases(), |index, name| {
                         let mut ui = ui.borrow_mut();
@@ -215,11 +232,11 @@ pub fn run(
         return Err(cause);
     }
 
-    let mut summary = if action == Action::Packages {
-        String::from("Restart when ready if system components were upgraded.")
-    } else {
-        String::from("Reboot when ready, then select niri-session.")
-    };
+    let mut summary = String::from(match action {
+        Action::Packages => "Restart when ready if system components were upgraded.",
+        Action::Flow => "Log out and back in if Hype Flow was already running.",
+        Action::Install | Action::Update => "Reboot when ready, then select niri-session.",
+    });
     if let Some(backup) = &installer.backup {
         summary.push_str(&format!("\nConfiguration backup: {}", backup.display()));
     }

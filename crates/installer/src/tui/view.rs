@@ -588,6 +588,11 @@ fn actions(frame: &mut Frame<'_>, area: Rect, theme: Theme, choices: &[Action], 
             "Updates Arch and AUR packages.",
             "Your desktop configs are not changed.",
         ),
+        Action::Flow => (
+            "Update Hype Flow dictation.",
+            "Builds the latest Hype Flow from GitHub main.",
+            "Packages and desktop configs are not changed.",
+        ),
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -671,6 +676,7 @@ fn start_label(action: Action) -> &'static str {
         Action::Install => "Start installation",
         Action::Update => "Start update",
         Action::Packages => "Start package update",
+        Action::Flow => "Start Hype Flow update",
     }
 }
 
@@ -686,6 +692,7 @@ fn review(
         Action::Install => "Review install",
         Action::Update => "Review update",
         Action::Packages => "Review package update",
+        Action::Flow => "Review Hype Flow update",
     };
     let row = |label: &'static str, value: String| {
         Line::from(vec![
@@ -693,12 +700,13 @@ fn review(
             Span::styled(value, theme.fg(TEXT)),
         ])
     };
-    let mut lines = vec![
-        Line::styled(title, theme.strong(BRIGHT)),
-        Line::raw(""),
-        row("Updates", "Arch packages, then AUR packages".into()),
-        row("Password", "Asked once in a popup".into()),
-    ];
+    let mut lines = vec![Line::styled(title, theme.strong(BRIGHT)), Line::raw("")];
+    if action == Action::Flow {
+        lines.push(row("Updates", "Hype Flow from GitHub main".into()));
+    } else {
+        lines.push(row("Updates", "Arch packages, then AUR packages".into()));
+        lines.push(row("Password", "Asked once in a popup".into()));
+    }
     if let Some(extras) = extras {
         lines.push(row("Backup", "Your current configs are saved first".into()));
         lines.push(row("Files from", source.into()));
@@ -859,7 +867,12 @@ mod preview {
                 "",
                 "",
                 Page::Actions {
-                    choices: &[Action::Install, Action::Packages, Action::Update],
+                    choices: &[
+                        Action::Install,
+                        Action::Packages,
+                        Action::Update,
+                        Action::Flow,
+                    ],
                     selected: 0,
                 },
             ),
